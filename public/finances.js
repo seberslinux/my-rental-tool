@@ -124,16 +124,43 @@ function restoreDateFilters() {
 function renderKPIs(summary) {
   if (!summary) return;
   const fmt = n => 'R ' + Math.round(n).toLocaleString('en-ZA');
+  const noCosts = summary.total_costs === 0;
+  const profitCls = noCosts ? 'muted' : (summary.net_profit >= 0 ? 'positive' : 'negative');
+  const marginCls = noCosts ? 'muted' : (summary.profit_margin >= 0 ? 'positive' : 'negative');
   const kpis = [
     { value: fmt(summary.total_revenue), label: 'Total Revenue', cls: '' },
     { value: fmt(summary.total_costs), label: 'Total Costs', cls: '' },
-    { value: fmt(summary.net_profit), label: 'Net Profit', cls: summary.net_profit >= 0 ? 'positive' : 'negative' },
-    { value: summary.profit_margin + '%', label: 'Profit Margin', cls: summary.profit_margin >= 0 ? 'positive' : 'negative' },
+    { value: fmt(summary.net_profit), label: 'Net Profit', cls: profitCls },
+    { value: summary.profit_margin + '%', label: 'Profit Margin', cls: marginCls },
   ];
 
-  document.getElementById('kpiGrid').innerHTML = kpis
-    .map(k => `<div class="kpi-card"><div class="kpi-value ${k.cls}">${k.value}</div><div class="kpi-label">${k.label}</div></div>`)
-    .join('');
+  // Scope label
+  const ids = getSelectedPropertyIds();
+  let scopeLabel = 'All Properties';
+  if (!ids.includes('all') && ids.length === 1) {
+    const prop = properties.find(p => String(p.id) === ids[0]);
+    scopeLabel = prop ? prop.name : '1 Property';
+  } else if (!ids.includes('all')) {
+    scopeLabel = ids.length + ' Properties';
+  }
+
+  document.getElementById('kpiGrid').innerHTML =
+    `<div style="grid-column:1/-1;font-size:0.85rem;color:#666;margin-bottom:-0.5rem;">Showing: <strong>${escHtml(scopeLabel)}</strong></div>` +
+    kpis.map(k => `<div class="kpi-card"><div class="kpi-value ${k.cls}">${k.value}</div><div class="kpi-label">${k.label}</div></div>`).join('');
+
+  // Warning banner when no costs
+  let banner = document.getElementById('finNoCostsBanner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'finNoCostsBanner';
+    const kpiGrid = document.getElementById('kpiGrid');
+    kpiGrid.parentNode.insertBefore(banner, kpiGrid.nextSibling);
+  }
+  if (noCosts && summary.total_revenue > 0) {
+    banner.innerHTML = '<div style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:0.6rem 1rem;border-radius:6px;margin-top:0.5rem;font-size:0.9rem;">No costs configured — profit figures are estimates only. <a href="#" onclick="switchTab(\'costs\', document.querySelector(\'.tab-bar button:nth-child(3)\'));return false;" style="color:#92400e;font-weight:600;">Add fixed costs in Cost Settings</a></div>';
+  } else {
+    banner.innerHTML = '';
+  }
 }
 
 // ─── EXPENSES ───
@@ -329,6 +356,7 @@ async function loadPnl() {
     renderPnlChart();
     renderCostBreakdown();
     renderBookingProfitability();
+    renderPropertyBreakdown();
   } catch (err) {
     console.error('Failed to load P&L:', err);
   }
@@ -405,6 +433,92 @@ function renderBookingProfitability() {
       <td style="${profitClass};font-weight:600;">R ${fmtNum(b.net_profit)}</td>
     </tr>`;
   }).join('');
+}
+
+// ─── P&L BY PROPERTY BREAKDOWN ───
+
+async function renderPropertyBreakdown() {
+  const container = document.getElementById('propertyBreakdownContainer');
+  const content = document.getElementById('propertyBreakdownContent');
+  const ids = getSelectedPropertyIds();
+
+  if (!ids.includes('all')) {
+    container.style.display = 'none';
+    return;
+  }
+
+  if (properties.length === 0) {
+    container.style.display = 'none';
+    return;
+  }
+
+  container.style.display = '';
+  content.innerHTML = '<div class="loading">Loading property breakdown...</div>';
+
+  const { from, to } = getPnlDates();
+  const params = new URLSearchParams();
+  if (from) params.set('from', from);
+  if (to) params.set('to', to);
+
+  try {
+    const results = await Promise.all(
+      properties.map(function(p) {
+        var propParams = new URLSearchParams(params);
+        propParams.set('property_id', p.id);
+        return api('/api/finances/pnl?' + propParams.toString())
+          .then(function(data) { return { property: p, pnl: data }; })
+          .catch(function() { return { property: p, pnl: null }; });
+      })
+    );
+
+    var totalRevenue = 0;
+    var totalCosts = 0;
+    var totalProfit = 0;
+
+    var rows = results.map(function(r) {
+      var s = r.pnl && r.pnl.summary ? r.pnl.summary : {};
+      var rev = s.total_revenue || 0;
+      var costs = s.total_costs || 0;
+      var profit = s.net_profit || 0;
+      var margin = rev > 0 ? Math.round((profit / rev) * 100) : 0;
+
+      totalRevenue += rev;
+      totalCosts += costs;
+      totalProfit += profit;
+
+      var profitStyle = profit >= 0 ? 'color:#00aa44' : 'color:#cc0000';
+      var marginStyle = margin >= 0 ? 'color:#00aa44' : 'color:#cc0000';
+
+      return '<tr>' +
+        '<td>' + escHtml(r.property.name) + '</td>' +
+        '<td>R ' + fmtNum(rev) + '</td>' +
+        '<td>R ' + fmtNum(costs) + '</td>' +
+        '<td style="' + profitStyle + ';font-weight:600;">R ' + fmtNum(profit) + '</td>' +
+        '<td style="' + marginStyle + ';font-weight:600;">' + margin + '%</td>' +
+        '</tr>';
+    });
+
+    var totalMargin = totalRevenue > 0 ? Math.round((totalProfit / totalRevenue) * 100) : 0;
+    var totalProfitStyle = totalProfit >= 0 ? 'color:#00aa44' : 'color:#cc0000';
+    var totalMarginStyle = totalMargin >= 0 ? 'color:#00aa44' : 'color:#cc0000';
+
+    rows.push(
+      '<tr style="font-weight:700;border-top:2px solid #333;background:#f8f8f8;">' +
+        '<td>Total</td>' +
+        '<td>R ' + fmtNum(totalRevenue) + '</td>' +
+        '<td>R ' + fmtNum(totalCosts) + '</td>' +
+        '<td style="' + totalProfitStyle + '">R ' + fmtNum(totalProfit) + '</td>' +
+        '<td style="' + totalMarginStyle + '">' + totalMargin + '%</td>' +
+      '</tr>'
+    );
+
+    content.innerHTML = '<table class="data-table">' +
+      '<thead><tr><th>Property</th><th>Revenue</th><th>Costs</th><th>Net Profit</th><th>Margin</th></tr></thead>' +
+      '<tbody>' + rows.join('') + '</tbody>' +
+      '</table>';
+  } catch (err) {
+    content.innerHTML = '<div style="color:#cc0000;">Failed to load property breakdown: ' + escHtml(err.message) + '</div>';
+  }
 }
 
 // ─── COST SETTINGS ───

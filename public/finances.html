@@ -258,6 +258,7 @@
     <a href="/cleaners.html">Cleaners</a>
     <a href="/analytics.html">Analytics</a>
     <a href="/finances.html" class="active">Finances</a>
+    <a href="/maintenance.html">Maintenance</a>
     <div class="property-selector">
       <select id="globalPropertySelect"></select>
     </div>
@@ -377,6 +378,13 @@
             <tr><td colspan="8" class="loading">Select a date range above</td></tr>
           </tbody>
         </table>
+      </div>
+
+      <div class="chart-container" id="propertyBreakdownContainer" style="display:none;">
+        <h3>P&amp;L by Property</h3>
+        <div id="propertyBreakdownContent">
+          <div class="loading">Loading property breakdown...</div>
+        </div>
       </div>
     </div>
 

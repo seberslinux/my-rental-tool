@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head><title>Debug</title></head>
+<body>
+<h2>Debug Page</h2>
+<pre id="log"></pre>
+<script>
+const log = document.getElementById('log');
+function l(msg) { log.textContent += msg + '\n'; console.log(msg); }
+
+window.onerror = function(msg, src, line, col, err) {
+  l('ERROR: ' + msg + ' at ' + src + ':' + line + ':' + col);
+  return false;
+};
+
+window.addEventListener('unhandledrejection', function(e) {
+  l('UNHANDLED PROMISE: ' + (e.reason ? e.reason.message || e.reason : 'unknown'));
+});
+
+l('localStorage selectedPropertyIds: ' + localStorage.getItem('selectedPropertyIds'));
+l('localStorage selectedPropertyId (old): ' + localStorage.getItem('selectedPropertyId'));
+
+// Test API
+fetch('/api/properties').then(r => r.json()).then(d => l('API /api/properties: ' + d.length + ' properties')).catch(e => l('API ERROR: ' + e.message));
+fetch('/api/bookings').then(r => r.json()).then(d => l('API /api/bookings: ' + d.length + ' bookings')).catch(e => l('API ERROR: ' + e.message));
+fetch('/api/dashboard/stats').then(r => r.json()).then(d => l('API /api/dashboard/stats: keys=' + Object.keys(d).join(','))).catch(e => l('API ERROR: ' + e.message));
+
+l('Loading shared.js...');
+</script>
+<script src="shared.js"></script>
+<script>
+l('shared.js loaded');
+l('getSelectedPropertyIds: ' + (typeof getSelectedPropertyIds));
+l('getPropertyIdsParam: ' + (typeof getPropertyIdsParam));
+l('escHtml: ' + (typeof escHtml));
+l('fmtNum: ' + (typeof fmtNum));
+
+try {
+  l('getSelectedPropertyIds() = ' + JSON.stringify(getSelectedPropertyIds()));
+  l('getPropertyIdsParam() = ' + getPropertyIdsParam());
+} catch(e) {
+  l('ERROR calling shared functions: ' + e.message);
+}
+
+l('All checks done. If you see errors above, that is the issue.');
+</script>
+</body>
+</html>

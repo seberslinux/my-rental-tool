@@ -15,6 +15,7 @@
       <a href="/cleaners.html">Cleaners</a>
       <a href="/analytics.html">Analytics</a>
       <a href="/finances.html">Finances</a>
+      <a href="/maintenance.html">Maintenance</a>
     </div>
     <div class="property-selector">
       <select id="globalPropertySelect"></select>
@@ -58,6 +59,31 @@
       </table>
     </div>
 
+    <div class="card">
+      <h2>Upcoming Check-ins (Next 48h)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Property</th>
+            <th>Guest</th>
+            <th>Check-in</th>
+            <th>Platform</th>
+            <th># Nights</th>
+          </tr>
+        </thead>
+        <tbody id="checkinTable">
+          <tr><td colspan="5" class="loading">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card" id="alertsPanel">
+      <h2>Needs Attention</h2>
+      <div id="alertsList">
+        <div class="loading">Loading...</div>
+      </div>
+    </div>
+
     <div class="modal-overlay" id="assignCleanerModal">
       <div class="modal">
         <h2>Assign Cleaner</h2>
@@ -76,12 +102,39 @@
             <th>Gap Start</th>
             <th>Gap End</th>
             <th>Nights</th>
+            <th>Action</th>
           </tr>
         </thead>
         <tbody id="gapsTable">
-          <tr><td colspan="4" class="loading">Loading...</td></tr>
+          <tr><td colspan="5" class="loading">Loading...</td></tr>
         </tbody>
       </table>
+    </div>
+
+    <div class="modal-overlay" id="gapDiscountModal">
+      <div class="modal" style="max-width:420px;">
+        <h2>Gap Discount</h2>
+        <p id="gapDiscountInfo" style="margin-bottom:0.8rem;"></p>
+        <div style="background:#f8f9ff;border-radius:6px;padding:1rem;margin-bottom:1rem;">
+          <div style="display:flex;justify-content:space-between;margin-bottom:0.4rem;">
+            <span>Base price:</span>
+            <span id="gapBasePrice"></span>
+          </div>
+          <div style="display:flex;justify-content:space-between;margin-bottom:0.4rem;">
+            <span>Discount:</span>
+            <span id="gapDiscountPct"></span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-weight:700;">
+            <span>Discounted price:</span>
+            <span id="gapDiscountedPrice" style="color:#16a34a;"></span>
+          </div>
+        </div>
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+          <button class="btn btn-primary" id="gapCopyPromoBtn" onclick="copyGapPromoText()">Copy Promo Text</button>
+          <a class="btn btn-secondary" href="https://login.smoobu.com/en/cockpit/calendar" target="_blank" rel="noopener">Open Smoobu</a>
+          <button type="button" class="btn btn-secondary" onclick="closeGapDiscountModal()">Close</button>
+        </div>
+      </div>
     </div>
 
     <div class="card">

@@ -43,8 +43,13 @@ function renderPropertyCard(p, costs) {
       <form onsubmit="saveProperty(event, ${p.id})">
 
         <!-- Basic Info -->
-        <h2>${escHtml(p.name)}</h2>
-        <p style="color:#999;font-size:0.85rem;margin-bottom:1rem;">Smoobu ID: ${p.smoobu_id}</p>
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:0.5rem;">
+          <div>
+            <h2 style="margin-bottom:0.25rem;">${escHtml(p.name)}</h2>
+            <p style="color:#999;font-size:0.85rem;margin-bottom:0;">Smoobu ID: ${p.smoobu_id}</p>
+          </div>
+          <a href="property-detail.html?id=${p.id}" class="btn btn-primary btn-sm" style="white-space:nowrap;text-decoration:none;">View Performance</a>
+        </div>
 
         <div class="form-row">
           <div class="form-group">
@@ -162,12 +167,87 @@ function renderPropertyCard(p, costs) {
         <div id="costs-${p.id}">${renderCostsTable(costs)}</div>
         <p style="margin-top:0.5rem;"><a href="/finances.html" style="font-size:0.85rem;">Edit in Finances &rarr; Cost Settings</a></p>
 
+        <!-- Guest & Operations Info (collapsible) -->
+        <div style="margin-top:1.5rem;border:1px solid #ddd;border-radius:6px;overflow:hidden;">
+          <div onclick="toggleGuestInfo(${p.id})" style="cursor:pointer;padding:0.75rem 1rem;background:#f8f8f8;display:flex;align-items:center;justify-content:space-between;user-select:none;">
+            <h3 style="margin:0;">Guest &amp; Operations Info</h3>
+            <span id="guestInfoToggle-${p.id}" style="font-size:1.2rem;transition:transform 0.2s;">&#9654;</span>
+          </div>
+          <div id="guestInfoPanel-${p.id}" style="display:none;padding:1rem;">
+            <div class="form-row">
+              <div class="form-group">
+                <label>WiFi Network</label>
+                <input type="text" name="wifi_network" value="${escHtml(p.wifi_network || '')}" placeholder="Network name">
+              </div>
+              <div class="form-group">
+                <label>WiFi Password</label>
+                <div style="position:relative;">
+                  <input type="password" name="wifi_password" value="${escHtml(p.wifi_password || '')}" placeholder="Password" style="padding-right:3rem;">
+                  <button type="button" onclick="togglePasswordField(this)" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:1px solid #ccc;border-radius:3px;padding:2px 6px;font-size:0.75rem;cursor:pointer;">Show</button>
+                </div>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Door/Key Code</label>
+                <div style="position:relative;">
+                  <input type="password" name="access_code" value="${escHtml(p.access_code || '')}" placeholder="Access code" style="padding-right:3rem;">
+                  <button type="button" onclick="togglePasswordField(this)" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);background:none;border:1px solid #ccc;border-radius:3px;padding:2px 6px;font-size:0.75rem;cursor:pointer;">Show</button>
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Emergency Contact</label>
+                <input type="text" name="emergency_contact" value="${escHtml(p.emergency_contact || '')}" placeholder="Name & phone number">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group" style="flex:1;">
+                <label>Check-in Instructions</label>
+                <textarea name="checkin_instructions" rows="3" placeholder="Instructions for guest check-in">${escHtml(p.checkin_instructions || '')}</textarea>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group" style="flex:1;">
+                <label>Check-out Instructions</label>
+                <textarea name="checkout_instructions" rows="3" placeholder="Instructions for guest check-out">${escHtml(p.checkout_instructions || '')}</textarea>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group" style="flex:1;">
+                <label>Supply Checklist</label>
+                <textarea name="supply_checklist" rows="4" placeholder="One item per line, e.g.:\nToilet paper\nSoap\nTowels">${escHtml(p.supply_checklist || '')}</textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <div class="actions" style="margin-top:1.5rem;">
           <button type="submit" class="btn btn-primary">Save Settings</button>
           <span class="save-status" id="status-${p.id}"></span>
         </div>
       </form>
     </div>`;
+}
+
+function toggleGuestInfo(propertyId) {
+  const panel = document.getElementById(`guestInfoPanel-${propertyId}`);
+  const toggle = document.getElementById(`guestInfoToggle-${propertyId}`);
+  if (!panel) return;
+  const open = panel.style.display !== 'none';
+  panel.style.display = open ? 'none' : 'block';
+  if (toggle) toggle.style.transform = open ? '' : 'rotate(90deg)';
+}
+
+function togglePasswordField(btn) {
+  const input = btn.parentElement.querySelector('input');
+  if (!input) return;
+  if (input.type === 'password') {
+    input.type = 'text';
+    btn.textContent = 'Hide';
+  } else {
+    input.type = 'password';
+    btn.textContent = 'Show';
+  }
 }
 
 async function loadProperties() {
@@ -227,6 +307,13 @@ async function saveProperty(event, id) {
     max_guests: form.max_guests.value ? parseInt(form.max_guests.value, 10) : null,
     location: form.location.value,
     neighbourhood: form.neighbourhood.value,
+    wifi_network: form.wifi_network.value,
+    wifi_password: form.wifi_password.value,
+    access_code: form.access_code.value,
+    checkin_instructions: form.checkin_instructions.value,
+    checkout_instructions: form.checkout_instructions.value,
+    supply_checklist: form.supply_checklist.value,
+    emergency_contact: form.emergency_contact.value,
   };
 
   status.textContent = 'Saving...';

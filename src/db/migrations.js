@@ -165,6 +165,32 @@ function runMigrations() {
       category_id INTEGER NOT NULL,
       FOREIGN KEY (category_id) REFERENCES expense_categories(id) ON DELETE CASCADE
     );
+
+    CREATE TABLE IF NOT EXISTS cleaner_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cleaner_id INTEGER NOT NULL,
+      month TEXT NOT NULL,
+      amount REAL NOT NULL,
+      paid_at TEXT,
+      payment_method TEXT,
+      notes TEXT,
+      FOREIGN KEY (cleaner_id) REFERENCES cleaners(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS maintenance_issues (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      property_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      category TEXT DEFAULT 'General',
+      status TEXT DEFAULT 'open',
+      priority TEXT DEFAULT 'medium',
+      reported_date TEXT NOT NULL,
+      resolved_date TEXT,
+      cost REAL DEFAULT 0,
+      assigned_to TEXT,
+      FOREIGN KEY (property_id) REFERENCES properties(id)
+    );
   `);
 
   // Add columns to existing bookings table if missing
@@ -199,6 +225,13 @@ function runMigrations() {
     ['max_guests', 'INTEGER DEFAULT 2'],
     ['location', "TEXT DEFAULT ''"],
     ['neighbourhood', "TEXT DEFAULT ''"],
+    ['wifi_network', "TEXT DEFAULT ''"],
+    ['wifi_password', "TEXT DEFAULT ''"],
+    ['access_code', "TEXT DEFAULT ''"],
+    ['checkin_instructions', "TEXT DEFAULT ''"],
+    ['checkout_instructions', "TEXT DEFAULT ''"],
+    ['supply_checklist', "TEXT DEFAULT ''"],
+    ['emergency_contact', "TEXT DEFAULT ''"],
   ];
   for (const [col, type] of propertyColumns) {
     try {

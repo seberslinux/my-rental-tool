@@ -512,6 +512,11 @@ nav .property-selector select:focus { border-color: #f59e0b; outline: none; }
 .market-position-below { color: #00aa44; }
 .market-position-at { color: #666; }
 
+/* KPI value states */
+.kpi-value.positive { color: #16a34a; }
+.kpi-value.negative { color: #dc2626; }
+.kpi-value.muted { color: #999; }
+
 /* Sentiment badges */
 .badge-positive { background: #00800020; color: #006600; }
 .badge-neutral { background: #ffa50020; color: #cc8400; }

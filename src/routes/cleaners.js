@@ -98,6 +98,62 @@ router.get('/pay-summary', (req, res) => {
   });
 });
 
+// List cleaner payments (optionally filtered by month and cleaner_id)
+router.get('/payments', (req, res) => {
+  const db = getDb();
+  let sql = 'SELECT cp.*, c.name AS cleaner_name, c.phone AS cleaner_phone FROM cleaner_payments cp JOIN cleaners c ON cp.cleaner_id = c.id WHERE 1=1';
+  const params = [];
+
+  if (req.query.month && /^\d{4}-\d{2}$/.test(req.query.month)) {
+    sql += ' AND cp.month = ?';
+    params.push(req.query.month);
+  }
+  if (req.query.cleaner_id) {
+    sql += ' AND cp.cleaner_id = ?';
+    params.push(req.query.cleaner_id);
+  }
+
+  sql += ' ORDER BY cp.month DESC, c.name ASC';
+  const payments = db.prepare(sql).all(...params);
+  res.json(payments);
+});
+
+// Create a cleaner payment
+router.post('/payments', (req, res) => {
+  const db = getDb();
+  const { cleaner_id, month, amount, payment_method, notes } = req.body;
+
+  if (!cleaner_id || !month || amount == null) {
+    return res.status(400).json({ error: 'cleaner_id, month, and amount are required' });
+  }
+
+  const result = db.prepare(
+    'INSERT INTO cleaner_payments (cleaner_id, month, amount, payment_method, notes) VALUES (?, ?, ?, ?, ?)'
+  ).run(cleaner_id, month, amount, payment_method || '', notes || '');
+
+  const payment = db.prepare('SELECT * FROM cleaner_payments WHERE id = ?').get(result.lastInsertRowid);
+  res.status(201).json(payment);
+});
+
+// Mark a payment as paid
+router.patch('/payments/:paymentId/mark-paid', (req, res) => {
+  const db = getDb();
+  const paidAt = new Date().toISOString();
+  db.prepare('UPDATE cleaner_payments SET paid_at = ? WHERE id = ?').run(paidAt, req.params.paymentId);
+
+  const payment = db.prepare('SELECT * FROM cleaner_payments WHERE id = ?').get(req.params.paymentId);
+  if (!payment) return res.status(404).json({ error: 'Payment not found' });
+  res.json(payment);
+});
+
+// Delete a payment
+router.delete('/payments/:paymentId', (req, res) => {
+  const db = getDb();
+  const result = db.prepare('DELETE FROM cleaner_payments WHERE id = ?').run(req.params.paymentId);
+  if (result.changes === 0) return res.status(404).json({ error: 'Payment not found' });
+  res.json({ deleted: true });
+});
+
 // Available cleaners for a specific date and property
 router.get('/available-for-date', (req, res) => {
   const db = getDb();

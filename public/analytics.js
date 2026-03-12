@@ -224,10 +224,51 @@ function renderOverviewCharts() {
 
 /* ───── Revenue Tab ───── */
 
+function forecastRevenue(monthlyData, targetMonth) {
+  // targetMonth: 1-12
+  const sameMonthHistorical = monthlyData.filter(m => {
+    const mo = parseInt(m.month.split('-')[1]);
+    return mo === targetMonth;
+  });
+  if (sameMonthHistorical.length >= 1) {
+    return sameMonthHistorical.reduce((s, m) => s + m.revenue, 0) / sameMonthHistorical.length;
+  }
+  const last3 = monthlyData.slice(-3);
+  return last3.reduce((s, m) => s + m.revenue, 0) / Math.max(last3.length, 1);
+}
+
+function buildSeasonalPredictions() {
+  const monthlyData = data.revenue_timeline.map(r => ({ month: r.month, revenue: r.total, bookings: r.bookings, nights: r.nights }));
+  const predictions = [];
+  if (monthlyData.length < 1) return predictions;
+  const today = new Date();
+  for (let i = 1; i <= 3; i++) {
+    const futureDate = new Date(today);
+    futureDate.setMonth(futureDate.getMonth() + i);
+    const mo = futureDate.getMonth() + 1;
+    const month = futureDate.toISOString().substring(0, 7);
+    const predicted_revenue = Math.round(forecastRevenue(monthlyData, mo));
+    // Estimate bookings/nights using same seasonal approach
+    const sameMonth = monthlyData.filter(m => parseInt(m.month.split('-')[1]) === mo);
+    let predicted_bookings, predicted_nights;
+    if (sameMonth.length >= 1) {
+      predicted_bookings = Math.round(sameMonth.reduce((s, m) => s + m.bookings, 0) / sameMonth.length);
+      predicted_nights = Math.round(sameMonth.reduce((s, m) => s + m.nights, 0) / sameMonth.length);
+    } else {
+      const last3 = monthlyData.slice(-3);
+      predicted_bookings = Math.round(last3.reduce((s, m) => s + m.bookings, 0) / Math.max(last3.length, 1));
+      predicted_nights = Math.round(last3.reduce((s, m) => s + m.nights, 0) / Math.max(last3.length, 1));
+    }
+    predictions.push({ month, predicted_revenue, predicted_bookings, predicted_nights });
+  }
+  return predictions;
+}
+
 function renderRevenueTab() {
-  // Revenue with predictions
+  // Revenue with seasonal predictions
   const rev = data.revenue_timeline.slice(-12).map(r => ({ ...r, predicted: false }));
-  for (const p of data.predictions) {
+  const seasonalPreds = buildSeasonalPredictions();
+  for (const p of seasonalPreds) {
     rev.push({ month: p.month, total: p.predicted_revenue, predicted: true });
   }
   renderBarChartWithPredictions('revenuePredictionChart', rev, 'month', 'total', fmtMonth);
@@ -775,6 +816,15 @@ async function saveExtractedReviews(reviews) {
 function renderInsightsTab() {
   const s = data.summary;
   const insights = [];
+  const properties = data._properties || [];
+  const propNameMap = {};
+  for (const p of properties) propNameMap[p.id] = p.name;
+
+  // Helper to prefix property name
+  function propPrefix(propId) {
+    const name = propNameMap[propId];
+    return name ? `<strong>${escHtml(name)}</strong> ` : '';
+  }
 
   // Best performing channel
   const sortedChannels = [...data.channel_stats].sort((a, b) => b.revenue - a.revenue);
@@ -801,7 +851,7 @@ function renderInsightsTab() {
   // VRBO-specific insight
   const vrboChannel = data.channel_stats.find(c => normalizePlatform(c.channel) === 'VRBO');
   if (vrboChannel && sortedChannels.length > 1) {
-    const vrboShare = vrboChannel.revenue / sortedChannels.reduce((s, c) => s + c.revenue, 0) * 100;
+    const vrboShare = vrboChannel.revenue / sortedChannels.reduce((t, c) => t + c.revenue, 0) * 100;
     if (vrboShare < 10) {
       insights.push({
         type: 'neutral',
@@ -820,20 +870,55 @@ function renderInsightsTab() {
     }
   }
 
-  // Occupancy trends
-  const recentOcc = data.occupancy_timeline.slice(-6);
-  if (recentOcc.length > 0) {
-    const avgOcc = Math.round(recentOcc.reduce((sum, o) => sum + o.occupancy_rate, 0) / recentOcc.length);
-    if (avgOcc < 50) {
-      insights.push({
-        type: 'negative',
-        text: `Average occupancy is <strong>${avgOcc}%</strong> over recent months. Consider lowering prices, running promotions, or listing on additional channels.`,
-      });
-    } else if (avgOcc > 85) {
-      insights.push({
-        type: 'positive',
-        text: `Excellent occupancy at <strong>${avgOcc}%</strong>! You may be able to increase prices, especially on high-demand dates.`,
-      });
+  // Per-property occupancy insights
+  const occByProperty = {};
+  for (const o of data.occupancy_timeline) {
+    const pid = o.property_id;
+    if (!occByProperty[pid]) occByProperty[pid] = [];
+    occByProperty[pid].push(o);
+  }
+
+  // Seasonality data for historical averages
+  const seasonality = data._seasonality || {};
+  const seasonalMonthly = seasonality.monthly_avg_occupancy || [];
+
+  // Current month string e.g. "2026-03"
+  const now = new Date();
+  const currentMonthStr = now.toISOString().substring(0, 7);
+  const currentMonthNum = now.getMonth() + 1;
+  const historicalAvgForCurrentMonth = seasonalMonthly.find(m => m.month_num === currentMonthNum);
+
+  for (const pid of Object.keys(occByProperty)) {
+    const propOcc = occByProperty[pid];
+    const propName = propNameMap[pid] || 'Unknown';
+    const recentPropOcc = propOcc.slice(-6);
+
+    if (recentPropOcc.length > 0) {
+      const avgOcc = Math.round(recentPropOcc.reduce((sum, o) => sum + o.occupancy_rate, 0) / recentPropOcc.length);
+      if (avgOcc < 50) {
+        insights.push({
+          type: 'negative',
+          text: `<strong>${escHtml(propName)}</strong> average occupancy is <strong>${avgOcc}%</strong> over recent months. Consider lowering prices, running promotions, or listing on additional channels.`,
+        });
+      } else if (avgOcc > 85) {
+        insights.push({
+          type: 'positive',
+          text: `<strong>${escHtml(propName)}</strong> excellent occupancy at <strong>${avgOcc}%</strong>! You may be able to increase prices, especially on high-demand dates.`,
+        });
+      }
+    }
+
+    // Current month occupancy vs historical average alert
+    const currentMonthOcc = propOcc.find(o => o.month === currentMonthStr);
+    if (currentMonthOcc && historicalAvgForCurrentMonth) {
+      const currentRate = currentMonthOcc.occupancy_rate;
+      const historicalRate = historicalAvgForCurrentMonth.avg_occupancy;
+      if (historicalRate - currentRate > 20) {
+        insights.push({
+          type: 'negative',
+          text: `<strong>${escHtml(propName)}</strong> is running at ${currentRate}% occupancy this month vs its ${historicalRate}% historical average.`,
+        });
+      }
     }
   }
 
@@ -892,8 +977,8 @@ function renderInsightsTab() {
     ? '<div style="color:#999;">Not enough data for insights. Sync your booking history first.</div>'
     : insights.map(i => `<div class="insight ${i.type}">${i.text}</div>`).join('');
 
-  // Predictions table
-  const preds = data.predictions;
+  // Predictions table (seasonal weighting)
+  const preds = buildSeasonalPredictions();
   document.getElementById('predictionsTable').innerHTML = preds.length === 0
     ? '<tbody><tr><td>Need at least 3 months of data for predictions.</td></tr></tbody>'
     : `<thead><tr><th>Month</th><th>Predicted Revenue</th><th>Est. Bookings</th><th>Est. Nights</th></tr></thead>
@@ -901,6 +986,11 @@ function renderInsightsTab() {
          <td>${fmtMonth(p.month)} <span class="prediction-badge">forecast</span></td>
          <td>R ${fmtNum(p.predicted_revenue)}</td><td>~${p.predicted_bookings}</td><td>~${p.predicted_nights}</td>
        </tr>`).join('')}</tbody>`;
+  // Add forecast methodology note
+  const predsTable = document.getElementById('predictionsTable');
+  if (predsTable && preds.length > 0) {
+    predsTable.insertAdjacentHTML('afterend', '<p style="color:#999;font-size:0.8rem;margin-top:0.5rem;">Based on same-month historical data where available, otherwise 3-month average.</p>');
+  }
 
   // Pipeline
   document.getElementById('pipelineSummary').innerHTML = `

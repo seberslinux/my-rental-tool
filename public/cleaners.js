@@ -6,6 +6,7 @@ let cleanerCalendarMonth = {};
 let combinedMonth = new Date();
 let viewMode = 'per-cleaner';
 let payData = null;
+let payPayments = [];
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
@@ -570,11 +571,33 @@ async function loadPaySummary(month) {
     const propParam = typeof getPropertyIdsParam === 'function' ? getPropertyIdsParam() : 'all';
     let url = `/api/cleaners/pay-summary?month=${month}`;
     if (propParam && propParam !== 'all') url += `&property_id=${propParam}`;
-    payData = await api(url);
+
+    const [summaryData, payments] = await Promise.all([
+      api(url),
+      api(`/api/cleaners/payments?month=${month}`),
+    ]);
+
+    payData = summaryData;
+    payPayments = payments;
     renderPaySummary(payData);
+    loadPaymentHistory();
   } catch (err) {
     container.innerHTML = `<div class="alert alert-error">Failed to load pay summary: ${err.message}</div>`;
   }
+}
+
+function getPaymentForCleaner(cleanerId, month) {
+  return payPayments.find(p => p.cleaner_id === cleanerId && p.month === month);
+}
+
+function buildWhatsAppUrl(cleaner, amount, month) {
+  const c = allCleaners.find(cl => cl.id === cleaner.cleaner_id);
+  if (!c || !c.phone) return '';
+  const phone = c.phone.replace(/^\+/, '');
+  const name = encodeURIComponent(c.name);
+  const amountStr = encodeURIComponent('R' + fmtNum(amount));
+  const monthStr = encodeURIComponent(month);
+  return `https://wa.me/${phone}?text=Hi%20${name},%20your%20payment%20of%20${amountStr}%20for%20${monthStr}%20has%20been%20processed.`;
 }
 
 function renderPaySummary(data) {
@@ -595,35 +618,168 @@ function renderPaySummary(data) {
         <th>Hours/Job</th>
         <th>Rate</th>
         <th style="text-align:right;">Amount (ZAR)</th>
+        <th>Payment Status</th>
       </tr>
     </thead>
     <tbody>`;
 
   for (const cleaner of data.cleaners) {
+    const payment = getPaymentForCleaner(cleaner.cleaner_id, data.month);
+    const whatsAppUrl = buildWhatsAppUrl(cleaner, cleaner.subtotal, data.month);
+
     for (let i = 0; i < cleaner.jobs.length; i++) {
       const job = cleaner.jobs[i];
-      html += `<tr>
-        ${i === 0 ? `<td rowspan="${cleaner.jobs.length}" style="font-weight:600;vertical-align:top;">${escHtml(cleaner.cleaner_name)}</td>` : ''}
+      html += `<tr>`;
+
+      if (i === 0) {
+        const rowspan = cleaner.jobs.length;
+        html += `<td rowspan="${rowspan}" style="font-weight:600;vertical-align:top;">
+          ${escHtml(cleaner.cleaner_name)}
+          ${whatsAppUrl ? `<a href="${whatsAppUrl}" target="_blank" rel="noopener" title="Send WhatsApp payment notification" style="margin-left:0.4rem;text-decoration:none;font-size:1.1rem;vertical-align:middle;">&#128172;</a>` : ''}
+        </td>`;
+      }
+
+      html += `
         <td>${escHtml(job.property_name)}</td>
         <td>${job.cleaning_date}</td>
         <td>${job.rate_type === 'flat' ? 'Flat' : fmtNum(job.hours) + ' hrs'}</td>
         <td>R ${fmtNum(job.rate)}${job.rate_type === 'flat' ? '/job' : '/hr'}</td>
-        <td style="text-align:right;">R ${fmtNum(job.amount)}</td>
-      </tr>`;
+        <td style="text-align:right;">R ${fmtNum(job.amount)}</td>`;
+
+      if (i === 0) {
+        html += `<td rowspan="${cleaner.jobs.length}" style="vertical-align:top;">`;
+        if (payment && payment.paid_at) {
+          const paidDate = new Date(payment.paid_at).toLocaleDateString();
+          html += `<span style="background:#00800020;color:#166534;padding:0.2rem 0.5rem;border-radius:4px;font-size:0.85rem;font-weight:600;">Paid on ${escHtml(paidDate)}</span>`;
+          if (payment.payment_method) {
+            html += `<br><span style="font-size:0.8rem;color:#666;margin-top:0.2rem;display:inline-block;">via ${escHtml(payment.payment_method)}</span>`;
+          }
+        } else {
+          html += `<div id="pay-action-${cleaner.cleaner_id}">
+            <button class="btn btn-primary btn-sm" onclick="showPayForm(${cleaner.cleaner_id}, ${cleaner.subtotal})">Mark as Paid</button>
+          </div>`;
+        }
+        html += `</td>`;
+      }
+
+      html += `</tr>`;
     }
     html += `<tr style="background:#f0f0f0;font-weight:600;">
-      <td colspan="5" style="text-align:right;">Subtotal - ${escHtml(cleaner.cleaner_name)}</td>
-      <td style="text-align:right;">R ${fmtNum(cleaner.subtotal)}</td>
+      <td colspan="6" style="text-align:right;">Subtotal - ${escHtml(cleaner.cleaner_name)}</td>
+      <td></td>
     </tr>`;
   }
 
   html += `<tr style="background:#e0e7ff;font-weight:700;font-size:1.1rem;">
-    <td colspan="5" style="text-align:right;">Grand Total</td>
+    <td colspan="6" style="text-align:right;">Grand Total</td>
     <td style="text-align:right;">R ${fmtNum(data.grand_total)}</td>
   </tr>`;
 
   html += '</tbody></table>';
   container.innerHTML = html;
+}
+
+function showPayForm(cleanerId, amount) {
+  const el = document.getElementById(`pay-action-${cleanerId}`);
+  if (!el) return;
+  el.innerHTML = `
+    <div style="display:flex;flex-direction:column;gap:0.3rem;">
+      <select id="pay-method-${cleanerId}" style="font-size:0.85rem;padding:0.2rem;">
+        <option value="EFT">EFT</option>
+        <option value="Cash">Cash</option>
+        <option value="PayFast">PayFast</option>
+        <option value="Other">Other</option>
+      </select>
+      <div style="display:flex;gap:0.3rem;">
+        <button class="btn btn-primary btn-sm" onclick="confirmPayment(${cleanerId}, ${amount})">Confirm</button>
+        <button class="btn btn-secondary btn-sm" onclick="cancelPayForm(${cleanerId}, ${amount})">Cancel</button>
+      </div>
+    </div>`;
+}
+
+function cancelPayForm(cleanerId, amount) {
+  const el = document.getElementById(`pay-action-${cleanerId}`);
+  if (!el) return;
+  el.innerHTML = `<button class="btn btn-primary btn-sm" onclick="showPayForm(${cleanerId}, ${amount})">Mark as Paid</button>`;
+}
+
+async function confirmPayment(cleanerId, amount) {
+  const method = document.getElementById(`pay-method-${cleanerId}`).value;
+  const month = document.getElementById('payMonthInput').value;
+  if (!month) return;
+
+  try {
+    // Create the payment record
+    const payment = await api('/api/cleaners/payments', {
+      method: 'POST',
+      body: JSON.stringify({
+        cleaner_id: cleanerId,
+        month: month,
+        amount: amount,
+        payment_method: method,
+        notes: '',
+      }),
+    });
+
+    // Mark it as paid
+    await api(`/api/cleaners/payments/${payment.id}/mark-paid`, { method: 'PATCH' });
+
+    // Reload
+    loadPaySummary(month);
+  } catch (err) {
+    alert('Failed to record payment: ' + err.message);
+  }
+}
+
+/* ───── Payment History ───── */
+
+async function loadPaymentHistory() {
+  const container = document.getElementById('paymentHistoryContainer');
+  if (!container) return;
+
+  try {
+    const payments = await api('/api/cleaners/payments');
+
+    if (!payments || payments.length === 0) {
+      container.innerHTML = '<p style="color:#999;">No payments recorded yet.</p>';
+      return;
+    }
+
+    let html = `
+    <table class="table" style="margin-top:1rem;">
+      <thead>
+        <tr>
+          <th>Cleaner</th>
+          <th>Month</th>
+          <th style="text-align:right;">Amount</th>
+          <th>Method</th>
+          <th>Paid Date</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+    for (const p of payments) {
+      const paidDate = p.paid_at ? new Date(p.paid_at).toLocaleDateString() : '-';
+      const status = p.paid_at
+        ? '<span style="background:#00800020;color:#166534;padding:0.15rem 0.4rem;border-radius:4px;font-size:0.8rem;font-weight:600;">Paid</span>'
+        : '<span style="background:#ff000015;color:#991b1b;padding:0.15rem 0.4rem;border-radius:4px;font-size:0.8rem;font-weight:600;">Pending</span>';
+
+      html += `<tr>
+        <td>${escHtml(p.cleaner_name || '')}</td>
+        <td>${escHtml(p.month)}</td>
+        <td style="text-align:right;">R ${fmtNum(p.amount)}</td>
+        <td>${escHtml(p.payment_method || '-')}</td>
+        <td>${paidDate}</td>
+        <td>${status}</td>
+      </tr>`;
+    }
+
+    html += '</tbody></table>';
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = `<div class="alert alert-error">Failed to load payment history: ${err.message}</div>`;
+  }
 }
 
 /* ───── Export CSV ───── */
@@ -675,3 +831,4 @@ if (payInput) {
 }
 
 loadData();
+loadPaymentHistory();

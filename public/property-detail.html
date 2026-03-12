@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Property Performance - Rental Manager</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .kpi-card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 1.2rem;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    .kpi-card .kpi-value {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: #1a1a2e;
+    }
+    .kpi-card .kpi-label {
+      color: #666;
+      font-size: 0.85rem;
+      margin-top: 0.3rem;
+    }
+    .prop-header {
+      background: #fff;
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .prop-header h1 { margin-bottom: 0.3rem; }
+    .prop-meta {
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      color: #666;
+      font-size: 0.9rem;
+      margin-top: 0.5rem;
+    }
+    .prop-meta span { display: flex; align-items: center; gap: 0.3rem; }
+    .chart-container {
+      background: #fff;
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .chart-container h3 {
+      margin-bottom: 1rem;
+      color: #1a1a2e;
+    }
+    .bar-chart {
+      display: flex;
+      align-items: flex-end;
+      gap: 3px;
+      height: 200px;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 4px;
+    }
+    .bar-chart .bar-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+      height: 100%;
+      min-width: 0;
+    }
+    .bar-chart .bar {
+      width: 100%;
+      max-width: 50px;
+      border-radius: 3px 3px 0 0;
+      transition: height 0.3s;
+      position: relative;
+      cursor: default;
+    }
+    .bar-chart .bar:hover { opacity: 0.85; }
+    .bar-chart .bar-label {
+      font-size: 0.65rem;
+      color: #666;
+      margin-top: 4px;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+    .bar-chart .bar-value {
+      font-size: 0.6rem;
+      color: #333;
+      margin-bottom: 2px;
+      white-space: nowrap;
+    }
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    .data-table th, .data-table td {
+      padding: 0.6rem 0.8rem;
+      text-align: left;
+      border-bottom: 1px solid #eee;
+    }
+    .data-table th {
+      background: #f8f8f8;
+      font-weight: 600;
+      color: #555;
+    }
+    .data-table tr:hover { background: #f8f9ff; }
+    .review-card {
+      border: 1px solid #eee;
+      border-radius: 6px;
+      padding: 1rem;
+      margin-bottom: 0.8rem;
+    }
+    .review-card .stars {
+      color: #ff9900;
+      font-size: 1.1rem;
+    }
+    .review-card .review-meta {
+      font-size: 0.8rem;
+      color: #999;
+      margin-top: 0.3rem;
+    }
+    .review-card .review-comment {
+      margin-top: 0.5rem;
+      font-size: 0.9rem;
+      color: #333;
+    }
+    .back-link {
+      display: inline-block;
+      margin-bottom: 1rem;
+      color: #1a1a2e;
+      text-decoration: none;
+      font-size: 0.9rem;
+    }
+    .back-link:hover { text-decoration: underline; }
+    @media (max-width: 768px) {
+      .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <span class="logo">Rental Manager</span>
+    <div class="nav-links">
+      <a href="/">Dashboard</a>
+      <a href="/properties.html">Properties</a>
+      <a href="/cleaners.html">Cleaners</a>
+      <a href="/analytics.html">Analytics</a>
+      <a href="/finances.html">Finances</a>
+    </div>
+    <div class="property-selector"><select id="globalPropertySelect"></select></div>
+  </nav>
+
+  <div class="container">
+    <a href="/properties.html" class="back-link">&larr; Back to Properties</a>
+
+    <div id="propertyHeader" class="prop-header">
+      <div class="loading">Loading property...</div>
+    </div>
+
+    <div class="kpi-grid" id="kpiGrid"></div>
+
+    <div class="chart-container">
+      <h3>Monthly Revenue &amp; Occupancy (Last 12 Months)</h3>
+      <div class="bar-chart" id="monthlyChart"></div>
+    </div>
+
+    <div class="chart-container">
+      <h3>Upcoming Bookings</h3>
+      <table class="data-table" id="upcomingTable">
+        <thead>
+          <tr>
+            <th>Guest</th>
+            <th>Check-in</th>
+            <th>Check-out</th>
+            <th>Nights</th>
+            <th>Platform</th>
+            <th>Revenue</th>
+          </tr>
+        </thead>
+        <tbody id="upcomingBody"></tbody>
+      </table>
+    </div>
+
+    <div class="chart-container">
+      <h3>Recent Reviews</h3>
+      <div id="reviewsList"></div>
+    </div>
+  </div>
+
+  <script src="shared.js"></script>
+  <script src="property-detail.js"></script>
+</body>
+</html>

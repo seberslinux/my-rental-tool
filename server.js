@@ -21,6 +21,7 @@ app.use('/api/cleaners', require('./src/routes/cleaners'));
 app.use('/api/pricing', require('./src/routes/pricing'));
 app.use('/api/analytics', require('./src/routes/analytics'));
 app.use('/api/finances', require('./src/routes/finances'));
+app.use('/api/maintenance', require('./src/routes/maintenance'));
 app.use('/webhook', require('./src/routes/webhook'));
 
 // Cron jobs

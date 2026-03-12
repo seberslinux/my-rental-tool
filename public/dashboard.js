@@ -83,9 +83,10 @@ async function loadAll() {
     ];
 
     // Finances PnL — may not be available yet
+    const propParam = getPropertyIdsParam();
     let pnlPromise;
     try {
-      pnlPromise = api(`/api/finances/pnl?from=${monthStart}&to=${monthEnd}`);
+      pnlPromise = api(`/api/finances/pnl?property_id=${encodeURIComponent(propParam)}&from=${monthStart}&to=${monthEnd}`);
     } catch (_) {
       pnlPromise = Promise.resolve(null);
     }
@@ -102,6 +103,8 @@ async function loadAll() {
     renderKpis(pnlData);
     renderStats(propertiesData);
     renderCheckouts();
+    renderCheckins();
+    renderAlerts();
     renderGaps();
     renderBookings();
     renderJobs();
@@ -119,8 +122,10 @@ async function loadAll() {
 function renderKpis(pnl) {
   const grid = document.getElementById('kpiRow');
 
-  const revenueThisMonth = (pnl && pnl.total_revenue != null) ? pnl.total_revenue : 0;
-  const profitThisMonth = (pnl && pnl.net_profit != null) ? pnl.net_profit : 0;
+  const summary = (pnl && pnl.summary) ? pnl.summary : {};
+  const revenueThisMonth = summary.total_revenue || 0;
+  const profitThisMonth = summary.net_profit || 0;
+  const totalCosts = summary.total_costs || 0;
 
   // Pipeline: future confirmed bookings revenue
   const today = new Date().toISOString().split('T')[0];
@@ -135,13 +140,30 @@ function renderKpis(pnl) {
     ? Math.round(filteredOcc.reduce((s, o) => s + o.occupancy_rate, 0) / filteredOcc.length)
     : 0;
 
+  const profitStyle = totalCosts === 0 ? 'color:#999' : (profitThisMonth >= 0 ? 'color:#16a34a' : 'color:#dc2626');
+  const profitNote = totalCosts === 0 ? ' *' : '';
+
+  // ADR (30d): sum of total_price / sum of nights for confirmed bookings with check_in in last 30 days
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const recent30 = filterByProperty(bookings, 'property_id')
+    .filter((b) => b.status === 'confirmed' && b.check_in >= thirtyDaysAgo && b.check_in <= today);
+  const totalPrice30 = recent30.reduce((sum, b) => sum + (b.total_price || 0), 0);
+  const totalNights30 = recent30.reduce((sum, b) => {
+    const ci = new Date(b.check_in);
+    const co = new Date(b.check_out);
+    const nights = Math.max(1, Math.round((co - ci) / (24 * 60 * 60 * 1000)));
+    return sum + nights;
+  }, 0);
+  const adr = totalNights30 > 0 ? totalPrice30 / totalNights30 : 0;
+  const revpar = adr * (avgOcc / 100);
+
   grid.innerHTML = `
     <div class="stat-card">
       <div class="value">R ${fmtNum(revenueThisMonth)}</div>
       <div class="label">Revenue This Month</div>
     </div>
     <div class="stat-card">
-      <div class="value">R ${fmtNum(profitThisMonth)}</div>
+      <div class="value" style="${profitStyle}">R ${fmtNum(profitThisMonth)}${profitNote}</div>
       <div class="label">Profit This Month</div>
     </div>
     <div class="stat-card">
@@ -151,7 +173,28 @@ function renderKpis(pnl) {
     <div class="stat-card">
       <div class="value">${avgOcc}%</div>
       <div class="label">Avg Occupancy (30d)</div>
+    </div>
+    <div class="stat-card">
+      <div class="value">R ${fmtNum(adr)}</div>
+      <div class="label">ADR (30d)</div>
+    </div>
+    <div class="stat-card">
+      <div class="value">R ${fmtNum(revpar)}</div>
+      <div class="label">RevPAR (30d)</div>
     </div>`;
+
+  // Warning banner when no costs configured
+  let banner = document.getElementById('noCostsBanner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'noCostsBanner';
+    grid.parentNode.insertBefore(banner, grid.nextSibling);
+  }
+  if (totalCosts === 0 && revenueThisMonth > 0) {
+    banner.innerHTML = '<div style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:0.6rem 1rem;border-radius:6px;margin-top:0.5rem;font-size:0.9rem;">No costs configured — profit figures are estimates only. <a href="/finances.html" style="color:#92400e;font-weight:600;">Add fixed costs in Cost Settings</a></div>';
+  } else {
+    banner.innerHTML = '';
+  }
 }
 
 /* ───── Stats grid (occupancy per property) ───── */
@@ -219,6 +262,118 @@ function renderCheckouts() {
     .join('');
 }
 
+/* ───── Upcoming check-ins ───── */
+
+function renderCheckins() {
+  const tbody = document.getElementById('checkinTable');
+  const today = new Date().toISOString().split('T')[0];
+  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+  const checkins = filterByProperty(bookings, 'property_id')
+    .filter((b) => b.status === 'confirmed' && b.check_in >= today && b.check_in <= tomorrow);
+
+  if (checkins.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="5">No upcoming check-ins in the next 48 hours.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = checkins
+    .map((b) => {
+      const ci = new Date(b.check_in);
+      const co = new Date(b.check_out);
+      const nights = Math.max(1, Math.round((co - ci) / (24 * 60 * 60 * 1000)));
+      return `
+      <tr style="background:#00aa0008">
+        <td>${escHtml(b.property_name)}</td>
+        <td>${escHtml(b.guest_name) || '-'}</td>
+        <td>${b.check_in}</td>
+        <td>${platformBadge(b.platform)}</td>
+        <td>${nights}</td>
+      </tr>`;
+    })
+    .join('');
+}
+
+/* ───── Needs Attention alerts ───── */
+
+function renderAlerts() {
+  const container = document.getElementById('alertsList');
+  const alerts = [];
+  const today = new Date().toISOString().split('T')[0];
+  const in7days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const jobs = stats.pending_cleaning_jobs || [];
+
+  // 1. Unassigned cleaners: bookings with check_out in next 7 days, no matching cleaning job
+  const upcomingCheckouts = filterByProperty(bookings, 'property_id')
+    .filter((b) => b.status === 'confirmed' && b.check_out >= today && b.check_out <= in7days);
+  for (const b of upcomingCheckouts) {
+    const hasJob = jobs.some((j) => {
+      const jDate = j.cleaning_date;
+      const coDate = b.check_out;
+      return String(j.property_id) === String(b.property_id) && jDate === coDate;
+    });
+    if (!hasJob) {
+      alerts.push({
+        level: 'red',
+        text: 'Unassigned cleaner for ' + escHtml(b.property_name) + ' checkout on ' + escHtml(b.check_out),
+        link: '/cleaners.html',
+        linkText: 'Assign cleaner'
+      });
+    }
+  }
+
+  // 2. Short gaps: count gaps of 1-3 nights this month
+  const gaps = filterByProperty(stats.gaps || [], 'property_id');
+  const shortGapCount = gaps.length;
+  if (shortGapCount > 0) {
+    alerts.push({
+      level: 'amber',
+      text: shortGapCount + ' short gap' + (shortGapCount > 1 ? 's' : '') + ' (1-3 nights) this month — consider last-minute pricing',
+      link: '/properties.html',
+      linkText: 'Update pricing'
+    });
+  }
+
+  // 3. Base price not set
+  const filteredProps = filterByProperty(properties, 'id');
+  for (const p of filteredProps) {
+    if (!p.base_price || p.base_price === 0) {
+      alerts.push({
+        level: 'amber',
+        text: 'Base price not set for ' + escHtml(p.name),
+        link: '/properties.html',
+        linkText: 'Update pricing'
+      });
+    }
+  }
+
+  // 4. No costs configured
+  if (pnlData && pnlData.summary && pnlData.summary.total_costs === 0) {
+    alerts.push({
+      level: 'amber',
+      text: 'No fixed costs entered — profit data unreliable',
+      link: '/finances.html',
+      linkText: 'Add costs'
+    });
+  }
+
+  if (alerts.length === 0) {
+    container.innerHTML = '<p style="color:#666;">No alerts at this time.</p>';
+    return;
+  }
+
+  container.innerHTML = alerts.map((a) => {
+    const isRed = a.level === 'red';
+    const borderColor = isRed ? '#dc2626' : '#f59e0b';
+    const bgColor = isRed ? '#fef2f2' : '#fffbeb';
+    const textColor = isRed ? '#991b1b' : '#92400e';
+    return `<div style="border-left:4px solid ${borderColor};background:${bgColor};padding:0.6rem 1rem;margin-bottom:0.5rem;border-radius:0 6px 6px 0;color:${textColor};display:flex;justify-content:space-between;align-items:center;">
+      <span>${a.text}</span>
+      <a href="${a.link}" style="color:${textColor};font-weight:600;white-space:nowrap;margin-left:1rem;">${escHtml(a.linkText)} &rarr;</a>
+    </div>`;
+  }).join('');
+}
+
 /* ───── Assign cleaner modal ───── */
 
 function openAssignModal(bookingId, propertyId, date) {
@@ -283,21 +438,72 @@ function renderGaps() {
   const gaps = filterByProperty(stats.gaps || [], 'property_id');
 
   if (gaps.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="4">No short gaps detected.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5">No short gaps detected.</td></tr>';
     return;
   }
 
   tbody.innerHTML = gaps
     .map(
-      (g) => `
+      (g, i) => `
       <tr style="background:#ffa50008">
         <td>${escHtml(g.property_name)}</td>
         <td>${g.gap_start}</td>
         <td>${g.gap_end}</td>
         <td><span class="badge badge-gap">${g.nights} night${g.nights > 1 ? 's' : ''}</span></td>
+        <td><button class="btn btn-primary btn-sm" onclick="openGapDiscountModal(${i})">Apply Discount</button></td>
       </tr>`
     )
     .join('');
+}
+
+/* ───── Gap discount modal ───── */
+
+let _currentGapPromoText = '';
+
+function openGapDiscountModal(gapIndex) {
+  const gaps = filterByProperty(stats.gaps || [], 'property_id');
+  const g = gaps[gapIndex];
+  if (!g) return;
+
+  const prop = properties.find((p) => String(p.id) === String(g.property_id));
+  const basePrice = prop && prop.base_price ? Number(prop.base_price) : 0;
+  const discountPct = g.nights === 1 ? 15 : 10;
+  const discountedPrice = Math.round(basePrice * (1 - discountPct / 100));
+
+  document.getElementById('gapDiscountInfo').innerHTML =
+    '<strong>' + escHtml(g.property_name) + '</strong> — ' + escHtml(g.gap_start) + ' to ' + escHtml(g.gap_end) + ' (' + g.nights + ' night' + (g.nights > 1 ? 's' : '') + ')';
+  document.getElementById('gapBasePrice').textContent = 'R ' + fmtNum(basePrice) + '/night';
+  document.getElementById('gapDiscountPct').textContent = discountPct + '%';
+  document.getElementById('gapDiscountedPrice').textContent = 'R ' + fmtNum(discountedPrice) + '/night';
+
+  _currentGapPromoText = g.nights + ' night' + (g.nights > 1 ? 's' : '') + ' available ' + g.gap_start + ' to ' + g.gap_end + ' \u2014 book now for R' + discountedPrice + '/night!';
+
+  document.getElementById('gapCopyPromoBtn').textContent = 'Copy Promo Text';
+  document.getElementById('gapDiscountModal').style.display = 'flex';
+}
+
+function closeGapDiscountModal() {
+  document.getElementById('gapDiscountModal').style.display = 'none';
+}
+
+function copyGapPromoText() {
+  navigator.clipboard.writeText(_currentGapPromoText).then(function() {
+    document.getElementById('gapCopyPromoBtn').textContent = 'Copied!';
+    setTimeout(function() {
+      document.getElementById('gapCopyPromoBtn').textContent = 'Copy Promo Text';
+    }, 2000);
+  }).catch(function() {
+    var ta = document.createElement('textarea');
+    ta.value = _currentGapPromoText;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    document.getElementById('gapCopyPromoBtn').textContent = 'Copied!';
+    setTimeout(function() {
+      document.getElementById('gapCopyPromoBtn').textContent = 'Copy Promo Text';
+    }, 2000);
+  });
 }
 
 /* ───── All Bookings ───── */
@@ -344,13 +550,27 @@ function renderBookings() {
 function renderJobs() {
   const tbody = document.getElementById('jobsTable');
   const jobs = filterByProperty(stats.pending_cleaning_jobs || [], 'property_id');
+  const today = new Date().toISOString().split('T')[0];
+  const in7days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-  if (jobs.length === 0) {
+  // Find upcoming checkouts (next 7 days) with no matching cleaning job
+  const upcomingCheckouts = filterByProperty(bookings, 'property_id')
+    .filter((b) => b.status === 'confirmed' && b.check_out >= today && b.check_out <= in7days);
+
+  const unassignedRows = [];
+  for (const b of upcomingCheckouts) {
+    const hasJob = jobs.some((j) => String(j.property_id) === String(b.property_id) && j.cleaning_date === b.check_out);
+    if (!hasJob) {
+      unassignedRows.push(b);
+    }
+  }
+
+  if (jobs.length === 0 && unassignedRows.length === 0) {
     tbody.innerHTML = '<tr><td colspan="5">No pending cleaning jobs.</td></tr>';
     return;
   }
 
-  tbody.innerHTML = jobs
+  let html = jobs
     .map(
       (j) => `
       <tr>
@@ -362,6 +582,21 @@ function renderJobs() {
       </tr>`
     )
     .join('');
+
+  html += unassignedRows
+    .map(
+      (b) => `
+      <tr style="background:#fef2f2">
+        <td>${escHtml(b.property_name)}</td>
+        <td><span style="color:#dc2626;font-weight:600;">Unassigned</span></td>
+        <td>${b.check_out}</td>
+        <td>-</td>
+        <td><a class="btn btn-primary btn-sm" href="/cleaners.html">Assign</a></td>
+      </tr>`
+    )
+    .join('');
+
+  tbody.innerHTML = html;
 }
 
 /* ───── Property filter for calendar ───── */
@@ -566,6 +801,8 @@ window.addEventListener('propertyChanged', () => {
   renderKpis(pnlData);
   renderStats(properties);
   renderCheckouts();
+  renderCheckins();
+  renderAlerts();
   renderGaps();
   renderBookings();
   renderJobs();
