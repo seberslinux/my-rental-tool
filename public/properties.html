@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Properties - Rental Manager</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <nav>
+    <span class="logo">Rental Manager</span>
+    <div class="nav-links">
+      <a href="/">Dashboard</a>
+      <a href="/properties.html" class="active">Properties</a>
+      <a href="/cleaners.html">Cleaners</a>
+      <a href="/analytics.html">Analytics</a>
+      <a href="/finances.html">Finances</a>
+    </div>
+    <div class="property-selector"><select id="globalPropertySelect"></select></div>
+  </nav>
+
+  <div class="container">
+    <h1>Property Settings</h1>
+    <p style="color:#666;margin-bottom:1.5rem;">
+      Sync properties from Smoobu first, then configure settings for each property below.
+    </p>
+
+    <div id="propertiesList">
+      <div class="loading">Loading properties...</div>
+    </div>
+  </div>
+
+  <script src="shared.js"></script>
+  <script src="properties.js"></script>
+</body>
+</html>

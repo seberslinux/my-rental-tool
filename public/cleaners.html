@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cleaners - Rental Manager</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <nav>
+    <span class="logo">Rental Manager</span>
+    <div class="nav-links">
+      <a href="/">Dashboard</a>
+      <a href="/properties.html">Properties</a>
+      <a href="/cleaners.html" class="active">Cleaners</a>
+      <a href="/analytics.html">Analytics</a>
+      <a href="/finances.html">Finances</a>
+      <select id="globalPropertySelect"></select>
+    </div>
+  </nav>
+
+  <div class="container">
+    <h1>Cleaner Management</h1>
+
+    <!-- Add Cleaner Form -->
+    <div class="card">
+      <h2>Add New Cleaner</h2>
+      <form id="addCleanerForm" onsubmit="addCleaner(event)">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" name="name" required placeholder="Full name">
+          </div>
+          <div class="form-group">
+            <label>WhatsApp Phone (E.164)</label>
+            <input type="tel" name="phone" required placeholder="+27821234567" pattern="\+\d{10,15}">
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" name="email" placeholder="Optional">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Rate Type</label>
+            <div style="display:flex;gap:1rem;margin-top:0.3rem;">
+              <label><input type="radio" name="rate_type" value="hourly" checked onchange="toggleAddRate(this.value)"> Hourly</label>
+              <label><input type="radio" name="rate_type" value="flat" onchange="toggleAddRate(this.value)"> Flat rate per job</label>
+            </div>
+          </div>
+          <div class="form-group" id="addHourlyGroup">
+            <label>Hourly Rate (ZAR)</label>
+            <input type="number" name="hourly_rate" min="0" step="10" placeholder="0">
+          </div>
+          <div class="form-group" id="addFlatGroup" style="display:none;">
+            <label>Flat Rate (ZAR)</label>
+            <input type="number" name="flat_rate" min="0" step="10" placeholder="0">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Notes / Specialisations</label>
+          <textarea name="notes" rows="2" placeholder="e.g. deep cleaning specialist, has own transport"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Add Cleaner</button>
+      </form>
+    </div>
+
+    <!-- View Toggle -->
+    <div style="display:flex;gap:0.5rem;margin-bottom:1rem;">
+      <button class="btn btn-primary" id="btnPerCleaner" onclick="setViewMode('per-cleaner')">Per Cleaner</button>
+      <button class="btn btn-secondary" id="btnCombined" onclick="setViewMode('combined')">Combined Calendar</button>
+    </div>
+
+    <!-- Per-cleaner list -->
+    <div id="cleanersList">
+      <div class="loading">Loading cleaners...</div>
+    </div>
+
+    <!-- Combined calendar view -->
+    <div id="combinedCalendarView" style="display:none;">
+      <div class="card">
+        <div class="month-nav" style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem;">
+          <button class="btn btn-secondary btn-sm" onclick="changeCombinedMonth(-1)">&larr;</button>
+          <h3 id="combinedMonthLabel" style="min-width:150px;text-align:center;"></h3>
+          <button class="btn btn-secondary btn-sm" onclick="changeCombinedMonth(1)">&rarr;</button>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="table" id="combinedCalendarTable">
+            <thead id="combinedCalendarHead"></thead>
+            <tbody id="combinedCalendarBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pay Summary Section -->
+    <div class="card" style="margin-top:1.5rem;">
+      <h2>Pay Summary</h2>
+      <div class="form-row" style="align-items:flex-end;">
+        <div class="form-group">
+          <label>Month</label>
+          <input type="month" id="payMonthInput" onchange="loadPaySummary(this.value)">
+        </div>
+        <div class="form-group">
+          <button class="btn btn-secondary" onclick="exportPayCSV()">Export CSV</button>
+        </div>
+      </div>
+      <div id="paySummaryContainer">
+        <p style="color:#999;">Select a month to view pay summary.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Edit Cleaner Modal -->
+  <div class="modal-overlay" id="editCleanerModal">
+    <div class="modal modal-lg">
+      <h2>Edit Cleaner</h2>
+      <form id="editCleanerForm" onsubmit="updateCleaner(event)">
+        <input type="hidden" name="id" id="editCleanerId">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Name</label>
+            <input type="text" name="name" required>
+          </div>
+          <div class="form-group">
+            <label>WhatsApp Phone</label>
+            <input type="tel" name="phone" required pattern="\+\d{10,15}">
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" name="email">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Rate Type</label>
+            <select name="rate_type" onchange="toggleEditRate(this.value)">
+              <option value="hourly">Hourly</option>
+              <option value="flat">Flat per job</option>
+            </select>
+          </div>
+          <div class="form-group" id="editHourlyGroup">
+            <label>Hourly Rate (ZAR)</label>
+            <input type="number" name="hourly_rate" min="0" step="10">
+          </div>
+          <div class="form-group" id="editFlatGroup" style="display:none;">
+            <label>Flat Rate (ZAR)</label>
+            <input type="number" name="flat_rate" min="0" step="10">
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Notes / Specialisations</label>
+          <textarea name="notes" rows="2"></textarea>
+        </div>
+        <div class="actions">
+          <button type="submit" class="btn btn-primary">Save</button>
+          <button type="button" class="btn btn-secondary" onclick="closeEditModal()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Edit Availability Modal -->
+  <div class="modal-overlay" id="availabilityModal">
+    <div class="modal">
+      <h2>Weekly Availability</h2>
+      <p id="modalCleanerName" style="color:#666;margin-bottom:1rem;"></p>
+      <form id="availabilityForm" onsubmit="saveAvailability(event)">
+        <input type="hidden" name="cleaner_id" id="modalCleanerId">
+        <div id="availabilitySlots"></div>
+        <div class="actions" style="margin-top:1rem;">
+          <button type="submit" class="btn btn-primary">Save Schedule</button>
+          <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Override Modal -->
+  <div class="modal-overlay" id="overrideModal">
+    <div class="modal">
+      <h2>Date Override</h2>
+      <form id="overrideForm" onsubmit="saveOverride(event)">
+        <input type="hidden" name="cleaner_id" id="overrideCleanerId">
+        <div class="form-group">
+          <label>Date</label>
+          <input type="date" name="date" required>
+        </div>
+        <div class="form-group">
+          <label>Status</label>
+          <select name="available">
+            <option value="0">Unavailable</option>
+            <option value="1">Available (override weekly schedule)</option>
+          </select>
+        </div>
+        <div class="actions">
+          <button type="submit" class="btn btn-primary">Save Override</button>
+          <button type="button" class="btn btn-secondary" onclick="closeOverrideModal()">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script src="shared.js"></script>
+  <script src="cleaners.js"></script>
+</body>
+</html>

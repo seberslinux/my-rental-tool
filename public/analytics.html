@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Analytics - Rental Manager</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 1rem;
+      margin-bottom: 2rem;
+    }
+    .kpi-card {
+      background: #fff;
+      border-radius: 8px;
+      padding: 1.2rem;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    .kpi-card .kpi-value {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: #1a1a2e;
+    }
+    .kpi-card .kpi-label {
+      color: #666;
+      font-size: 0.85rem;
+      margin-top: 0.3rem;
+    }
+    .kpi-card .kpi-sub {
+      color: #999;
+      font-size: 0.75rem;
+      margin-top: 0.2rem;
+    }
+    .chart-container {
+      background: #fff;
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .chart-container h3 {
+      margin-bottom: 1rem;
+      color: #1a1a2e;
+    }
+    .bar-chart {
+      display: flex;
+      align-items: flex-end;
+      gap: 3px;
+      height: 200px;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 4px;
+    }
+    .bar-chart .bar-col {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-end;
+      height: 100%;
+      min-width: 0;
+    }
+    .bar-chart .bar {
+      width: 100%;
+      max-width: 50px;
+      border-radius: 3px 3px 0 0;
+      transition: height 0.3s;
+      position: relative;
+      cursor: default;
+    }
+    .bar-chart .bar:hover {
+      opacity: 0.85;
+    }
+    .bar-chart .bar-label {
+      font-size: 0.65rem;
+      color: #666;
+      margin-top: 4px;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
+    }
+    .bar-chart .bar-value {
+      font-size: 0.6rem;
+      color: #333;
+      margin-bottom: 2px;
+      white-space: nowrap;
+    }
+    .chart-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+    @media (max-width: 800px) {
+      .chart-row { grid-template-columns: 1fr; }
+    }
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    .data-table th, .data-table td {
+      padding: 0.6rem 0.8rem;
+      text-align: left;
+      border-bottom: 1px solid #eee;
+    }
+    .data-table th {
+      background: #f8f8f8;
+      font-weight: 600;
+      color: #555;
+    }
+    .data-table tr:hover { background: #f8f9ff; }
+    .insight {
+      background: #1a1a2e08;
+      border-left: 3px solid #1a1a2e;
+      padding: 0.8rem 1rem;
+      margin-bottom: 0.8rem;
+      font-size: 0.9rem;
+      color: #333;
+    }
+    .insight strong { color: #1a1a2e; }
+    .insight.positive { border-left-color: #00aa44; }
+    .insight.negative { border-left-color: #cc0000; }
+    .insight.neutral { border-left-color: #ff9900; }
+    .prediction-badge {
+      display: inline-block;
+      background: #eee;
+      padding: 0.15rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.7rem;
+      color: #666;
+      margin-left: 0.3rem;
+    }
+    .review-card {
+      border: 1px solid #eee;
+      border-radius: 6px;
+      padding: 1rem;
+      margin-bottom: 0.8rem;
+    }
+    .review-card .stars {
+      color: #ff9900;
+      font-size: 1.1rem;
+    }
+    .color-airbnb { background: #ff585d; }
+    .color-booking { background: #003b95; }
+    .color-vrbo { background: #3c60a5; }
+    .color-direct { background: #44aa88; }
+    .color-p0 { background: #1a1a2e; }
+    .color-p1 { background: #e63946; }
+    .color-p2 { background: #457b9d; }
+    .color-p3 { background: #2a9d8f; }
+    .color-p4 { background: #e9c46a; }
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .tab-bar {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+      border-bottom: 2px solid #eee;
+      padding-bottom: 0;
+      flex-wrap: wrap;
+    }
+    .tab-bar button {
+      padding: 0.6rem 1.2rem;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      color: #666;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .tab-bar button.active {
+      color: #1a1a2e;
+      border-bottom-color: #1a1a2e;
+    }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .date-range-bar {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+    }
+    .date-range-bar .btn-sm {
+      padding: 0.3rem 0.8rem;
+      font-size: 0.8rem;
+      border: 1px solid #ddd;
+      background: #fff;
+      border-radius: 4px;
+      cursor: pointer;
+      color: #555;
+    }
+    .date-range-bar .btn-sm.active {
+      background: #1a1a2e;
+      color: #fff;
+      border-color: #1a1a2e;
+    }
+    .property-selector select {
+      padding: 0.4rem 0.8rem;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      background: #fff;
+    }
+    .heatmap-grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 4px;
+    }
+    .heatmap-cell {
+      padding: 0.8rem 0.4rem;
+      text-align: center;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      color: #fff;
+      min-height: 50px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+    .heatmap-cell .hm-month { font-weight: 600; }
+    .heatmap-cell .hm-value { font-size: 1.1rem; font-weight: 700; }
+    .sentiment-badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 10px;
+      font-size: 0.7rem;
+      font-weight: 600;
+    }
+    .sentiment-positive { background: #d4edda; color: #155724; }
+    .sentiment-negative { background: #f8d7da; color: #721c24; }
+    .sentiment-neutral { background: #e2e3e5; color: #383d41; }
+    .market-card {
+      background: #f8f9ff;
+      border: 1px solid #eee;
+      border-radius: 8px;
+      padding: 1.2rem;
+      margin-bottom: 1rem;
+    }
+    .market-card h4 { margin: 0 0 0.8rem 0; color: #1a1a2e; }
+    .market-metric {
+      display: inline-block;
+      margin-right: 2rem;
+      margin-bottom: 0.5rem;
+    }
+    .market-metric .label { font-size: 0.75rem; color: #666; }
+    .market-metric .value { font-size: 1.1rem; font-weight: 600; }
+    .position-above { color: #00aa44; }
+    .position-below { color: #cc0000; }
+    .position-at { color: #ff9900; }
+    .competitor-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.8rem;
+      border-bottom: 1px solid #eee;
+    }
+    .competitor-row:hover { background: #f8f9ff; }
+    .review-sentiment-summary {
+      display: flex;
+      gap: 1.5rem;
+      margin-bottom: 1rem;
+    }
+    .review-sentiment-summary .stat {
+      text-align: center;
+    }
+    .review-sentiment-summary .stat .stat-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+    }
+    .review-sentiment-summary .stat .stat-label {
+      font-size: 0.75rem;
+      color: #666;
+    }
+    .parse-html-section {
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid #eee;
+    }
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.5);
+      z-index: 1000;
+      justify-content: center;
+      align-items: center;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal {
+      background: #fff;
+      border-radius: 8px;
+      padding: 2rem;
+      max-width: 500px;
+      width: 90%;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+    .modal-lg { max-width: 700px; }
+    .modal h2 { margin-bottom: 1.5rem; }
+    .form-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 1rem;
+    }
+    .form-group { margin-bottom: 1rem; }
+    .form-group label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: #555;
+      margin-bottom: 0.3rem;
+    }
+    .form-group input, .form-group select, .form-group textarea {
+      width: 100%;
+      padding: 0.5rem;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      box-sizing: border-box;
+    }
+    .actions {
+      display: flex;
+      gap: 0.5rem;
+      justify-content: flex-end;
+      margin-top: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <span class="logo">Rental Manager</span>
+    <a href="/">Dashboard</a>
+    <a href="/properties.html">Properties</a>
+    <a href="/cleaners.html">Cleaners</a>
+    <a href="/analytics.html" class="active">Analytics</a>
+    <a href="/finances.html">Finances</a>
+    <div class="property-selector"><select id="globalPropertySelect"></select></div>
+  </nav>
+
+  <div class="container">
+    <div class="section-header">
+      <h1>Revenue & Occupancy Analytics</h1>
+      <div class="sync-bar">
+        <button class="btn btn-primary" onclick="syncHistory()">Sync Full History</button>
+        <button class="btn btn-secondary" onclick="syncRates()">Sync Rates</button>
+        <span id="syncStatus"></span>
+      </div>
+    </div>
+
+    <div class="date-range-bar" id="dateRangeBar">
+      <button class="btn btn-sm" data-range="30d">30 Days</button>
+      <button class="btn btn-sm" data-range="90d">90 Days</button>
+      <button class="btn btn-sm" data-range="6m">6 Months</button>
+      <button class="btn btn-sm active" data-range="12m">12 Months</button>
+      <button class="btn btn-sm" data-range="ytd">YTD</button>
+      <button class="btn btn-sm" data-range="custom">Custom</button>
+      <input type="date" id="customFrom" style="display:none;">
+      <input type="date" id="customTo" style="display:none;">
+    </div>
+
+    <div class="tab-bar">
+      <button class="active" onclick="switchTab('overview', this)">Overview</button>
+      <button onclick="switchTab('revenue', this)">Revenue</button>
+      <button onclick="switchTab('occupancy', this)">Occupancy</button>
+      <button onclick="switchTab('pricing', this)">Pricing</button>
+      <button onclick="switchTab('channels', this)">Channels</button>
+      <button onclick="switchTab('patterns', this)">Patterns</button>
+      <button onclick="switchTab('seasonality', this)">Seasonality</button>
+      <button onclick="switchTab('market', this)">Market</button>
+      <button onclick="switchTab('reviews', this)">Reviews</button>
+      <button onclick="switchTab('insights', this)">Insights</button>
+    </div>
+
+    <!-- OVERVIEW TAB -->
+    <div class="tab-content active" id="tab-overview">
+      <div class="kpi-grid" id="kpiGrid"></div>
+      <div class="chart-row">
+        <div class="chart-container">
+          <h3>Monthly Revenue (ZAR)</h3>
+          <div class="bar-chart" id="revenueChart"></div>
+        </div>
+        <div class="chart-container">
+          <h3>Monthly Occupancy Rate</h3>
+          <div class="bar-chart" id="occupancyOverviewChart"></div>
+        </div>
+      </div>
+      <div class="chart-container">
+        <h3>Revenue by Property</h3>
+        <div class="bar-chart" id="propertyRevenueChart" style="height:150px;"></div>
+      </div>
+    </div>
+
+    <!-- REVENUE TAB -->
+    <div class="tab-content" id="tab-revenue">
+      <div class="chart-container">
+        <h3>Revenue Timeline with Predictions</h3>
+        <div class="bar-chart" id="revenuePredictionChart" style="height:250px;"></div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-container">
+          <h3>ADR (Avg Daily Rate) Trend</h3>
+          <div class="bar-chart" id="adrChart"></div>
+        </div>
+        <div class="chart-container">
+          <h3>RevPAR Trend</h3>
+          <div class="bar-chart" id="revparChart"></div>
+        </div>
+      </div>
+      <div class="chart-container">
+        <h3>Revenue Breakdown by Property</h3>
+        <table class="data-table" id="revenueTable"></table>
+      </div>
+    </div>
+
+    <!-- OCCUPANCY TAB -->
+    <div class="tab-content" id="tab-occupancy">
+      <div class="chart-container">
+        <h3>Monthly Occupancy by Property</h3>
+        <div class="bar-chart" id="occupancyDetailChart" style="height:250px;"></div>
+      </div>
+      <div class="chart-container">
+        <h3>Occupancy Data</h3>
+        <table class="data-table" id="occupancyTable"></table>
+      </div>
+    </div>
+
+    <!-- PRICING TAB -->
+    <div class="tab-content" id="tab-pricing">
+      <div class="chart-container">
+        <h3>Current & Future Rate Trends</h3>
+        <p style="font-size:0.85rem;color:#666;margin-bottom:1rem;">Synced from Smoobu. Click "Sync Rates" to update.</p>
+        <div id="priceTrendsContainer"></div>
+      </div>
+      <div class="chart-container">
+        <h3>Actual Booking Price vs Base Price</h3>
+        <div class="bar-chart" id="priceComparisonChart" style="height:200px;"></div>
+      </div>
+    </div>
+
+    <!-- CHANNELS TAB -->
+    <div class="tab-content" id="tab-channels">
+      <div class="chart-row">
+        <div class="chart-container">
+          <h3>Revenue by Channel</h3>
+          <div class="bar-chart" id="channelRevenueChart" style="height:180px;"></div>
+        </div>
+        <div class="chart-container">
+          <h3>Bookings by Channel</h3>
+          <div class="bar-chart" id="channelBookingsChart" style="height:180px;"></div>
+        </div>
+      </div>
+      <div class="chart-container">
+        <h3>Channel Performance Comparison</h3>
+        <table class="data-table" id="channelTable"></table>
+      </div>
+      <div class="chart-container">
+        <h3>Cancellation Rate by Channel</h3>
+        <table class="data-table" id="cancellationTable"></table>
+      </div>
+    </div>
+
+    <!-- PATTERNS TAB -->
+    <div class="tab-content" id="tab-patterns">
+      <div class="chart-row">
+        <div class="chart-container">
+          <h3>Check-ins by Day of Week</h3>
+          <div class="bar-chart" id="dowChart" style="height:180px;"></div>
+        </div>
+        <div class="chart-container">
+          <h3>Length of Stay Distribution</h3>
+          <div class="bar-chart" id="losChart" style="height:180px;"></div>
+        </div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-container">
+          <h3>Booking Lead Time</h3>
+          <div class="bar-chart" id="leadTimeChart" style="height:180px;"></div>
+        </div>
+        <div class="chart-container">
+          <h3>Lead Time vs Price Per Night</h3>
+          <table class="data-table" id="leadTimeTable"></table>
+        </div>
+      </div>
+    </div>
+
+    <!-- SEASONALITY TAB -->
+    <div class="tab-content" id="tab-seasonality">
+      <div class="chart-container">
+        <h3>Monthly Occupancy Heatmap</h3>
+        <div class="heatmap-grid" id="seasonalityHeatmap"></div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-container">
+          <h3>Average Revenue Per Month</h3>
+          <div class="bar-chart" id="seasonalRevenueChart" style="height:200px;"></div>
+        </div>
+        <div class="chart-container">
+          <h3>Average Nightly Rate by Month</h3>
+          <div class="bar-chart" id="seasonalAdrChart" style="height:200px;"></div>
+        </div>
+      </div>
+      <div class="chart-row">
+        <div class="chart-container">
+          <h3>Peak vs Off-Peak Analysis</h3>
+          <div id="peakAnalysis"></div>
+        </div>
+        <div class="chart-container">
+          <h3>Booking Window by Season</h3>
+          <div id="bookingWindowAnalysis"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MARKET TAB -->
+    <div class="tab-content" id="tab-market">
+      <div class="chart-container">
+        <h3>Market Position</h3>
+        <div id="marketPositionCards"></div>
+      </div>
+      <div class="chart-container">
+        <h3>Competitor Properties</h3>
+        <div id="competitorsList"></div>
+        <button class="btn btn-primary" onclick="openCompetitorModal()" style="margin-top:1rem;">Add Competitor</button>
+        <p style="font-size:0.75rem;color:#999;margin-top:0.5rem;">Note: Competitor data is entered manually. Scraping external sites may violate their ToS. For automated market data, consider integrating AirDNA or PriceLabs API.</p>
+      </div>
+    </div>
+
+    <!-- REVIEWS TAB -->
+    <div class="tab-content" id="tab-reviews">
+      <div class="chart-container">
+        <h3>Review Sentiment Summary</h3>
+        <div class="review-sentiment-summary" id="sentimentSummary"></div>
+      </div>
+      <div class="chart-container">
+        <h3>Ratings by Property</h3>
+        <table class="data-table" id="reviewSummaryTable"></table>
+        <p style="font-size:0.85rem;color:#666;margin-top:1rem;">
+          Smoobu doesn't expose reviews via API. Add reviews manually below to track them.
+        </p>
+      </div>
+      <div class="chart-container">
+        <h3>Rating Trend</h3>
+        <div class="bar-chart" id="ratingTrendChart" style="height:150px;"></div>
+      </div>
+      <div class="chart-container">
+        <h3>Add Review</h3>
+        <form id="addReviewForm" onsubmit="addReview(event)">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Property</label>
+              <select name="property_id" required id="reviewPropertySelect"></select>
+            </div>
+            <div class="form-group">
+              <label>Platform</label>
+              <select name="platform">
+                <option value="Airbnb">Airbnb</option>
+                <option value="Booking.com">Booking.com</option>
+                <option value="VRBO">VRBO</option>
+                <option value="Google">Google</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Guest Name</label>
+              <input type="text" name="guest_name" placeholder="Optional">
+            </div>
+            <div class="form-group">
+              <label>Rating (1-5)</label>
+              <input type="number" name="rating" min="1" max="5" step="0.1" required>
+            </div>
+            <div class="form-group">
+              <label>Date</label>
+              <input type="date" name="review_date" required>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>Comment</label>
+            <textarea name="comment" rows="2" placeholder="Guest review text"></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary">Add Review</button>
+        </form>
+        <div class="parse-html-section">
+          <h4>Paste Reviews HTML</h4>
+          <p style="font-size:0.8rem;color:#666;margin-bottom:0.5rem;">Paste the HTML source from a review page to extract reviews automatically (best-effort).</p>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Platform</label>
+              <select id="parseHtmlPlatform">
+                <option value="Airbnb">Airbnb</option>
+                <option value="Booking.com">Booking.com</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Property</label>
+              <select id="parseHtmlProperty"></select>
+            </div>
+          </div>
+          <div class="form-group">
+            <label>HTML Content</label>
+            <textarea id="parseHtmlContent" rows="4" placeholder="Paste HTML source here..."></textarea>
+          </div>
+          <button class="btn btn-secondary" onclick="parseReviewsHtml()">Parse Reviews</button>
+          <div id="parsedReviewsResult" style="margin-top:1rem;"></div>
+        </div>
+      </div>
+      <div id="reviewsList"></div>
+    </div>
+
+    <!-- INSIGHTS TAB -->
+    <div class="tab-content" id="tab-insights">
+      <div class="chart-container">
+        <h3>Automated Insights</h3>
+        <p style="font-size:0.85rem;color:#666;margin-bottom:1rem;">
+          Based on your booking data, here's what's working and what needs attention.
+        </p>
+        <div id="insightsList"></div>
+      </div>
+      <div class="chart-container">
+        <h3>Revenue Predictions (3-Month Forecast)</h3>
+        <table class="data-table" id="predictionsTable"></table>
+        <p style="font-size:0.75rem;color:#999;margin-top:0.5rem;">Based on 3-month moving average of historical data.</p>
+      </div>
+      <div class="chart-container">
+        <h3>Pipeline Summary</h3>
+        <div id="pipelineSummary"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Competitor Modal -->
+  <div class="modal-overlay" id="competitorModal">
+    <div class="modal modal-lg">
+      <h2 id="competitorModalTitle">Add Competitor</h2>
+      <form id="competitorForm" onsubmit="saveCompetitor(event)">
+        <input type="hidden" name="id" id="competitorId">
+        <div class="form-group"><label>Compare Against Property</label><select name="property_id" id="competitorPropertySelect" required></select></div>
+        <div class="form-row">
+          <div class="form-group"><label>Competitor Name</label><input type="text" name="name" required></div>
+          <div class="form-group"><label>Platform</label><select name="platform"><option>Airbnb</option><option>Booking.com</option><option>VRBO</option><option>Other</option></select></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Listing URL</label><input type="url" name="listing_url"></div>
+          <div class="form-group"><label>Listing ID</label><input type="text" name="listing_id"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Bedrooms</label><input type="number" name="bedrooms" min="0"></div>
+          <div class="form-group"><label>Location</label><input type="text" name="location"></div>
+        </div>
+        <div class="form-row">
+          <div class="form-group"><label>Avg Nightly Rate (ZAR)</label><input type="number" name="avg_nightly_rate" min="0"></div>
+          <div class="form-group"><label>Est. Occupancy %</label><input type="number" name="estimated_occupancy" min="0" max="100"></div>
+          <div class="form-group"><label>Review Score (1-5)</label><input type="number" name="review_score" min="1" max="5" step="0.1"></div>
+        </div>
+        <div class="actions"><button type="submit" class="btn btn-primary">Save</button><button type="button" class="btn btn-secondary" onclick="closeCompetitorModal()">Cancel</button></div>
+      </form>
+    </div>
+  </div>
+
+  <script src="shared.js"></script>
+  <script src="analytics.js"></script>
+</body>
+</html>

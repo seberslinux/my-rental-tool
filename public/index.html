@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Rental Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <nav>
+    <span class="logo">Rental Manager</span>
+    <div class="nav-links">
+      <a href="/" class="active">Dashboard</a>
+      <a href="/properties.html">Properties</a>
+      <a href="/cleaners.html">Cleaners</a>
+      <a href="/analytics.html">Analytics</a>
+      <a href="/finances.html">Finances</a>
+    </div>
+    <div class="property-selector">
+      <select id="globalPropertySelect"></select>
+    </div>
+  </nav>
+
+  <div class="container">
+    <h1>Dashboard</h1>
+
+    <div class="sync-bar">
+      <button class="btn btn-primary" onclick="syncProperties()">Sync Properties</button>
+      <button class="btn btn-primary" onclick="syncBookings()">Sync Bookings</button>
+      <button class="btn btn-secondary" onclick="runPricing()">Run Pricing</button>
+      <span id="syncStatus"></span>
+    </div>
+
+    <div class="grid" id="kpiRow">
+      <div class="loading">Loading KPIs...</div>
+    </div>
+
+    <div class="grid" id="statsGrid">
+      <div class="loading">Loading stats...</div>
+    </div>
+
+    <div class="card">
+      <h2>Upcoming Check-outs (Next 48h)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Property</th>
+            <th>Guest</th>
+            <th>Check-out</th>
+            <th>Platform</th>
+            <th>Cleaner</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="checkoutTable">
+          <tr><td colspan="6" class="loading">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="modal-overlay" id="assignCleanerModal">
+      <div class="modal">
+        <h2>Assign Cleaner</h2>
+        <p id="assignModalInfo"></p>
+        <div id="availableCleanersList"></div>
+        <button type="button" class="btn btn-secondary" onclick="closeAssignModal()">Cancel</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Calendar Gaps (1-3 nights)</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Property</th>
+            <th>Gap Start</th>
+            <th>Gap End</th>
+            <th>Nights</th>
+          </tr>
+        </thead>
+        <tbody id="gapsTable">
+          <tr><td colspan="4" class="loading">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Calendar</h2>
+      <div style="display:flex;gap:1rem;align-items:center;margin-bottom:1rem;">
+        <select id="calendarProperty" onchange="renderCalendar()"><option value="all">All Properties</option></select>
+        <div class="month-nav" style="margin-bottom:0;">
+          <button class="btn btn-secondary btn-sm" onclick="changeMonth(-1)">&larr;</button>
+          <h3 id="calendarMonth"></h3>
+          <button class="btn btn-secondary btn-sm" onclick="changeMonth(1)">&rarr;</button>
+        </div>
+        <div>
+          <select id="jumpMonth" onchange="jumpToMonth()" style="width:auto;font-size:0.8rem;"></select>
+        </div>
+      </div>
+      <div class="calendar-grid" id="calendarGrid"></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h2>All Bookings</h2>
+        <div class="date-range-bar" style="margin-bottom:0;">
+          <input type="month" id="bookingsMonth" onchange="renderBookings()">
+        </div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Property</th>
+            <th>Guest</th>
+            <th>Check-in</th>
+            <th>Check-out</th>
+            <th>Platform</th>
+            <th>Price</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="bookingsTable">
+          <tr><td colspan="7" class="loading">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Pending Cleaning Jobs</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Property</th>
+            <th>Cleaner</th>
+            <th>Date</th>
+            <th>Time</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="jobsTable">
+          <tr><td colspan="5" class="loading">Loading...</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <h2>Revenue Pipeline</h2>
+      <div id="pipelineStats"></div>
+    </div>
+  </div>
+
+  <script src="shared.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>
