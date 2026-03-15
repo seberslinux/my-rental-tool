@@ -1735,6 +1735,29 @@ function renderMarketTab() {
 
 /* ───── Reviews Tab (Mockup style) ───── */
 
+async function syncReviews() {
+  const btn = document.getElementById('syncReviewsBtn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Syncing...'; }
+  try {
+    const res = await api('/api/analytics/reviews/sync', { method: 'POST', body: JSON.stringify({}) });
+    if (res && res.results) {
+      const msgs = Object.entries(res.results).map(([name, r]) => {
+        if (r.skipped) return `${name}: skipped (${r.reason})`;
+        if (r.error) return `${name}: error - ${r.error}`;
+        return `${name}: ${r.total} reviews (Airbnb: ${r.airbnb}, Booking: ${r.booking})`;
+      });
+      showToast(msgs.join(' | '));
+      loadAnalytics(); // Reload data
+    } else {
+      showToast('Sync completed', 'success');
+    }
+  } catch (err) {
+    showToast('Review sync failed: ' + (err.message || 'unknown error'), 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0115-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 01-15 6.7L3 16"/></svg> Sync Reviews from Platforms'; }
+  }
+}
+
 function renderReviewsTab() {
   const reviews = data.recent_reviews || [];
   const rbp = data.reviews_by_property || [];

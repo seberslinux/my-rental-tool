@@ -760,6 +760,43 @@ router.delete('/reviews/:id', (req, res) => {
   res.json({ deleted: true });
 });
 
+// --- Sync reviews from Apify (Airbnb + Booking.com) ---
+router.post('/reviews/sync', async (req, res) => {
+  try {
+    const { syncReviewsForProperty } = require('../services/apify-reviews');
+    const db = getDb();
+    const { property_id } = req.body;
+
+    let properties;
+    if (property_id) {
+      properties = [db.prepare('SELECT * FROM properties WHERE id = ?').get(property_id)].filter(Boolean);
+    } else {
+      properties = db.prepare('SELECT * FROM properties').all();
+    }
+
+    if (!properties.length) return res.status(404).json({ error: 'No properties found' });
+
+    const results = {};
+    for (const p of properties) {
+      if (!p.airbnb_url && !p.booking_url) {
+        results[p.name] = { skipped: true, reason: 'No listing URLs configured' };
+        continue;
+      }
+      try {
+        const counts = await syncReviewsForProperty(p.id);
+        results[p.name] = counts;
+      } catch (err) {
+        results[p.name] = { error: err.message };
+      }
+    }
+
+    res.json({ results });
+  } catch (err) {
+    console.error('Review sync failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- Seasonality endpoint ---
 router.get('/seasonality', (req, res) => {
   try {

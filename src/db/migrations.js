@@ -389,7 +389,10 @@ function runMigrations() {
   // Add columns to existing reviews table if missing
   const reviewColumns = [
     ['sentiment', "TEXT DEFAULT ''"],
+    ['external_id', "TEXT DEFAULT ''"],
+    ['language', "TEXT DEFAULT ''"],
   ];
+  // Note: unique index added below after column creation
   for (const [col, type] of reviewColumns) {
     try {
       db.exec(`ALTER TABLE reviews ADD COLUMN ${col} ${type}`);
@@ -397,6 +400,10 @@ function runMigrations() {
       // Column already exists, ignore
     }
   }
+  // Unique index for review deduplication (external_id per property)
+  try {
+    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_external ON reviews(property_id, external_id)");
+  } catch (e) { /* index already exists */ }
 
   // Insert default expense categories if the table is empty
   const catCount = db.prepare('SELECT COUNT(*) as c FROM expense_categories').get();
