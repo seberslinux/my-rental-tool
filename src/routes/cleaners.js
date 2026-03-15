@@ -247,14 +247,14 @@ router.post('/jobs/assign', (req, res) => {
   const db = getDb();
   const { cleaner_id, property_id, booking_id, cleaning_date, start_time, end_time } = req.body;
 
-  if (!cleaner_id || !property_id || !cleaning_date || !start_time || !end_time) {
-    return res.status(400).json({ error: 'cleaner_id, property_id, cleaning_date, start_time, and end_time are required' });
+  if (!cleaner_id || !property_id || !cleaning_date) {
+    return res.status(400).json({ error: 'cleaner_id, property_id, and cleaning_date are required' });
   }
 
   const result = db.prepare(
     `INSERT INTO cleaning_jobs (cleaner_id, property_id, booking_id, cleaning_date, start_time, end_time, status)
      VALUES (?, ?, ?, ?, ?, ?, 'pending')`
-  ).run(cleaner_id, property_id, booking_id || null, cleaning_date, start_time, end_time);
+  ).run(cleaner_id, property_id, booking_id || null, cleaning_date, start_time || '10:00', end_time || '13:00');
 
   const job = db.prepare('SELECT * FROM cleaning_jobs WHERE id = ?').get(result.lastInsertRowid);
   res.status(201).json(job);

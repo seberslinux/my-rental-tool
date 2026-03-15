@@ -2,9 +2,12 @@ const express = require('express');
 const router = express.Router();
 const { getDb } = require('../db/database');
 const smoobu = require('../services/smoobu');
+const { requireRole, scopeProperties } = require('../middleware/auth');
+const { detectCurrency } = require('../services/currency-detect');
+const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
 
-// Sync properties from Smoobu into local DB
-router.post('/sync/properties', async (req, res) => {
+// Sync routes — admin only
+router.post('/sync/properties', requireRole('admin'), async (req, res) => {
   try {
     const apartments = await smoobu.getProperties();
     const db = getDb();
@@ -30,7 +33,7 @@ router.post('/sync/properties', async (req, res) => {
 });
 
 // Sync bookings from Smoobu into local DB
-router.post('/sync/bookings', async (req, res) => {
+router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
   try {
     const db = getDb();
     const today = new Date();
@@ -53,9 +56,14 @@ router.post('/sync/bookings', async (req, res) => {
       page++;
     }
 
+    // Build property base_currency map for fallback
+    const propCurrencyMap = {};
+    const props = db.prepare('SELECT smoobu_id, base_currency FROM properties').all();
+    for (const p of props) propCurrencyMap[p.smoobu_id] = p.base_currency || 'ZAR';
+
     const upsert = db.prepare(`
-      INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night)
-      VALUES (?, (SELECT id FROM properties WHERE smoobu_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, currency)
+      VALUES (?, (SELECT id FROM properties WHERE smoobu_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(smoobu_id) DO UPDATE SET
         guest_name = excluded.guest_name,
         check_in = excluded.check_in,
@@ -67,7 +75,8 @@ router.post('/sync/bookings', async (req, res) => {
         created_at = excluded.created_at,
         lead_time_days = excluded.lead_time_days,
         length_of_stay = excluded.length_of_stay,
-        price_per_night = excluded.price_per_night
+        price_per_night = excluded.price_per_night,
+        currency = excluded.currency
     `);
 
     const transaction = db.transaction((bookings) => {
@@ -80,10 +89,12 @@ router.post('/sync/bookings', async (req, res) => {
         const price = b.price || 0;
         const ppn = los > 0 ? Math.round((price / los) * 100) / 100 : 0;
         const leadTime = createdAt ? Math.max(0, Math.round((new Date(checkIn) - new Date(createdAt)) / (24 * 60 * 60 * 1000))) : 0;
+        const aptId = b['apartment']?.id || b.apartmentId;
+        const currency = detectCurrency(b) || propCurrencyMap[aptId] || 'ZAR';
 
         upsert.run(
           b.id,
-          b['apartment']?.id || b.apartmentId,
+          aptId,
           b['guest-name'] || b.guestName || '',
           checkIn,
           checkOut,
@@ -94,7 +105,8 @@ router.post('/sync/bookings', async (req, res) => {
           createdAt,
           leadTime,
           los,
-          ppn
+          ppn,
+          currency
         );
       }
     });
@@ -113,21 +125,31 @@ router.post('/sync/bookings', async (req, res) => {
 });
 
 // Get all bookings from local DB
-router.get('/bookings', (req, res) => {
+router.get('/bookings', scopeProperties, async (req, res) => {
   const db = getDb();
-  const bookings = db
-    .prepare(
-      `SELECT b.*, p.name as property_name
-       FROM bookings b
+  let bookings;
+  if (req.accessiblePropertyIds === null) {
+    bookings = db.prepare(
+      `SELECT b.*, p.name as property_name FROM bookings b
+       JOIN properties p ON b.property_id = p.id ORDER BY b.check_in ASC`
+    ).all();
+  } else {
+    const ids = req.accessiblePropertyIds;
+    if (ids.length === 0) return res.json({ bookings: [], display_currency: getDisplayCurrency() });
+    const ph = ids.map(() => '?').join(',');
+    bookings = db.prepare(
+      `SELECT b.*, p.name as property_name FROM bookings b
        JOIN properties p ON b.property_id = p.id
-       ORDER BY b.check_in ASC`
-    )
-    .all();
-  res.json(bookings);
+       WHERE b.property_id IN (${ph}) ORDER BY b.check_in ASC`
+    ).all(...ids);
+  }
+  const displayCurrency = getDisplayCurrency();
+  await bulkConvert(bookings, displayCurrency);
+  res.json({ bookings, display_currency: displayCurrency });
 });
 
 // Get dashboard stats
-router.get('/dashboard/stats', (req, res) => {
+router.get('/dashboard/stats', scopeProperties, async (req, res) => {
   const db = getDb();
   const today = new Date().toISOString().split('T')[0];
   const in48h = new Date(Date.now() + 48 * 60 * 60 * 1000)
@@ -135,17 +157,27 @@ router.get('/dashboard/stats', (req, res) => {
     .split('T')[0];
 
   // Upcoming checkouts in next 48 hours
-  const upcomingCheckouts = db
-    .prepare(
-      `SELECT b.*, p.name as property_name FROM bookings b
+  let checkoutQuery = `SELECT b.*, p.name as property_name FROM bookings b
        JOIN properties p ON b.property_id = p.id
-       WHERE b.check_out >= ? AND b.check_out <= ? AND b.status = 'confirmed'
-       ORDER BY b.check_out ASC`
-    )
-    .all(today, in48h);
+       WHERE b.check_out >= ? AND b.check_out <= ? AND b.status = 'confirmed'`;
+  let checkoutParams = [today, in48h];
+  if (req.accessiblePropertyIds !== null) {
+    if (req.accessiblePropertyIds.length === 0) return res.json({ upcoming_checkouts: [], occupancy: [], gaps: [], pending_cleaning_jobs: [] });
+    const ph = req.accessiblePropertyIds.map(() => '?').join(',');
+    checkoutQuery += ` AND b.property_id IN (${ph})`;
+    checkoutParams.push(...req.accessiblePropertyIds);
+  }
+  checkoutQuery += ' ORDER BY b.check_out ASC';
+  const upcomingCheckouts = db.prepare(checkoutQuery).all(...checkoutParams);
 
   // Occupancy rate per property (next 30 days)
-  const properties = db.prepare('SELECT * FROM properties').all();
+  let properties;
+  if (req.accessiblePropertyIds === null) {
+    properties = db.prepare('SELECT * FROM properties').all();
+  } else {
+    const ph = req.accessiblePropertyIds.map(() => '?').join(',');
+    properties = db.prepare(`SELECT * FROM properties WHERE id IN (${ph})`).all(...req.accessiblePropertyIds);
+  }
   const thirtyDaysOut = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
     .toISOString()
     .split('T')[0];
@@ -154,7 +186,8 @@ router.get('/dashboard/stats', (req, res) => {
     const bookings = db
       .prepare(
         `SELECT * FROM bookings
-         WHERE property_id = ? AND check_out >= ? AND check_in <= ? AND status = 'confirmed'`
+         WHERE property_id = ? AND check_out >= ? AND check_in <= ? AND status = 'confirmed'
+         AND platform NOT LIKE 'Blocked%'`
       )
       .all(p.id, today, thirtyDaysOut);
 
@@ -175,6 +208,7 @@ router.get('/dashboard/stats', (req, res) => {
       .prepare(
         `SELECT * FROM bookings
          WHERE property_id = ? AND check_out >= ? AND status = 'confirmed'
+         AND platform NOT LIKE 'Blocked%'
          ORDER BY check_in ASC`
       )
       .all(p.id, today);
@@ -209,11 +243,15 @@ router.get('/dashboard/stats', (req, res) => {
     )
     .all(today);
 
+  const displayCurrency = getDisplayCurrency();
+  await bulkConvert(upcomingCheckouts, displayCurrency);
+
   res.json({
     upcoming_checkouts: upcomingCheckouts,
     occupancy,
     gaps,
     pending_cleaning_jobs: pendingJobs,
+    display_currency: displayCurrency,
   });
 });
 

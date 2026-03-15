@@ -54,10 +54,9 @@ cron.schedule('*/30 * * * *', async () => {
     const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
     const today = now.toISOString().split('T')[0];
 
-    // Find jobs starting in the next 2 hours that haven't been reminded
     const jobs = db
       .prepare(
-        `SELECT cj.*, c.name as cleaner_name, c.phone as cleaner_phone,
+        `SELECT cj.*, c.name as cleaner_name, c.phone as cleaner_phone, c.id as cid,
                 p.name as property_name, p.address as property_address
          FROM cleaning_jobs cj
          JOIN cleaners c ON cj.cleaner_id = c.id
@@ -67,13 +66,15 @@ cron.schedule('*/30 * * * *', async () => {
       .all(today);
 
     for (const job of jobs) {
+      // Check notification prefs
+      const prefs = db.prepare('SELECT * FROM cleaner_notification_prefs WHERE cleaner_id = ?').get(job.cid);
+      if (prefs && (!prefs.whatsapp_enabled || !prefs.notify_2_hours)) continue;
+
       const [h, m] = job.start_time.split(':').map(Number);
       const jobStart = new Date(today + 'T00:00:00');
       jobStart.setHours(h, m);
 
-      // Send reminder if job starts within 2 hours
       if (jobStart <= twoHoursFromNow && jobStart > now) {
-        // Get next booking info
         const nextBooking = db
           .prepare(
             `SELECT * FROM bookings
@@ -103,6 +104,61 @@ cron.schedule('*/30 * * * *', async () => {
     }
   } catch (err) {
     console.error('Reminder cron error:', err.message);
+  }
+});
+
+// Daily at 8:00 AM SAST = 6:00 AM UTC — send 1-day and 7-day advance WhatsApp notifications
+cron.schedule('0 6 * * *', async () => {
+  try {
+    const db = getDb();
+    const now = new Date();
+    const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+    const sendAdvanceNotice = async (targetDate, label, prefField) => {
+      const jobs = db.prepare(
+        `SELECT cj.*, c.name as cleaner_name, c.phone as cleaner_phone, c.id as cid,
+                p.name as property_name, p.address as property_address,
+                b.guest_name, b.num_guests, b.special_requirements
+         FROM cleaning_jobs cj
+         JOIN cleaners c ON cj.cleaner_id = c.id
+         JOIN properties p ON cj.property_id = p.id
+         LEFT JOIN bookings b ON cj.booking_id = b.id
+         WHERE cj.cleaning_date = ? AND cj.status != 'completed'`
+      ).all(targetDate);
+
+      for (const job of jobs) {
+        const prefs = db.prepare('SELECT * FROM cleaner_notification_prefs WHERE cleaner_id = ?').get(job.cid);
+        if (prefs && (!prefs.whatsapp_enabled || !prefs[prefField])) continue;
+
+        const guestInfo = job.guest_name
+          ? `Guest: ${job.guest_name} (${job.num_guests || '?'} guests)`
+          : '';
+        const specialReq = job.special_requirements
+          ? `Special requirements: ${job.special_requirements}`
+          : '';
+
+        const message =
+          `${label} Cleaning Job\n` +
+          `Property: ${job.property_name}\n` +
+          `Address: ${job.property_address || 'N/A'}\n` +
+          `Date: ${job.cleaning_date}\n` +
+          `Time: ${job.start_time} - ${job.end_time}\n` +
+          (guestInfo ? guestInfo + '\n' : '') +
+          (specialReq ? specialReq + '\n' : '');
+
+        try {
+          await whatsapp.sendMessage(job.cleaner_phone, message.trim());
+        } catch (err) {
+          console.error(`Failed to send ${label} notice to ${job.cleaner_name}:`, err.message);
+        }
+      }
+    };
+
+    await sendAdvanceNotice(tomorrow, 'Tomorrow:', 'notify_1_day');
+    await sendAdvanceNotice(in7Days, 'Upcoming (7 days):', 'notify_7_days');
+  } catch (err) {
+    console.error('Advance notification cron error:', err.message);
   }
 });
 

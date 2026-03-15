@@ -4,53 +4,91 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Analytics - Rental Manager</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
   <style>
-    .kpi-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-      gap: 1rem;
-      margin-bottom: 2rem;
+    /* Section tabs */
+    .section-tabs {
+      display: flex; gap: 0; border-bottom: 2px solid var(--gray-200); margin-bottom: 24px;
     }
+    .section-tab {
+      padding: 12px 20px; font-size: 14px; font-weight: 500; color: var(--gray-400);
+      cursor: pointer; border: none; background: none; border-bottom: 2px solid transparent;
+      margin-bottom: -2px; transition: all 0.15s; display: flex; align-items: center; gap: 6px;
+      font-family: inherit;
+    }
+    .section-tab:hover { color: var(--gray-600); }
+    .section-tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 600; }
+    .section-tab svg { width: 16px; height: 16px; }
+    .section-panel { display: none; }
+    .section-panel.active { display: block; }
+
+    /* KPI Row */
+    .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+    .kpi-row.five { grid-template-columns: repeat(5, 1fr); }
     .kpi-card {
-      background: #fff;
-      border-radius: 8px;
-      padding: 1.2rem;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      text-align: center;
+      background: white; border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow-sm);
+      border: 1px solid var(--gray-200);
     }
-    .kpi-card .kpi-value {
-      font-size: 1.8rem;
-      font-weight: 700;
-      color: #1a1a2e;
+    .kpi-card .kpi-label { font-size: 12px; color: var(--gray-500); font-weight: 500; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.03em; }
+    .kpi-card .kpi-value { font-size: 26px; font-weight: 700; color: var(--gray-900); }
+    .kpi-card .kpi-sub { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
+    .kpi-card .kpi-sub .up { color: var(--success); font-weight: 600; }
+    .kpi-card .kpi-sub .down { color: var(--danger); font-weight: 600; }
+    .kpi-card .kpi-sub .neutral { color: var(--gray-400); }
+
+    /* Grid layouts */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+    .grid-2-1 { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-bottom: 20px; }
+
+    /* Chart area (SVG line charts) */
+    .chart-area { width: 100%; height: 200px; position: relative; }
+    .chart-area.tall { height: 260px; }
+    .chart-area svg { width: 100%; height: 100%; }
+
+    /* Period tabs (segmented control for date range) */
+    .period-tabs { display: flex; background: var(--gray-100); border-radius: var(--radius-sm); padding: 3px; gap: 0; align-items: center; flex-wrap: wrap; }
+    .content .period-tabs { margin-bottom: 24px; }
+    .period-tab {
+      padding: 6px 14px; border-radius: 6px; font-size: 13px; font-weight: 500;
+      color: var(--gray-500); cursor: pointer; transition: all 0.15s; border: none; background: none;
+      font-family: inherit;
     }
-    .kpi-card .kpi-label {
-      color: #666;
-      font-size: 0.85rem;
-      margin-top: 0.3rem;
-    }
-    .kpi-card .kpi-sub {
-      color: #999;
-      font-size: 0.75rem;
-      margin-top: 0.2rem;
-    }
-    .chart-container {
-      background: #fff;
-      border-radius: 8px;
+    .period-tab.active { background: white; color: var(--gray-800); box-shadow: var(--shadow-sm); }
+
+    /* Card styling */
+    .card {
+      background: white;
+      border-radius: var(--radius);
       padding: 1.5rem;
       margin-bottom: 1.5rem;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--gray-200);
     }
-    .chart-container h3 {
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
       margin-bottom: 1rem;
-      color: #1a1a2e;
     }
+    .card-header h3 {
+      margin: 0;
+      color: var(--gray-900);
+      font-size: 15px;
+      font-weight: 600;
+    }
+    .card-header .legend { display: flex; gap: 16px; }
+    .legend-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--gray-500); }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .card-header .subtitle { font-size: 12px; color: var(--gray-400); }
+
+    /* Bar chart */
     .bar-chart {
       display: flex;
       align-items: flex-end;
       gap: 3px;
       height: 200px;
-      border-bottom: 1px solid #ddd;
+      border-bottom: 1px solid var(--gray-200);
       padding-bottom: 4px;
     }
     .bar-chart .bar-col {
@@ -75,7 +113,7 @@
     }
     .bar-chart .bar-label {
       font-size: 0.65rem;
-      color: #666;
+      color: var(--gray-500);
       margin-top: 4px;
       text-align: center;
       white-space: nowrap;
@@ -85,18 +123,12 @@
     }
     .bar-chart .bar-value {
       font-size: 0.6rem;
-      color: #333;
+      color: var(--gray-700);
       margin-bottom: 2px;
       white-space: nowrap;
     }
-    .chart-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1.5rem;
-    }
-    @media (max-width: 800px) {
-      .chart-row { grid-template-columns: 1fr; }
-    }
+
+    /* Data table */
     .data-table {
       width: 100%;
       border-collapse: collapse;
@@ -105,129 +137,126 @@
     .data-table th, .data-table td {
       padding: 0.6rem 0.8rem;
       text-align: left;
-      border-bottom: 1px solid #eee;
+      border-bottom: 1px solid var(--gray-100);
     }
     .data-table th {
-      background: #f8f8f8;
+      background: var(--gray-50);
       font-weight: 600;
-      color: #555;
+      color: var(--gray-600);
     }
-    .data-table tr:hover { background: #f8f9ff; }
-    .insight {
-      background: #1a1a2e08;
-      border-left: 3px solid #1a1a2e;
-      padding: 0.8rem 1rem;
-      margin-bottom: 0.8rem;
-      font-size: 0.9rem;
-      color: #333;
-    }
-    .insight strong { color: #1a1a2e; }
-    .insight.positive { border-left-color: #00aa44; }
-    .insight.negative { border-left-color: #cc0000; }
-    .insight.neutral { border-left-color: #ff9900; }
+    .data-table tr:hover { background: var(--primary-50); }
+
+    /* Horizontal bar chart items */
+    .hbar-item { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--gray-100); }
+    .hbar-item:last-child { border-bottom: none; }
+    .hbar-label { width: 120px; font-size: 13px; font-weight: 500; flex-shrink: 0; }
+    .hbar-track { flex: 1; height: 20px; background: var(--gray-100); border-radius: 4px; overflow: hidden; position: relative; }
+    .hbar-fill { height: 100%; border-radius: 4px; display: flex; align-items: center; padding-left: 8px; }
+    .hbar-fill span { font-size: 11px; font-weight: 600; color: white; }
+    .hbar-value { width: 50px; text-align: right; font-size: 13px; font-weight: 600; flex-shrink: 0; }
+
+    /* Occupancy bar items */
+    .occ-item { padding: 12px 0; border-bottom: 1px solid var(--gray-100); }
+    .occ-item:last-child { border-bottom: none; }
+    .occ-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+    .occ-top .name { font-size: 13px; font-weight: 500; }
+    .occ-top .pct { font-size: 13px; font-weight: 700; }
+    .occ-bar { height: 6px; background: var(--gray-100); border-radius: 3px; overflow: hidden; }
+    .occ-bar .fill { height: 100%; border-radius: 3px; }
+
+    /* Donut chart */
+    .donut-wrap { display: flex; align-items: center; gap: 24px; }
+    .donut-chart { width: 140px; height: 140px; flex-shrink: 0; }
+    .donut-legend { flex: 1; }
+    .donut-legend-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 13px; }
+    .donut-legend-item .dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+    .donut-legend-item .lbl { flex: 1; color: var(--gray-600); }
+    .donut-legend-item .val { font-weight: 600; }
+
+    /* Stat minis */
+    .stat-mini { text-align: center; padding: 12px; }
+    .stat-mini .val { font-size: 22px; font-weight: 700; color: var(--gray-900); }
+    .stat-mini .lbl { font-size: 11px; color: var(--gray-500); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.03em; }
+
+    /* Heatmap (13-col with labels) */
+    .heatmap { display: grid; grid-template-columns: 60px repeat(12, 1fr); gap: 2px; }
+    .heatmap-label { font-size: 11px; font-weight: 600; color: var(--gray-500); display: flex; align-items: center; }
+    .heatmap-cell { height: 36px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; }
+    .heatmap-header { font-size: 10px; font-weight: 600; color: var(--gray-400); text-align: center; padding: 4px 0; }
+
+    /* Review items */
+    .review-item { padding: 14px; background: var(--gray-50); border-radius: var(--radius-sm); margin-bottom: 10px; }
+    .review-item:last-child { margin-bottom: 0; }
+    .review-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .review-guest { display: flex; align-items: center; gap: 8px; }
+    .review-avatar { width: 28px; height: 28px; border-radius: 50%; background: var(--gray-300); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 600; color: white; }
+    .review-name { font-size: 13px; font-weight: 600; }
+    .review-date { font-size: 11px; color: var(--gray-400); }
+    .review-stars { display: flex; gap: 2px; }
+    .star { color: #F59E0B; font-size: 13px; }
+    .review-text { font-size: 13px; color: var(--gray-600); line-height: 1.5; }
+    .review-property { font-size: 11px; color: var(--gray-400); margin-top: 6px; }
+
+    /* Insight items */
+    .insight-item { display: flex; gap: 12px; padding: 14px; background: var(--gray-50); border-radius: var(--radius-sm); margin-bottom: 10px; }
+    .insight-item:last-child { margin-bottom: 0; }
+    .insight-icon { width: 36px; height: 36px; border-radius: 8px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .insight-icon.green { background: var(--success-bg); color: var(--success); }
+    .insight-icon.yellow { background: var(--warning-bg); color: var(--warning); }
+    .insight-icon.blue { background: var(--primary-50); color: var(--primary); }
+    .insight-icon.red { background: var(--danger-bg); color: var(--danger); }
+    .insight-icon.purple { background: #8B5CF618; color: var(--purple, #8B5CF6); }
+    .insight-icon svg { width: 18px; height: 18px; }
+    .insight-text .title { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+    .insight-text .desc { font-size: 12px; color: var(--gray-500); line-height: 1.5; }
+
+    /* Callout box */
+    .callout { display: flex; gap: 10px; padding: 12px; background: var(--gray-50); border-radius: var(--radius-sm); }
+    .callout-icon { width: 32px; height: 32px; border-radius: 6px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 16px; }
+    .callout-text { font-size: 12px; color: var(--gray-600); line-height: 1.5; }
+
+    /* Compare rows (for review categories) */
+    .compare-row { display: flex; align-items: center; gap: 8px; padding: 8px 0; }
+    .compare-label { font-size: 12px; color: var(--gray-500); width: 100px; flex-shrink: 0; }
+    .compare-bar { flex: 1; height: 8px; background: var(--gray-100); border-radius: 4px; overflow: hidden; }
+    .compare-fill { height: 100%; border-radius: 4px; }
+    .compare-val { font-size: 12px; font-weight: 600; width: 50px; text-align: right; flex-shrink: 0; }
+
+    /* Platform badges */
+    .platform-badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 11px; font-weight: 500; }
+    .platform-badge.airbnb { background: #FF585D18; color: #E0484C; }
+    .platform-badge.booking { background: #00358018; color: #003580; }
+    .platform-badge.direct { background: #10B98118; color: #0D9668; }
+    .platform-badge.vrbo { background: #3B5CE818; color: #3B5CE8; }
+
+    .rating { display: flex; align-items: center; gap: 3px; }
+
+    /* Table wrap */
+    .table-wrap { overflow-x: auto; }
+
     .prediction-badge {
       display: inline-block;
-      background: #eee;
+      background: var(--gray-100);
       padding: 0.15rem 0.4rem;
       border-radius: 3px;
       font-size: 0.7rem;
-      color: #666;
+      color: var(--gray-500);
       margin-left: 0.3rem;
-    }
-    .review-card {
-      border: 1px solid #eee;
-      border-radius: 6px;
-      padding: 1rem;
-      margin-bottom: 0.8rem;
-    }
-    .review-card .stars {
-      color: #ff9900;
-      font-size: 1.1rem;
     }
     .color-airbnb { background: #ff585d; }
     .color-booking { background: #003b95; }
-    .color-vrbo { background: #3c60a5; }
-    .color-direct { background: #44aa88; }
-    .color-p0 { background: #1a1a2e; }
-    .color-p1 { background: #e63946; }
-    .color-p2 { background: #457b9d; }
-    .color-p3 { background: #2a9d8f; }
-    .color-p4 { background: #e9c46a; }
+    .color-vrbo { background: #00875a; }
+    .color-direct { background: var(--gray-500); }
+    .color-p0 { background: var(--primary); }
+    .color-p1 { background: #ec4899; }
+    .color-p2 { background: #0ea5e9; }
+    .color-p3 { background: var(--teal); }
+    .color-p4 { background: var(--warning); }
     .section-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
     }
-    .tab-bar {
-      display: flex;
-      gap: 0.5rem;
-      margin-bottom: 1.5rem;
-      border-bottom: 2px solid #eee;
-      padding-bottom: 0;
-      flex-wrap: wrap;
-    }
-    .tab-bar button {
-      padding: 0.6rem 1.2rem;
-      background: none;
-      border: none;
-      border-bottom: 2px solid transparent;
-      margin-bottom: -2px;
-      color: #666;
-      cursor: pointer;
-      font-weight: 500;
-    }
-    .tab-bar button.active {
-      color: #1a1a2e;
-      border-bottom-color: #1a1a2e;
-    }
-    .tab-content { display: none; }
-    .tab-content.active { display: block; }
-    .date-range-bar {
-      display: flex;
-      gap: 0.5rem;
-      align-items: center;
-      margin-bottom: 1.5rem;
-      flex-wrap: wrap;
-    }
-    .date-range-bar .btn-sm {
-      padding: 0.3rem 0.8rem;
-      font-size: 0.8rem;
-      border: 1px solid #ddd;
-      background: #fff;
-      border-radius: 4px;
-      cursor: pointer;
-      color: #555;
-    }
-    .date-range-bar .btn-sm.active {
-      background: #1a1a2e;
-      color: #fff;
-      border-color: #1a1a2e;
-    }
-    .property-selector select {
-      padding: 0.4rem 0.8rem;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-size: 0.85rem;
-      background: #fff;
-    }
-    .heatmap-grid {
-      display: grid;
-      grid-template-columns: repeat(12, 1fr);
-      gap: 4px;
-    }
-    .heatmap-cell {
-      padding: 0.8rem 0.4rem;
-      text-align: center;
-      border-radius: 4px;
-      font-size: 0.75rem;
-      color: #fff;
-      min-height: 50px;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-    }
-    .heatmap-cell .hm-month { font-weight: 600; }
-    .heatmap-cell .hm-value { font-size: 1.1rem; font-weight: 700; }
     .sentiment-badge {
       display: inline-block;
       padding: 0.15rem 0.5rem;
@@ -235,325 +264,403 @@
       font-size: 0.7rem;
       font-weight: 600;
     }
-    .sentiment-positive { background: #d4edda; color: #155724; }
-    .sentiment-negative { background: #f8d7da; color: #721c24; }
-    .sentiment-neutral { background: #e2e3e5; color: #383d41; }
+    .sentiment-positive { background: var(--success-bg); color: #155724; }
+    .sentiment-negative { background: var(--danger-bg); color: #721c24; }
+    .sentiment-neutral { background: var(--gray-200); color: var(--gray-700); }
     .market-card {
-      background: #f8f9ff;
-      border: 1px solid #eee;
-      border-radius: 8px;
+      background: var(--primary-50);
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius-sm);
       padding: 1.2rem;
       margin-bottom: 1rem;
     }
-    .market-card h4 { margin: 0 0 0.8rem 0; color: #1a1a2e; }
+    .market-card h4 { margin: 0 0 0.8rem 0; color: var(--gray-900); }
     .market-metric {
       display: inline-block;
       margin-right: 2rem;
       margin-bottom: 0.5rem;
     }
-    .market-metric .label { font-size: 0.75rem; color: #666; }
+    .market-metric .label { font-size: 0.75rem; color: var(--gray-500); }
     .market-metric .value { font-size: 1.1rem; font-weight: 600; }
-    .position-above { color: #00aa44; }
-    .position-below { color: #cc0000; }
-    .position-at { color: #ff9900; }
+    .position-above { color: var(--success); }
+    .position-below { color: var(--danger); }
+    .position-at { color: var(--warning); }
     .competitor-row {
       display: flex;
       justify-content: space-between;
       align-items: center;
       padding: 0.8rem;
-      border-bottom: 1px solid #eee;
+      border-bottom: 1px solid var(--gray-200);
     }
-    .competitor-row:hover { background: #f8f9ff; }
-    .review-sentiment-summary {
-      display: flex;
-      gap: 1.5rem;
-      margin-bottom: 1rem;
-    }
-    .review-sentiment-summary .stat {
-      text-align: center;
-    }
-    .review-sentiment-summary .stat .stat-value {
-      font-size: 1.5rem;
-      font-weight: 700;
-    }
-    .review-sentiment-summary .stat .stat-label {
-      font-size: 0.75rem;
-      color: #666;
+    .competitor-row:hover { background: var(--primary-50); }
+    .property-selector select {
+      padding: 0.4rem 0.8rem;
+      border: 1px solid var(--gray-300);
+      border-radius: var(--radius-sm);
+      font-size: 0.85rem;
+      background: white;
     }
     .parse-html-section {
       margin-top: 1rem;
       padding-top: 1rem;
-      border-top: 1px solid #eee;
+      border-top: 1px solid var(--gray-200);
     }
-    .modal-overlay {
-      display: none;
-      position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.5);
-      z-index: 1000;
-      justify-content: center;
-      align-items: center;
-    }
-    .modal-overlay.active { display: flex; }
-    .modal {
-      background: #fff;
-      border-radius: 8px;
-      padding: 2rem;
-      max-width: 500px;
-      width: 90%;
-      max-height: 90vh;
-      overflow-y: auto;
-    }
-    .modal-lg { max-width: 700px; }
-    .modal h2 { margin-bottom: 1.5rem; }
-    .form-row {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 1rem;
-    }
-    .form-group { margin-bottom: 1rem; }
-    .form-group label {
-      display: block;
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: #555;
-      margin-bottom: 0.3rem;
-    }
-    .form-group input, .form-group select, .form-group textarea {
-      width: 100%;
-      padding: 0.5rem;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-size: 0.9rem;
-      box-sizing: border-box;
-    }
-    .actions {
-      display: flex;
-      gap: 0.5rem;
-      justify-content: flex-end;
-      margin-top: 1rem;
+
+    /* Responsive */
+    @media (max-width: 800px) {
+      .grid-2, .grid-2-1 { grid-template-columns: 1fr; }
+      .kpi-row, .kpi-row.five { grid-template-columns: repeat(2, 1fr); }
+      .section-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+      .section-tab { white-space: nowrap; padding: 10px 14px; font-size: 12px; }
     }
   </style>
 </head>
 <body>
-  <nav>
-    <span class="logo">Rental Manager</span>
-    <a href="/">Dashboard</a>
-    <a href="/properties.html">Properties</a>
-    <a href="/cleaners.html">Cleaners</a>
-    <a href="/analytics.html" class="active">Analytics</a>
-    <a href="/finances.html">Finances</a>
-    <a href="/maintenance.html">Maintenance</a>
-    <div class="property-selector"><select id="globalPropertySelect"></select></div>
-  </nav>
 
   <div class="container">
-    <div class="section-header">
-      <h1>Revenue & Occupancy Analytics</h1>
-      <div class="sync-bar">
-        <button class="btn btn-primary" onclick="syncHistory()">Sync Full History</button>
-        <button class="btn btn-secondary" onclick="syncRates()">Sync Rates</button>
-        <span id="syncStatus"></span>
-      </div>
-    </div>
 
-    <div class="date-range-bar" id="dateRangeBar">
-      <button class="btn btn-sm" data-range="30d">30 Days</button>
-      <button class="btn btn-sm" data-range="90d">90 Days</button>
-      <button class="btn btn-sm" data-range="6m">6 Months</button>
-      <button class="btn btn-sm active" data-range="12m">12 Months</button>
-      <button class="btn btn-sm" data-range="ytd">YTD</button>
-      <button class="btn btn-sm" data-range="custom">Custom</button>
-      <input type="date" id="customFrom" style="display:none;">
-      <input type="date" id="customTo" style="display:none;">
-    </div>
-
-    <div class="tab-bar">
-      <button class="active" onclick="switchTab('overview', this)">Overview</button>
-      <button onclick="switchTab('revenue', this)">Revenue</button>
-      <button onclick="switchTab('occupancy', this)">Occupancy</button>
-      <button onclick="switchTab('pricing', this)">Pricing</button>
-      <button onclick="switchTab('channels', this)">Channels</button>
-      <button onclick="switchTab('patterns', this)">Patterns</button>
-      <button onclick="switchTab('seasonality', this)">Seasonality</button>
-      <button onclick="switchTab('market', this)">Market</button>
-      <button onclick="switchTab('reviews', this)">Reviews</button>
-      <button onclick="switchTab('insights', this)">Insights</button>
+    <div class="section-tabs">
+      <button class="section-tab active" onclick="switchTab('overview', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+        Overview
+      </button>
+      <button class="section-tab" onclick="switchTab('revenue', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+        Revenue
+      </button>
+      <button class="section-tab" onclick="switchTab('occupancy', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        Occupancy &amp; Rates
+      </button>
+      <button class="section-tab" onclick="switchTab('guests', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="5"/><path d="M3 21C3 16 7 13 12 13C17 13 21 16 21 21"/></svg>
+        Guests
+      </button>
+      <button class="section-tab" onclick="switchTab('channels', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+        Channels
+      </button>
+      <button class="section-tab" onclick="switchTab('patterns', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        Patterns
+      </button>
+      <button class="section-tab" onclick="switchTab('seasonality', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+        Seasonality
+      </button>
+      <button class="section-tab" onclick="switchTab('market', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+        Market
+      </button>
+      <button class="section-tab" onclick="switchTab('reviews', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+        Reviews
+      </button>
+      <button class="section-tab" onclick="switchTab('insights', this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"/><path d="M10 22h4"/><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>
+        Insights
+      </button>
     </div>
 
     <!-- OVERVIEW TAB -->
-    <div class="tab-content active" id="tab-overview">
-      <div class="kpi-grid" id="kpiGrid"></div>
-      <div class="chart-row">
-        <div class="chart-container">
-          <h3>Monthly Revenue (ZAR)</h3>
-          <div class="bar-chart" id="revenueChart"></div>
+    <div class="section-panel active" id="tab-overview">
+      <div class="kpi-row five" id="kpiGrid"></div>
+
+      <div class="grid-2-1">
+        <div class="card">
+          <div class="card-header">
+            <h3>Revenue Over Time</h3>
+            <div class="legend">
+              <div class="legend-item"><div class="legend-dot" style="background:#2563EB"></div> Current</div>
+              <div class="legend-item"><div class="legend-dot" style="background:#CBD5E1"></div> Last Year</div>
+            </div>
+          </div>
+          <div class="chart-area" id="revenueLineChart"></div>
         </div>
-        <div class="chart-container">
-          <h3>Monthly Occupancy Rate</h3>
-          <div class="bar-chart" id="occupancyOverviewChart"></div>
+
+        <div class="card">
+          <div class="card-header"><h3>Revenue by Property</h3></div>
+          <div id="propertyRevenueOcc"></div>
         </div>
       </div>
-      <div class="chart-container">
-        <h3>Revenue by Property</h3>
-        <div class="bar-chart" id="propertyRevenueChart" style="height:150px;"></div>
+
+      <div class="card">
+        <div class="card-header"><h3>Top Performing Listings</h3></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Property</th><th>Revenue</th><th>Occupancy</th><th>Avg Rate</th><th>Avg Stay</th><th>Bookings</th><th>Rating</th><th>Top Platform</th></tr></thead>
+            <tbody id="topListingsBody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
     <!-- REVENUE TAB -->
-    <div class="tab-content" id="tab-revenue">
-      <div class="chart-container">
-        <h3>Revenue Timeline with Predictions</h3>
-        <div class="bar-chart" id="revenuePredictionChart" style="height:250px;"></div>
-      </div>
-      <div class="chart-row">
-        <div class="chart-container">
-          <h3>ADR (Avg Daily Rate) Trend</h3>
-          <div class="bar-chart" id="adrChart"></div>
+    <div class="section-panel" id="tab-revenue">
+      <!-- 1. KPI Row -->
+      <div class="kpi-row five" id="revKpiGrid"></div>
+
+      <!-- 2. Monthly Revenue Trend + Revenue Breakdown Donut -->
+      <div class="grid-2-1">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h3>Monthly Revenue Trend</h3>
+              <span class="subtitle">Last 12 months &mdash; gross revenue with year-over-year comparison</span>
+            </div>
+            <div class="legend">
+              <div class="legend-item"><div class="legend-dot" style="background:#2563EB"></div> Current</div>
+              <div class="legend-item"><div class="legend-dot" style="background:#E2E8F0"></div> Prior Year</div>
+            </div>
+          </div>
+          <div class="chart-area tall" id="revMonthlyBarChart"></div>
         </div>
-        <div class="chart-container">
-          <h3>RevPAR Trend</h3>
-          <div class="bar-chart" id="revparChart"></div>
+        <div class="card">
+          <div class="card-header"><h3>Revenue Breakdown</h3></div>
+          <div id="revBreakdownDonut"></div>
         </div>
       </div>
-      <div class="chart-container">
-        <h3>Revenue Breakdown by Property</h3>
-        <table class="data-table" id="revenueTable"></table>
+
+      <!-- 3. Revenue by Property + Revenue by Channel -->
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3>Revenue by Property</h3></div>
+          <div id="revByProperty"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Revenue by Channel</h3></div>
+          <div id="revByChannel"></div>
+        </div>
+      </div>
+
+      <!-- 4. Revenue Forecast + Top Revenue Periods -->
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h3>Revenue Forecast</h3>
+              <span class="subtitle">Actual vs projected revenue</span>
+            </div>
+            <div class="legend">
+              <div class="legend-item"><div class="legend-dot" style="background:#2563EB"></div> Actual</div>
+              <div class="legend-item"><div class="legend-dot" style="background:#10B981"></div> Forecast</div>
+            </div>
+          </div>
+          <div class="chart-area tall" id="revForecastChart"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Top Revenue Periods</h3></div>
+          <div class="table-wrap" id="revTopPeriods"></div>
+        </div>
       </div>
     </div>
 
-    <!-- OCCUPANCY TAB -->
-    <div class="tab-content" id="tab-occupancy">
-      <div class="chart-container">
-        <h3>Monthly Occupancy by Property</h3>
-        <div class="bar-chart" id="occupancyDetailChart" style="height:250px;"></div>
+    <!-- OCCUPANCY & RATES TAB -->
+    <div class="section-panel" id="tab-occupancy">
+      <div class="kpi-row" id="occKpiGrid"></div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3>Monthly Occupancy Rate</h3>
+            <div class="legend">
+              <div class="legend-item"><div class="legend-dot" style="background:var(--success)"></div> &ge;70%</div>
+              <div class="legend-item"><div class="legend-dot" style="background:var(--warning)"></div> 50-69%</div>
+              <div class="legend-item"><div class="legend-dot" style="background:var(--danger)"></div> &lt;50%</div>
+            </div>
+          </div>
+          <div class="chart-area" id="occBarChart"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>Rate Trends (ADR)</h3>
+            <div class="legend">
+              <div class="legend-item"><div class="legend-dot" style="background:var(--primary)"></div> ADR</div>
+              <div class="legend-item"><div class="legend-dot" style="background:var(--teal, #14B8A6)"></div> RevPAR</div>
+            </div>
+          </div>
+          <div class="chart-area" id="rateTrendsChart"></div>
+        </div>
       </div>
-      <div class="chart-container">
-        <h3>Occupancy Data</h3>
-        <table class="data-table" id="occupancyTable"></table>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3>Occupancy by Property</h3></div>
+          <div id="occByProperty"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>Lead Time Analysis</h3>
+            <span class="subtitle">Days between booking and check-in</span>
+          </div>
+          <div class="kpi-row" style="margin-bottom:16px;" id="leadTimeStats"></div>
+          <div id="leadTimeBars"></div>
+        </div>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3>Length of Stay Distribution</h3>
+            <span class="subtitle">Number of bookings by nights stayed</span>
+          </div>
+          <div class="kpi-row" style="margin-bottom:16px;" id="losStats"></div>
+          <div id="losBars"></div>
+        </div>
+        <div class="card">
+          <div class="card-header">
+            <h3>Lead Time vs Nightly Rate</h3>
+            <span class="subtitle">Do earlier bookers pay more?</span>
+          </div>
+          <div id="scatterPlot"></div>
+          <div id="scatterLegend" style="display:flex;justify-content:center;gap:20px;padding:8px 0 4px;flex-wrap:wrap;"></div>
+          <div id="scatterInsight" style="margin-top:12px;"></div>
+        </div>
       </div>
     </div>
 
-    <!-- PRICING TAB -->
-    <div class="tab-content" id="tab-pricing">
-      <div class="chart-container">
-        <h3>Current & Future Rate Trends</h3>
-        <p style="font-size:0.85rem;color:#666;margin-bottom:1rem;">Synced from Smoobu. Click "Sync Rates" to update.</p>
-        <div id="priceTrendsContainer"></div>
-      </div>
-      <div class="chart-container">
-        <h3>Actual Booking Price vs Base Price</h3>
-        <div class="bar-chart" id="priceComparisonChart" style="height:200px;"></div>
+    <!-- GUESTS TAB -->
+    <div class="section-panel" id="tab-guests">
+      <div class="kpi-row" id="guestsKpiGrid"></div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3>Guest Countries</h3></div>
+          <div id="guestCountries"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Guest Languages</h3></div>
+          <div class="donut-wrap" id="guestLanguages"></div>
+        </div>
       </div>
     </div>
 
     <!-- CHANNELS TAB -->
-    <div class="tab-content" id="tab-channels">
-      <div class="chart-row">
-        <div class="chart-container">
-          <h3>Revenue by Channel</h3>
-          <div class="bar-chart" id="channelRevenueChart" style="height:180px;"></div>
+    <div class="section-panel" id="tab-channels">
+      <div class="kpi-row" id="channelsKpiGrid"></div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3>Booking Channel Mix</h3></div>
+          <div class="donut-wrap" id="channelDonut"></div>
         </div>
-        <div class="chart-container">
-          <h3>Bookings by Channel</h3>
-          <div class="bar-chart" id="channelBookingsChart" style="height:180px;"></div>
+        <div class="card">
+          <div class="card-header"><h3>Revenue by Channel</h3></div>
+          <div id="channelRevenueBars"></div>
+          <div id="channelInsight" style="margin-top:16px;"></div>
         </div>
       </div>
-      <div class="chart-container">
-        <h3>Channel Performance Comparison</h3>
-        <table class="data-table" id="channelTable"></table>
-      </div>
-      <div class="chart-container">
-        <h3>Cancellation Rate by Channel</h3>
-        <table class="data-table" id="cancellationTable"></table>
+      <div class="card">
+        <div class="card-header"><h3>Channel Performance Comparison</h3></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Channel</th><th>Bookings</th><th>Revenue</th><th>Avg Rate</th><th>Avg Stay</th><th>Avg Lead Time</th><th>Cancel Rate</th></tr></thead>
+            <tbody id="channelTableBody"></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
     <!-- PATTERNS TAB -->
-    <div class="tab-content" id="tab-patterns">
-      <div class="chart-row">
-        <div class="chart-container">
-          <h3>Check-ins by Day of Week</h3>
+    <div class="section-panel" id="tab-patterns">
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3>Check-ins by Day of Week</h3></div>
           <div class="bar-chart" id="dowChart" style="height:180px;"></div>
         </div>
-        <div class="chart-container">
-          <h3>Length of Stay Distribution</h3>
+        <div class="card">
+          <div class="card-header"><h3>Length of Stay Distribution</h3></div>
           <div class="bar-chart" id="losChart" style="height:180px;"></div>
         </div>
       </div>
-      <div class="chart-row">
-        <div class="chart-container">
-          <h3>Booking Lead Time</h3>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3>Booking Lead Time</h3></div>
           <div class="bar-chart" id="leadTimeChart" style="height:180px;"></div>
         </div>
-        <div class="chart-container">
-          <h3>Lead Time vs Price Per Night</h3>
+        <div class="card">
+          <div class="card-header"><h3>Lead Time vs Price Per Night</h3></div>
           <table class="data-table" id="leadTimeTable"></table>
         </div>
       </div>
     </div>
 
     <!-- SEASONALITY TAB -->
-    <div class="tab-content" id="tab-seasonality">
-      <div class="chart-container">
-        <h3>Monthly Occupancy Heatmap</h3>
-        <div class="heatmap-grid" id="seasonalityHeatmap"></div>
+    <div class="section-panel" id="tab-seasonality">
+      <div class="card">
+        <div class="card-header">
+          <h3>Occupancy Heatmap — 12-Month View</h3>
+          <div class="legend">
+            <div class="legend-item"><div class="legend-dot" style="background:var(--success)"></div> High (&ge;75%)</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--warning)"></div> Mid (50-74%)</div>
+            <div class="legend-item"><div class="legend-dot" style="background:var(--danger)"></div> Low (&lt;50%)</div>
+          </div>
+        </div>
+        <div class="heatmap" id="seasonalityHeatmap"></div>
       </div>
-      <div class="chart-row">
-        <div class="chart-container">
-          <h3>Average Revenue Per Month</h3>
-          <div class="bar-chart" id="seasonalRevenueChart" style="height:200px;"></div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3>Booking Patterns — Day of Week</h3></div>
+          <div id="bookingDowBars"></div>
         </div>
-        <div class="chart-container">
-          <h3>Average Nightly Rate by Month</h3>
-          <div class="bar-chart" id="seasonalAdrChart" style="height:200px;"></div>
+        <div class="card">
+          <div class="card-header"><h3>Check-in Day Distribution</h3></div>
+          <div id="checkinDowBars"></div>
         </div>
       </div>
-      <div class="chart-row">
-        <div class="chart-container">
-          <h3>Peak vs Off-Peak Analysis</h3>
-          <div id="peakAnalysis"></div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3>Check-out Day Distribution</h3></div>
+          <div id="checkoutDowBars"></div>
         </div>
-        <div class="chart-container">
-          <h3>Booking Window by Season</h3>
-          <div id="bookingWindowAnalysis"></div>
+        <div class="card">
+          <div class="card-header"><h3>Booking Time of Day</h3></div>
+          <div id="bookingHourBars"></div>
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header">
+            <h3>Avg Stay by Property</h3>
+            <span class="subtitle">Average length of stay in nights</span>
+          </div>
+          <div id="avgStayByProperty"></div>
+          <div id="avgStayInsight" style="margin-top:12px;"></div>
         </div>
       </div>
     </div>
 
     <!-- MARKET TAB -->
-    <div class="tab-content" id="tab-market">
-      <div class="chart-container">
-        <h3>Market Position</h3>
+    <div class="section-panel" id="tab-market">
+      <div class="card">
+        <div class="card-header"><h3>Market Position</h3></div>
         <div id="marketPositionCards"></div>
       </div>
-      <div class="chart-container">
-        <h3>Competitor Properties</h3>
+      <div class="card">
+        <div class="card-header"><h3>Competitor Properties</h3></div>
         <div id="competitorsList"></div>
         <button class="btn btn-primary" onclick="openCompetitorModal()" style="margin-top:1rem;">Add Competitor</button>
-        <p style="font-size:0.75rem;color:#999;margin-top:0.5rem;">Note: Competitor data is entered manually. Scraping external sites may violate their ToS. For automated market data, consider integrating AirDNA or PriceLabs API.</p>
+        <p style="font-size:0.75rem;color:var(--gray-400);margin-top:0.5rem;">Note: Competitor data is entered manually. Scraping external sites may violate their ToS. For automated market data, consider integrating AirDNA or PriceLabs API.</p>
       </div>
     </div>
 
     <!-- REVIEWS TAB -->
-    <div class="tab-content" id="tab-reviews">
-      <div class="chart-container">
-        <h3>Review Sentiment Summary</h3>
-        <div class="review-sentiment-summary" id="sentimentSummary"></div>
+    <div class="section-panel" id="tab-reviews">
+      <div class="kpi-row" id="reviewsKpiGrid"></div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3>Rating Distribution</h3></div>
+          <div id="ratingDistribution"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Ratings by Property</h3></div>
+          <div id="ratingsByProperty"></div>
+        </div>
       </div>
-      <div class="chart-container">
-        <h3>Ratings by Property</h3>
-        <table class="data-table" id="reviewSummaryTable"></table>
-        <p style="font-size:0.85rem;color:#666;margin-top:1rem;">
-          Smoobu doesn't expose reviews via API. Add reviews manually below to track them.
-        </p>
+      <div class="card">
+        <div class="card-header"><h3>Recent Reviews</h3></div>
+        <div id="recentReviewsList"></div>
       </div>
-      <div class="chart-container">
-        <h3>Rating Trend</h3>
-        <div class="bar-chart" id="ratingTrendChart" style="height:150px;"></div>
-      </div>
-      <div class="chart-container">
-        <h3>Add Review</h3>
+      <div class="card">
+        <div class="card-header"><h3>Add Review</h3></div>
         <form id="addReviewForm" onsubmit="addReview(event)">
           <div class="form-row">
             <div class="form-group">
@@ -593,7 +700,7 @@
         </form>
         <div class="parse-html-section">
           <h4>Paste Reviews HTML</h4>
-          <p style="font-size:0.8rem;color:#666;margin-bottom:0.5rem;">Paste the HTML source from a review page to extract reviews automatically (best-effort).</p>
+          <p style="font-size:0.8rem;color:var(--gray-500);margin-bottom:0.5rem;">Paste the HTML source from a review page to extract reviews automatically (best-effort).</p>
           <div class="form-row">
             <div class="form-group">
               <label>Platform</label>
@@ -616,25 +723,37 @@
           <div id="parsedReviewsResult" style="margin-top:1rem;"></div>
         </div>
       </div>
-      <div id="reviewsList"></div>
     </div>
 
     <!-- INSIGHTS TAB -->
-    <div class="tab-content" id="tab-insights">
-      <div class="chart-container">
-        <h3>Automated Insights</h3>
-        <p style="font-size:0.85rem;color:#666;margin-bottom:1rem;">
-          Based on your booking data, here's what's working and what needs attention.
-        </p>
-        <div id="insightsList"></div>
+    <div class="section-panel" id="tab-insights">
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3>Revenue &amp; Pricing Insights</h3></div>
+          <div id="revenuePricingInsights"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Occupancy &amp; Demand Insights</h3></div>
+          <div id="occupancyDemandInsights"></div>
+        </div>
       </div>
-      <div class="chart-container">
-        <h3>Revenue Predictions (3-Month Forecast)</h3>
+      <div class="grid-2">
+        <div class="card">
+          <div class="card-header"><h3>Guest &amp; Channel Insights</h3></div>
+          <div id="guestChannelInsights"></div>
+        </div>
+        <div class="card">
+          <div class="card-header"><h3>Reviews &amp; Quality Insights</h3></div>
+          <div id="reviewsQualityInsights"></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><h3>Revenue Predictions (3-Month Forecast)</h3></div>
         <table class="data-table" id="predictionsTable"></table>
-        <p style="font-size:0.75rem;color:#999;margin-top:0.5rem;">Based on 3-month moving average of historical data.</p>
+        <p style="font-size:0.75rem;color:var(--gray-400);margin-top:0.5rem;">Based on same-month historical data where available, otherwise 3-month average.</p>
       </div>
-      <div class="chart-container">
-        <h3>Pipeline Summary</h3>
+      <div class="card">
+        <div class="card-header"><h3>Pipeline Summary</h3></div>
         <div id="pipelineSummary"></div>
       </div>
     </div>

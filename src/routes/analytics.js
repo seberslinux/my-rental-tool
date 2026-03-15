@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const { getDb } = require('../db/database');
 const smoobu = require('../services/smoobu');
+const { detectCurrency } = require('../services/currency-detect');
+const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
 
 // Helper: parse property_id param (supports comma-separated IDs or 'all')
 function parsePropertyIds(raw) {
@@ -67,29 +69,72 @@ router.post('/sync-rates', async (req, res) => {
   }
 });
 
+// Phone country code to country name mapping
+const PHONE_COUNTRY_MAP = {
+  '27': 'South Africa', '1': 'United States', '44': 'United Kingdom',
+  '49': 'Germany', '33': 'France', '31': 'Netherlands', '32': 'Belgium',
+  '34': 'Spain', '39': 'Italy', '41': 'Switzerland', '43': 'Austria',
+  '45': 'Denmark', '46': 'Sweden', '47': 'Norway', '48': 'Poland',
+  '351': 'Portugal', '353': 'Ireland', '358': 'Finland', '420': 'Czech Republic',
+  '36': 'Hungary', '30': 'Greece', '90': 'Turkey', '7': 'Russia',
+  '61': 'Australia', '64': 'New Zealand', '81': 'Japan', '82': 'South Korea',
+  '86': 'China', '91': 'India', '55': 'Brazil', '52': 'Mexico',
+  '54': 'Argentina', '56': 'Chile', '57': 'Colombia', '971': 'UAE',
+  '966': 'Saudi Arabia', '972': 'Israel', '20': 'Egypt', '234': 'Nigeria',
+  '254': 'Kenya', '255': 'Tanzania', '256': 'Uganda', '263': 'Zimbabwe',
+  '267': 'Botswana', '258': 'Mozambique', '260': 'Zambia', '264': 'Namibia',
+  '230': 'Mauritius', '262': 'Reunion', '261': 'Madagascar',
+  '65': 'Singapore', '60': 'Malaysia', '66': 'Thailand', '62': 'Indonesia',
+  '63': 'Philippines', '84': 'Vietnam', '852': 'Hong Kong', '886': 'Taiwan',
+  '354': 'Iceland', '372': 'Estonia', '371': 'Latvia', '370': 'Lithuania',
+  '385': 'Croatia', '386': 'Slovenia', '421': 'Slovakia', '40': 'Romania',
+  '359': 'Bulgaria', '381': 'Serbia', '387': 'Bosnia', '355': 'Albania',
+};
+
+function countryFromPhone(phone) {
+  if (!phone) return '';
+  // Strip spaces, dashes, parens; keep leading +
+  const cleaned = phone.replace(/[\s\-()]/g, '');
+  if (!cleaned.startsWith('+')) return '';
+  const digits = cleaned.substring(1);
+  // Try 3-digit, 2-digit, then 1-digit codes
+  for (const len of [3, 2, 1]) {
+    const prefix = digits.substring(0, len);
+    if (PHONE_COUNTRY_MAP[prefix]) return PHONE_COUNTRY_MAP[prefix];
+  }
+  return '';
+}
+
 // Sync historical bookings (wider range for analytics)
 router.post('/sync-history', async (req, res) => {
   try {
     const db = getDb();
-    const oneYearAgo = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)
+    const twoYearsAgo = new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000)
       .toISOString()
       .split('T')[0];
-    const threeMonthsOut = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000)
+    const sixMonthsOut = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000)
       .toISOString()
       .split('T')[0];
 
-    const allBookings = await smoobu.getAllBookings({ from: oneYearAgo, to: threeMonthsOut });
+    const allBookings = await smoobu.getAllBookings({ from: twoYearsAgo, to: sixMonthsOut });
+
+    // Build property base_currency map for fallback
+    const propCurrencyMap = {};
+    const propsForCurrency = db.prepare('SELECT smoobu_id, base_currency FROM properties').all();
+    for (const p of propsForCurrency) propCurrencyMap[p.smoobu_id] = p.base_currency || 'ZAR';
 
     const upsert = db.prepare(`
-      INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night)
-      VALUES (?, (SELECT id FROM properties WHERE smoobu_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, commission, language, children, guest_country, currency)
+      VALUES (?, (SELECT id FROM properties WHERE smoobu_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(smoobu_id) DO UPDATE SET
         guest_name = excluded.guest_name, check_in = excluded.check_in,
         check_out = excluded.check_out, platform = excluded.platform,
         total_price = excluded.total_price, status = excluded.status,
         num_guests = excluded.num_guests, created_at = excluded.created_at,
         lead_time_days = excluded.lead_time_days, length_of_stay = excluded.length_of_stay,
-        price_per_night = excluded.price_per_night
+        price_per_night = excluded.price_per_night, commission = excluded.commission,
+        language = excluded.language, children = excluded.children,
+        guest_country = excluded.guest_country, currency = excluded.currency
     `);
 
     const transaction = db.transaction((bookings) => {
@@ -103,14 +148,24 @@ router.post('/sync-history', async (req, res) => {
         const ppn = los > 0 ? Math.round((price / los) * 100) / 100 : 0;
         const leadTime = createdAt ? Math.max(0, Math.round((new Date(checkIn) - new Date(createdAt)) / (24 * 60 * 60 * 1000))) : 0;
 
+        // New fields
+        const commission = b['commission-included'] || b.commissionIncluded || 0;
+        const language = b.language || '';
+        const children = b.children || 0;
+        const phone = b.phone || b['guest-phone'] || b.guestPhone || '';
+        const guestCountry = countryFromPhone(phone) || '';
+        const aptId = b['apartment']?.id || b.apartmentId;
+        const currency = detectCurrency(b) || propCurrencyMap[aptId] || 'ZAR';
+
         upsert.run(
           b.id,
-          b['apartment']?.id || b.apartmentId,
+          aptId,
           b['guest-name'] || b.guestName || '',
           checkIn, checkOut, platform, price,
           b.type === 'cancellation' ? 'cancelled' : 'confirmed',
           b['adults'] || b.adults || 1,
-          createdAt, leadTime, los, ppn
+          createdAt, leadTime, los, ppn,
+          commission, language, children, guestCountry, currency
         );
       }
     });
@@ -124,14 +179,18 @@ router.post('/sync-history', async (req, res) => {
 });
 
 // Get full analytics data
-router.get('/data', (req, res) => {
+router.get('/data', async (req, res) => {
   const db = getDb();
   const properties = db.prepare('SELECT * FROM properties').all();
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
 
-  const { property_id, from, to } = req.query;
+  const { property_id, from: rawFrom, to: rawTo } = req.query;
   const propIds = parsePropertyIds(property_id);
+
+  // Round date filters to full months so charts always show complete months
+  const from = rawFrom ? rawFrom.substring(0, 7) + '-01' : null;
+  const to = rawTo ? (() => { const [y, m] = rawTo.split('-').map(Number); return new Date(y, m, 0).toISOString().split('T')[0]; })() : null;
 
   // Build dynamic filter
   let bookingFilters = '';
@@ -146,63 +205,152 @@ router.get('/data', (req, res) => {
     bookingParams.push(to);
   }
 
-  // All confirmed bookings
+  // All confirmed bookings (excluding calendar blocks)
+  const BLOCKED_FILTER = ` AND b.platform NOT IN ('Blocked channel', 'Blocked channel auto')`;
   const allBookings = db
     .prepare(
-      `SELECT b.*, p.name as property_name FROM bookings b
+      `SELECT b.*, p.name as property_name, p.base_price as property_base_price, p.base_currency as property_base_currency, p.vat_rate as property_vat_rate, p.bank_charge_airbnb, p.bank_charge_booking, p.bank_charge_vrbo FROM bookings b
        JOIN properties p ON b.property_id = p.id
-       WHERE b.status = 'confirmed'${bookingFilters}
+       WHERE b.status = 'confirmed'${BLOCKED_FILTER}${bookingFilters}
        ORDER BY b.check_in ASC`
     )
     .all(...bookingParams);
+
+  // Impute revenue from base_price when total_price is 0 (any platform, not just VRBO)
+  for (const b of allBookings) {
+    if ((b.total_price || 0) === 0 && b.property_base_price && b.property_base_price > 0) {
+      const los = b.length_of_stay || 1;
+      b.total_price = b.property_base_price * los;
+      b.price_per_night = b.property_base_price;
+      b.currency = b.property_base_currency || 'ZAR';
+      b._imputed = true;
+    }
+  }
+
+  // Convert all booking amounts to display currency
+  const displayCurrency = getDisplayCurrency();
+  await bulkConvert(allBookings, displayCurrency);
 
   // --- Revenue by month ---
   const revenueByMonth = {};
   for (const b of allBookings) {
     const month = b.check_in.substring(0, 7); // YYYY-MM
     if (!revenueByMonth[month]) revenueByMonth[month] = { month, total: 0, bookings: 0, nights: 0 };
-    revenueByMonth[month].total += b.total_price || 0;
+    revenueByMonth[month].total += b.converted_total_price || 0;
     revenueByMonth[month].bookings += 1;
     revenueByMonth[month].nights += b.length_of_stay || 1;
   }
+  // Fill in missing months with 0 values so the chart has no gaps
+  const monthKeys = Object.keys(revenueByMonth).sort();
+  if (monthKeys.length >= 2) {
+    const [startY, startM] = monthKeys[0].split('-').map(Number);
+    const [endY, endM] = monthKeys[monthKeys.length - 1].split('-').map(Number);
+    let y = startY, m = startM;
+    while (y < endY || (y === endY && m <= endM)) {
+      const key = `${y}-${String(m).padStart(2, '0')}`;
+      if (!revenueByMonth[key]) {
+        revenueByMonth[key] = { month: key, total: 0, bookings: 0, nights: 0 };
+      }
+      m++;
+      if (m > 12) { m = 1; y++; }
+    }
+  }
   const revenueTimeline = Object.values(revenueByMonth).sort((a, b) => a.month.localeCompare(b.month));
 
-  // --- Revenue by property ---
+  // --- Revenue by property (with top platform) ---
   const revenueByProperty = {};
+  const platformByProperty = {}; // track platform bookings per property
   for (const b of allBookings) {
     const key = b.property_name;
     if (!revenueByProperty[key]) revenueByProperty[key] = { property: key, property_id: b.property_id, total: 0, bookings: 0, nights: 0 };
-    revenueByProperty[key].total += b.total_price || 0;
+    revenueByProperty[key].total += b.converted_total_price || 0;
     revenueByProperty[key].bookings += 1;
     revenueByProperty[key].nights += b.length_of_stay || 1;
+
+    // Track platform counts per property
+    const plat = normalizePlatform(b.platform);
+    if (!platformByProperty[key]) platformByProperty[key] = {};
+    platformByProperty[key][plat] = (platformByProperty[key][plat] || 0) + 1;
+  }
+  // Assign top_platform to each property
+  for (const [prop, platforms] of Object.entries(platformByProperty)) {
+    if (revenueByProperty[prop]) {
+      const sorted = Object.entries(platforms).sort((a, b) => b[1] - a[1]);
+      revenueByProperty[prop].top_platform = sorted.length > 0 ? sorted[0][0] : '';
+    }
   }
 
   // --- Channel performance ---
   const channelStats = {};
   for (const b of allBookings) {
     const ch = normalizePlatform(b.platform);
-    if (!channelStats[ch]) channelStats[ch] = { channel: ch, revenue: 0, bookings: 0, nights: 0, avg_ppn: 0, avg_los: 0, avg_lead_time: 0, total_ppn: 0, total_lead: 0 };
-    channelStats[ch].revenue += b.total_price || 0;
+    if (!channelStats[ch]) channelStats[ch] = { channel: ch, revenue: 0, revenue_ex_vat: 0, bank_charges: 0, bookings: 0, nights: 0, avg_ppn: 0, avg_ppn_ex_vat: 0, avg_los: 0, avg_lead_time: 0, total_ppn: 0, total_ppn_ex_vat: 0, total_lead: 0, has_imputed: false };
+    const convPrice = b.converted_total_price || 0;
+    const convPpn = b.converted_price_per_night || 0;
+    channelStats[ch].revenue += convPrice;
     channelStats[ch].bookings += 1;
     channelStats[ch].nights += b.length_of_stay || 1;
-    channelStats[ch].total_ppn += b.price_per_night || 0;
+    channelStats[ch].total_ppn += convPpn;
     channelStats[ch].total_lead += b.lead_time_days || 0;
+    if (b._imputed) channelStats[ch].has_imputed = true;
+
+    // VAT-exclusive revenue (for platforms where rates include VAT like Booking.com)
+    const vatRate = b.property_vat_rate || 0;
+    const isVatInclusive = vatRate > 0 && (ch === 'Booking.com');
+    const vatDivisor = isVatInclusive ? (1 + vatRate / 100) : 1;
+    channelStats[ch].revenue_ex_vat += Math.round(convPrice / vatDivisor);
+    channelStats[ch].total_ppn_ex_vat += Math.round(convPpn / vatDivisor);
+
+    // Bank charges
+    let bankRate = 0;
+    if (ch === 'Airbnb') bankRate = (b.bank_charge_airbnb || 0) / 100;
+    else if (ch === 'Booking.com') bankRate = (b.bank_charge_booking || 2.1) / 100;
+    else if (ch === 'VRBO') bankRate = (b.bank_charge_vrbo || 0) / 100;
+    channelStats[ch].bank_charges += Math.round(convPrice * bankRate);
   }
   for (const ch of Object.values(channelStats)) {
     ch.avg_ppn = ch.bookings > 0 ? Math.round(ch.total_ppn / ch.bookings) : 0;
+    ch.avg_ppn_ex_vat = ch.bookings > 0 ? Math.round(ch.total_ppn_ex_vat / ch.bookings) : 0;
     ch.avg_los = ch.bookings > 0 ? Math.round((ch.nights / ch.bookings) * 10) / 10 : 0;
     ch.avg_lead_time = ch.bookings > 0 ? Math.round(ch.total_lead / ch.bookings) : 0;
+    ch.adr = ch.nights > 0 ? Math.round(ch.revenue / ch.nights) : 0;
+    ch.adr_ex_vat = ch.nights > 0 ? Math.round(ch.revenue_ex_vat / ch.nights) : 0;
     delete ch.total_ppn;
+    delete ch.total_ppn_ex_vat;
     delete ch.total_lead;
   }
 
   // --- Occupancy by month per property ---
+  // Use a wider booking set that includes bookings checking in before 'from' but overlapping into the range
+  const occFrom = from || '2000-01-01';
+  const occTo = to || '2099-12-31';
+  let occFilters = '';
+  const occParams = [];
+  occFilters += addPropertyFilter(propIds, 'b.property_id', occParams);
+  // Include bookings that overlap with the date range (check_out > from AND check_in <= to)
+  occFilters += ' AND b.check_out > ?';
+  occParams.push(occFrom);
+  occFilters += ' AND b.check_in <= ?';
+  occParams.push(occTo);
+
+  const occBookings = db
+    .prepare(
+      `SELECT b.check_in, b.check_out, b.property_id FROM bookings b
+       WHERE b.status = 'confirmed'${BLOCKED_FILTER}${occFilters}
+       ORDER BY b.check_in ASC`
+    )
+    .all(...occParams);
+
+  // Clamp night counting to the requested date range
+  const occRangeStart = new Date(occFrom);
+  const occRangeEnd = new Date(new Date(occTo).getTime() + 24 * 60 * 60 * 1000); // day after last date
+
   const occupancyByMonth = {};
   for (const p of properties) {
-    const pBookings = allBookings.filter((b) => b.property_id === p.id);
+    const pBookings = occBookings.filter((b) => b.property_id === p.id);
     for (const b of pBookings) {
-      let d = new Date(b.check_in);
-      const end = new Date(b.check_out);
+      let d = new Date(Math.max(new Date(b.check_in), occRangeStart));
+      const end = new Date(Math.min(new Date(b.check_out), occRangeEnd));
       while (d < end) {
         const month = d.toISOString().substring(0, 7);
         const key = `${p.id}-${month}`;
@@ -228,7 +376,7 @@ router.get('/data', (req, res) => {
   for (const b of allBookings) {
     const month = b.check_in.substring(0, 7);
     if (!adrByMonth[month]) adrByMonth[month] = { month, total_revenue: 0, total_nights: 0 };
-    adrByMonth[month].total_revenue += b.total_price || 0;
+    adrByMonth[month].total_revenue += b.converted_total_price || 0;
     adrByMonth[month].total_nights += b.length_of_stay || 1;
   }
   const adrTimeline = Object.entries(adrByMonth)
@@ -237,11 +385,16 @@ router.get('/data', (req, res) => {
 
   // --- Day-of-week analysis ---
   const dowStats = Array.from({ length: 7 }, (_, i) => ({ day: i, bookings_starting: 0, revenue: 0, nights: 0 }));
+  const checkoutDowStats = Array.from({ length: 7 }, (_, i) => ({ day: i, count: 0 }));
   for (const b of allBookings) {
     const dow = new Date(b.check_in).getDay();
     dowStats[dow].bookings_starting += 1;
-    dowStats[dow].revenue += b.total_price || 0;
+    dowStats[dow].revenue += b.converted_total_price || 0;
     dowStats[dow].nights += b.length_of_stay || 1;
+    if (b.check_out) {
+      const coDow = new Date(b.check_out).getDay();
+      checkoutDowStats[coDow].count += 1;
+    }
   }
 
   // --- Length of stay distribution ---
@@ -251,7 +404,7 @@ router.get('/data', (req, res) => {
     const bucket = los >= 7 ? '7+' : String(los);
     if (!losDistribution[bucket]) losDistribution[bucket] = { nights: bucket, count: 0, revenue: 0 };
     losDistribution[bucket].count += 1;
-    losDistribution[bucket].revenue += b.total_price || 0;
+    losDistribution[bucket].revenue += b.converted_total_price || 0;
   }
 
   // --- Lead time distribution ---
@@ -263,7 +416,7 @@ router.get('/data', (req, res) => {
       if (lt >= min && lt <= max) {
         if (!leadTimeDistribution[label]) leadTimeDistribution[label] = { bucket: label, count: 0, avg_ppn: 0, total_ppn: 0 };
         leadTimeDistribution[label].count += 1;
-        leadTimeDistribution[label].total_ppn += b.price_per_night || 0;
+        leadTimeDistribution[label].total_ppn += b.converted_price_per_night || 0;
         break;
       }
     }
@@ -271,6 +424,21 @@ router.get('/data', (req, res) => {
   for (const lt of Object.values(leadTimeDistribution)) {
     lt.avg_ppn = lt.count > 0 ? Math.round(lt.total_ppn / lt.count) : 0;
     delete lt.total_ppn;
+  }
+
+  // --- Booking hour distribution (time of day people book, adjusted to SAST = UTC+2) ---
+  const SAST_OFFSET = 2;
+  const hourDistribution = Array.from({ length: 24 }, (_, i) => ({ hour: i, count: 0 }));
+  for (const b of allBookings) {
+    const ca = b.created_at || '';
+    if (ca.includes(' ')) {
+      const timePart = ca.split(' ')[1]; // "14:46"
+      const utcHour = parseInt(timePart.split(':')[0], 10);
+      if (!isNaN(utcHour) && utcHour >= 0 && utcHour < 24) {
+        const sastHour = (utcHour + SAST_OFFSET) % 24;
+        hourDistribution[sastHour].count += 1;
+      }
+    }
   }
 
   // --- Cancellation rate ---
@@ -286,7 +454,7 @@ router.get('/data', (req, res) => {
     cancelParams.push(to);
   }
   const allBookingsIncCancelled = db
-    .prepare(`SELECT status, platform FROM bookings WHERE 1=1${cancelFilters}`)
+    .prepare(`SELECT status, platform FROM bookings WHERE platform NOT IN ('Blocked channel', 'Blocked channel auto')${cancelFilters}`)
     .all(...cancelParams);
   const totalBookings = allBookingsIncCancelled.length;
   const cancelled = allBookingsIncCancelled.filter((b) => b.status === 'cancelled').length;
@@ -314,11 +482,15 @@ router.get('/data', (req, res) => {
     .all();
 
   // --- RevPAR by month (Revenue Per Available Room-night) ---
+  // Use filtered properties count, not all properties
+  const filteredProperties = propIds
+    ? properties.filter(p => propIds.includes(String(p.id)))
+    : properties;
   const revparByMonth = {};
   for (const entry of revenueTimeline) {
     const [y, m] = entry.month.split('-').map(Number);
     const daysInMonth = new Date(y, m, 0).getDate();
-    const totalAvailableNights = daysInMonth * properties.length;
+    const totalAvailableNights = daysInMonth * filteredProperties.length;
     revparByMonth[entry.month] = {
       month: entry.month,
       revpar: totalAvailableNights > 0 ? Math.round(entry.total / totalAvailableNights) : 0,
@@ -344,7 +516,7 @@ router.get('/data', (req, res) => {
 
   // --- Future pipeline (confirmed bookings from today onwards) ---
   const futureBookings = allBookings.filter((b) => b.check_in >= todayStr);
-  const futureRevenue = futureBookings.reduce((sum, b) => sum + (b.total_price || 0), 0);
+  const futureRevenue = futureBookings.reduce((sum, b) => sum + (b.converted_total_price || 0), 0);
   const futureNights = futureBookings.reduce((sum, b) => sum + (b.length_of_stay || 0), 0);
 
   // --- Reviews ---
@@ -380,15 +552,137 @@ router.get('/data', (req, res) => {
   }
 
   // --- Summary KPIs ---
-  const totalRevenue = allBookings.reduce((sum, b) => sum + (b.total_price || 0), 0);
+  const totalRevenue = allBookings.reduce((sum, b) => sum + (b.converted_total_price || 0), 0);
+  const totalCommission = allBookings.reduce((sum, b) => sum + (b.converted_commission || 0), 0);
+  const netRevenue = totalRevenue - totalCommission;
   const totalNights = allBookings.reduce((sum, b) => sum + (b.length_of_stay || 0), 0);
   const avgAdr = totalNights > 0 ? Math.round(totalRevenue / totalNights) : 0;
   const avgLos = allBookings.length > 0 ? Math.round((totalNights / allBookings.length) * 10) / 10 : 0;
   const avgLeadTime = allBookings.length > 0 ? Math.round(allBookings.reduce((sum, b) => sum + (b.lead_time_days || 0), 0) / allBookings.length) : 0;
+  const hasImputedRevenue = allBookings.some(b => b._imputed);
+  const totalChildren = allBookings.reduce((sum, b) => sum + (b.children || 0), 0);
+  const avgGuestsPerBooking = allBookings.length > 0 ? Math.round((allBookings.reduce((sum, b) => sum + (b.num_guests || 1), 0) / allBookings.length) * 10) / 10 : 0;
+
+  // --- Guest demographics ---
+  const languageStats = {};
+  const countryStats = {};
+  for (const b of allBookings) {
+    if (b.language) {
+      languageStats[b.language] = (languageStats[b.language] || 0) + 1;
+    }
+    if (b.guest_country) {
+      countryStats[b.guest_country] = (countryStats[b.guest_country] || 0) + 1;
+    }
+  }
+  const topLanguages = Object.entries(languageStats)
+    .map(([lang, count]) => ({ language: lang, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 10);
+  const topCountries = Object.entries(countryStats)
+    .map(([country, count]) => ({ country, count }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 15);
+
+  // --- Prior period comparison (same months, one year earlier) ---
+  let priorSummary = null;
+  if (from && to) {
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    const rangeDays = Math.round((toDate - fromDate) / (1000 * 60 * 60 * 24));
+    const priorFrom = new Date(fromDate);
+    priorFrom.setFullYear(priorFrom.getFullYear() - 1);
+    const priorTo = new Date(toDate);
+    priorTo.setFullYear(priorTo.getFullYear() - 1);
+    const priorFromStr = priorFrom.toISOString().split('T')[0];
+    const priorToStr = priorTo.toISOString().split('T')[0];
+
+    let priorFilters = '';
+    const priorParams = [];
+    priorFilters += addPropertyFilter(propIds, 'b.property_id', priorParams);
+    priorFilters += ' AND b.check_in >= ?';
+    priorParams.push(priorFromStr);
+    priorFilters += ' AND b.check_in <= ?';
+    priorParams.push(priorToStr);
+
+    const priorBookings = db
+      .prepare(
+        `SELECT b.*, p.name as property_name, p.base_price as property_base_price, p.base_currency as property_base_currency FROM bookings b
+         JOIN properties p ON b.property_id = p.id
+         WHERE b.status = 'confirmed'${BLOCKED_FILTER}${priorFilters}
+         ORDER BY b.check_in ASC`
+      )
+      .all(...priorParams);
+
+    // Impute for prior period too (all platforms with R0)
+    for (const b of priorBookings) {
+      if ((b.total_price || 0) === 0 && b.property_base_price && b.property_base_price > 0) {
+        b.total_price = b.property_base_price * (b.length_of_stay || 1);
+        b.price_per_night = b.property_base_price;
+        b.currency = b.property_base_currency || 'ZAR';
+        b._imputed = true;
+      }
+    }
+
+    // Convert prior period bookings
+    await bulkConvert(priorBookings, displayCurrency);
+
+    const priorRevenue = priorBookings.reduce((sum, b) => sum + (b.converted_total_price || 0), 0);
+    const priorNights = priorBookings.reduce((sum, b) => sum + (b.length_of_stay || 0), 0);
+    const priorAdr = priorNights > 0 ? Math.round(priorRevenue / priorNights) : 0;
+    const priorLos = priorBookings.length > 0 ? Math.round((priorNights / priorBookings.length) * 10) / 10 : 0;
+
+    // Prior revenue by month
+    const priorRevByMonth = {};
+    for (const b of priorBookings) {
+      const month = b.check_in.substring(0, 7);
+      if (!priorRevByMonth[month]) priorRevByMonth[month] = { month, total: 0, bookings: 0, nights: 0 };
+      priorRevByMonth[month].total += b.converted_total_price || 0;
+      priorRevByMonth[month].bookings += 1;
+      priorRevByMonth[month].nights += b.length_of_stay || 1;
+    }
+
+    // Prior occupancy
+    let priorOccFilters = '';
+    const priorOccParams = [];
+    priorOccFilters += addPropertyFilter(propIds, 'b.property_id', priorOccParams);
+    priorOccFilters += ' AND b.check_in >= ?';
+    priorOccParams.push(priorFromStr);
+    priorOccFilters += ' AND b.check_in <= ?';
+    priorOccParams.push(priorToStr);
+
+    const priorOccBookings = db
+      .prepare(
+        `SELECT b.check_in, b.check_out, b.property_id, b.length_of_stay FROM bookings b
+         WHERE b.status = 'confirmed'${BLOCKED_FILTER}${priorOccFilters}`
+      )
+      .all(...priorOccParams);
+
+    let priorTotalOccNights = 0;
+    let priorTotalDays = 0;
+    // Simple: use same calculation approach
+    for (const b of priorOccBookings) {
+      priorTotalOccNights += b.length_of_stay || 0;
+    }
+    priorTotalDays = rangeDays * properties.length;
+    const priorAvgOcc = priorTotalDays > 0 ? Math.round((priorTotalOccNights / priorTotalDays) * 100) : 0;
+
+    priorSummary = {
+      total_revenue: priorRevenue,
+      total_bookings: priorBookings.length,
+      total_nights: priorNights,
+      avg_adr: priorAdr,
+      avg_los: priorLos,
+      avg_occupancy: priorAvgOcc,
+      revenue_timeline: Object.values(priorRevByMonth).sort((a, b) => a.month.localeCompare(b.month)),
+    };
+  }
 
   res.json({
+    display_currency: displayCurrency,
     summary: {
       total_revenue: totalRevenue,
+      total_commission: totalCommission,
+      net_revenue: netRevenue,
       total_bookings: allBookings.length,
       total_nights: totalNights,
       avg_adr: avgAdr,
@@ -399,7 +693,11 @@ router.get('/data', (req, res) => {
       future_bookings: futureBookings.length,
       future_nights: futureNights,
       properties_count: properties.length,
+      has_imputed_revenue: hasImputedRevenue,
+      total_children: totalChildren,
+      avg_guests: avgGuestsPerBooking,
     },
+    prior_summary: priorSummary,
     revenue_timeline: revenueTimeline,
     revenue_by_property: Object.values(revenueByProperty),
     channel_stats: Object.values(channelStats),
@@ -407,13 +705,19 @@ router.get('/data', (req, res) => {
     adr_timeline: adrTimeline,
     revpar_timeline: Object.values(revparByMonth),
     dow_stats: dowStats,
+    checkout_dow_stats: checkoutDowStats,
     los_distribution: Object.values(losDistribution),
     lead_time_distribution: Object.values(leadTimeDistribution),
+    hour_distribution: hourDistribution,
     cancellations_by_channel: Object.values(cancellationsByChannel),
     price_trends: priceTrends,
     predictions,
     reviews_by_property: Object.values(reviewsByProperty),
     recent_reviews: reviews.slice(0, 20),
+    guest_demographics: {
+      top_languages: topLanguages,
+      top_countries: topCountries,
+    },
   });
 });
 
@@ -478,12 +782,24 @@ router.get('/seasonality', (req, res) => {
 
     const bookings = db
       .prepare(
-        `SELECT b.*, p.name as property_name FROM bookings b
+        `SELECT b.*, p.name as property_name, p.base_price as property_base_price FROM bookings b
          JOIN properties p ON b.property_id = p.id
-         WHERE b.status = 'confirmed'${filters}
+         WHERE b.status = 'confirmed' AND b.platform NOT IN ('Blocked channel', 'Blocked channel auto')${filters}
          ORDER BY b.check_in ASC`
       )
       .all(...params);
+
+    // Impute VRBO revenue from base_price when total_price is 0
+    for (const b of bookings) {
+      if ((b.total_price || 0) === 0 && b.property_base_price && b.property_base_price > 0) {
+        const norm = normalizePlatform(b.platform);
+        if (norm === 'VRBO') {
+          const los = b.length_of_stay || 1;
+          b.total_price = b.property_base_price * los;
+          b.price_per_night = b.property_base_price;
+        }
+      }
+    }
 
     const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -494,7 +810,7 @@ router.get('/seasonality', (req, res) => {
     }
 
     // Count occupied nights per month
-    const propCount = (property_id && property_id !== 'all') ? 1 : properties.length;
+    const propCount = propIds ? propIds.length : properties.length;
     for (const b of bookings) {
       let d = new Date(b.check_in);
       const end = new Date(b.check_out);
@@ -511,21 +827,22 @@ router.get('/seasonality', (req, res) => {
       monthlyData[checkInMonth].total_lead_time += b.lead_time_days || 0;
     }
 
-    // Compute available nights per month across all years seen
+    // Compute available nights per month using each month's own years
+    for (let m = 1; m <= 12; m++) {
+      const monthYears = monthlyData[m].years;
+      let totalDays = 0;
+      for (const y of monthYears) {
+        totalDays += new Date(y, m, 0).getDate();
+      }
+      monthlyData[m].total_available = totalDays > 0 ? totalDays * propCount : 0;
+    }
+
+    // yearCount based on all years seen (for revenue averaging)
     const allYears = new Set();
     for (const md of Object.values(monthlyData)) {
       for (const y of md.years) allYears.add(y);
     }
     const yearCount = Math.max(allYears.size, 1);
-
-    for (let m = 1; m <= 12; m++) {
-      // Average days in this month across years
-      let totalDays = 0;
-      for (const y of allYears) {
-        totalDays += new Date(y, m, 0).getDate();
-      }
-      monthlyData[m].total_available = totalDays > 0 ? totalDays * propCount : 30 * propCount * yearCount;
-    }
 
     const monthly_avg_occupancy = [];
     for (let m = 1; m <= 12; m++) {
@@ -822,13 +1139,20 @@ router.post('/reviews/parse-html', (req, res) => {
   }
 });
 
+function isBlockedPlatform(platform) {
+  if (!platform) return false;
+  return platform.toLowerCase().startsWith('blocked');
+}
+
 function normalizePlatform(platform) {
   if (!platform) return 'Direct';
   const p = platform.toLowerCase();
+  if (p.startsWith('blocked')) return 'Blocked';
   if (p.includes('airbnb')) return 'Airbnb';
+  if (p.includes('direct')) return 'Direct';
   if (p.includes('booking')) return 'Booking.com';
   if (p.includes('vrbo') || p.includes('homeaway')) return 'VRBO';
-  return platform || 'Direct';
+  return 'Direct';
 }
 
 function analyzeSentiment(text) {

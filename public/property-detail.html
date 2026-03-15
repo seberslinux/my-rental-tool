@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Property Performance - Rental Manager</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
   <style>
     .kpi-grid {
@@ -13,56 +14,59 @@
       margin-bottom: 2rem;
     }
     .kpi-card {
-      background: #fff;
-      border-radius: 8px;
+      background: white;
+      border-radius: var(--radius);
       padding: 1.2rem;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--gray-200);
       text-align: center;
     }
     .kpi-card .kpi-value {
       font-size: 1.8rem;
       font-weight: 700;
-      color: #1a1a2e;
+      color: var(--gray-900);
     }
     .kpi-card .kpi-label {
-      color: #666;
+      color: var(--gray-500);
       font-size: 0.85rem;
       margin-top: 0.3rem;
     }
     .prop-header {
-      background: #fff;
-      border-radius: 8px;
+      background: white;
+      border-radius: var(--radius);
       padding: 1.5rem;
       margin-bottom: 1.5rem;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--gray-200);
     }
     .prop-header h1 { margin-bottom: 0.3rem; }
     .prop-meta {
       display: flex;
       gap: 1.5rem;
       flex-wrap: wrap;
-      color: #666;
+      color: var(--gray-500);
       font-size: 0.9rem;
       margin-top: 0.5rem;
     }
     .prop-meta span { display: flex; align-items: center; gap: 0.3rem; }
     .chart-container {
-      background: #fff;
-      border-radius: 8px;
+      background: white;
+      border-radius: var(--radius);
       padding: 1.5rem;
       margin-bottom: 1.5rem;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--gray-200);
     }
     .chart-container h3 {
       margin-bottom: 1rem;
-      color: #1a1a2e;
+      color: var(--gray-900);
     }
     .bar-chart {
       display: flex;
       align-items: flex-end;
       gap: 3px;
       height: 200px;
-      border-bottom: 1px solid #ddd;
+      border-bottom: 1px solid var(--gray-200);
       padding-bottom: 4px;
     }
     .bar-chart .bar-col {
@@ -85,7 +89,7 @@
     .bar-chart .bar:hover { opacity: 0.85; }
     .bar-chart .bar-label {
       font-size: 0.65rem;
-      color: #666;
+      color: var(--gray-500);
       margin-top: 4px;
       text-align: center;
       white-space: nowrap;
@@ -95,7 +99,7 @@
     }
     .bar-chart .bar-value {
       font-size: 0.6rem;
-      color: #333;
+      color: var(--gray-700);
       margin-bottom: 2px;
       white-space: nowrap;
     }
@@ -107,40 +111,43 @@
     .data-table th, .data-table td {
       padding: 0.6rem 0.8rem;
       text-align: left;
-      border-bottom: 1px solid #eee;
+      border-bottom: 1px solid var(--gray-100);
     }
     .data-table th {
-      background: #f8f8f8;
+      background: var(--gray-50);
       font-weight: 600;
-      color: #555;
+      color: var(--gray-500);
     }
-    .data-table tr:hover { background: #f8f9ff; }
+    .data-table tr:hover { background: var(--gray-50); }
     .review-card {
-      border: 1px solid #eee;
-      border-radius: 6px;
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius-sm);
       padding: 1rem;
       margin-bottom: 0.8rem;
     }
     .review-card .stars {
-      color: #ff9900;
+      color: var(--warning);
       font-size: 1.1rem;
     }
     .review-card .review-meta {
       font-size: 0.8rem;
-      color: #999;
+      color: var(--gray-400);
       margin-top: 0.3rem;
     }
     .review-card .review-comment {
       margin-top: 0.5rem;
       font-size: 0.9rem;
-      color: #333;
+      color: var(--gray-700);
     }
     .back-link {
-      display: inline-block;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
       margin-bottom: 1rem;
-      color: #1a1a2e;
+      color: var(--primary);
       text-decoration: none;
       font-size: 0.9rem;
+      font-weight: 500;
     }
     .back-link:hover { text-decoration: underline; }
     @media (max-width: 768px) {
@@ -149,17 +156,6 @@
   </style>
 </head>
 <body>
-  <nav>
-    <span class="logo">Rental Manager</span>
-    <div class="nav-links">
-      <a href="/">Dashboard</a>
-      <a href="/properties.html">Properties</a>
-      <a href="/cleaners.html">Cleaners</a>
-      <a href="/analytics.html">Analytics</a>
-      <a href="/finances.html">Finances</a>
-    </div>
-    <div class="property-selector"><select id="globalPropertySelect"></select></div>
-  </nav>
 
   <div class="container">
     <a href="/properties.html" class="back-link">&larr; Back to Properties</a>

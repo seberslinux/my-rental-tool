@@ -4,284 +4,48 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Finances - Rental Manager</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
-  <style>
-    .kpi-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-      gap: 1rem;
-      margin-bottom: 2rem;
-    }
-    .kpi-card {
-      background: #fff;
-      border-radius: 8px;
-      padding: 1.2rem;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      text-align: center;
-    }
-    .kpi-card .kpi-value {
-      font-size: 1.8rem;
-      font-weight: 700;
-      color: #1a1a2e;
-    }
-    .kpi-card .kpi-label {
-      color: #666;
-      font-size: 0.85rem;
-      margin-top: 0.3rem;
-    }
-    .kpi-card .kpi-value.positive { color: #00aa44; }
-    .kpi-card .kpi-value.negative { color: #cc0000; }
-
-    .tab-bar {
-      display: flex;
-      gap: 0.5rem;
-      margin-bottom: 1.5rem;
-      border-bottom: 2px solid #eee;
-      padding-bottom: 0;
-    }
-    .tab-bar button {
-      padding: 0.6rem 1.2rem;
-      background: none;
-      border: none;
-      border-bottom: 2px solid transparent;
-      margin-bottom: -2px;
-      color: #666;
-      cursor: pointer;
-      font-weight: 500;
-    }
-    .tab-bar button.active {
-      color: #1a1a2e;
-      border-bottom-color: #1a1a2e;
-    }
-    .tab-content { display: none; }
-    .tab-content.active { display: block; }
-
-    .chart-container {
-      background: #fff;
-      border-radius: 8px;
-      padding: 1.5rem;
-      margin-bottom: 1.5rem;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    .chart-container h3 {
-      margin-bottom: 1rem;
-      color: #1a1a2e;
-    }
-    .chart-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1.5rem;
-    }
-    @media (max-width: 800px) {
-      .chart-row { grid-template-columns: 1fr; }
-    }
-
-    .bar-chart {
-      display: flex;
-      align-items: flex-end;
-      gap: 3px;
-      height: 200px;
-      border-bottom: 1px solid #ddd;
-      padding-bottom: 4px;
-    }
-    .bar-chart .bar-col {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: flex-end;
-      height: 100%;
-      min-width: 0;
-    }
-    .bar-chart .bar {
-      width: 100%;
-      max-width: 50px;
-      border-radius: 3px 3px 0 0;
-      transition: height 0.3s;
-      position: relative;
-      cursor: default;
-    }
-    .bar-chart .bar:hover { opacity: 0.85; }
-    .bar-chart .bar-label {
-      font-size: 0.65rem;
-      color: #666;
-      margin-top: 4px;
-      text-align: center;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 100%;
-    }
-    .bar-chart .bar-value {
-      font-size: 0.6rem;
-      color: #333;
-      margin-bottom: 2px;
-      white-space: nowrap;
-    }
-
-    .h-bar-chart { margin-top: 0.5rem; }
-    .h-bar-row {
-      display: flex;
-      align-items: center;
-      margin-bottom: 0.5rem;
-      gap: 0.5rem;
-    }
-    .h-bar-label {
-      min-width: 120px;
-      font-size: 0.85rem;
-      text-align: right;
-      color: #555;
-    }
-    .h-bar-track {
-      flex: 1;
-      background: #eee;
-      border-radius: 4px;
-      height: 22px;
-      overflow: hidden;
-    }
-    .h-bar-fill {
-      height: 100%;
-      border-radius: 4px;
-      transition: width 0.3s;
-      display: flex;
-      align-items: center;
-      padding-left: 6px;
-      font-size: 0.75rem;
-      color: #fff;
-      font-weight: 500;
-    }
-
-    .data-table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.9rem;
-    }
-    .data-table th, .data-table td {
-      padding: 0.6rem 0.8rem;
-      text-align: left;
-      border-bottom: 1px solid #eee;
-    }
-    .data-table th {
-      background: #f8f8f8;
-      font-weight: 600;
-      color: #555;
-    }
-    .data-table tr:hover { background: #f8f9ff; }
-
-    .filter-bar {
-      display: flex;
-      gap: 0.75rem;
-      align-items: flex-end;
-      flex-wrap: wrap;
-      margin-bottom: 1rem;
-    }
-    .filter-bar .form-group {
-      margin-bottom: 0;
-    }
-    .filter-bar .form-group label {
-      font-size: 0.8rem;
-      margin-bottom: 0.2rem;
-    }
-    .filter-bar input, .filter-bar select {
-      width: auto;
-      min-width: 140px;
-      font-size: 0.85rem;
-    }
-
-    .date-range-bar {
-      display: flex;
-      gap: 0.5rem;
-      align-items: center;
-      flex-wrap: wrap;
-      margin-bottom: 1rem;
-    }
-    .date-range-bar button { font-size: 0.8rem; }
-    .date-range-bar button.active { background: #1a1a2e; color: #fff; }
-    .date-range-bar input[type="date"] { width: auto; font-size: 0.8rem; }
-
-    .cost-property-section {
-      background: #fff;
-      border-radius: 8px;
-      padding: 1.5rem;
-      margin-bottom: 1.5rem;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    .cost-property-section h3 { margin-bottom: 1rem; color: #1a1a2e; }
-    .cost-table input[type="number"] { width: 120px; }
-
-    .toggle-switch {
-      position: relative;
-      display: inline-block;
-      width: 40px;
-      height: 22px;
-    }
-    .toggle-switch input { opacity: 0; width: 0; height: 0; }
-    .toggle-switch .slider {
-      position: absolute;
-      cursor: pointer;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: #ccc;
-      border-radius: 22px;
-      transition: 0.3s;
-    }
-    .toggle-switch .slider:before {
-      content: "";
-      position: absolute;
-      height: 16px;
-      width: 16px;
-      left: 3px;
-      bottom: 3px;
-      background: #fff;
-      border-radius: 50%;
-      transition: 0.3s;
-    }
-    .toggle-switch input:checked + .slider { background: #1a1a2e; }
-    .toggle-switch input:checked + .slider:before { transform: translateX(18px); }
-
-    .csv-preview { max-height: 400px; overflow-y: auto; font-size: 0.85rem; }
-    .csv-preview select { width: auto; min-width: 120px; font-size: 0.8rem; padding: 0.3rem; }
-
-    .pnl-bar-group {
-      display: flex;
-      gap: 2px;
-      align-items: flex-end;
-      height: 100%;
-      justify-content: center;
-    }
-  </style>
 </head>
 <body>
-  <nav>
-    <span class="logo">Rental Manager</span>
-    <a href="/">Dashboard</a>
-    <a href="/properties.html">Properties</a>
-    <a href="/cleaners.html">Cleaners</a>
-    <a href="/analytics.html">Analytics</a>
-    <a href="/finances.html" class="active">Finances</a>
-    <a href="/maintenance.html">Maintenance</a>
-    <div class="property-selector">
-      <select id="globalPropertySelect"></select>
-    </div>
-  </nav>
 
   <div class="container">
-    <h1>Finances</h1>
 
     <!-- KPI Cards -->
-    <div class="kpi-grid" id="kpiGrid">
-      <div class="kpi-card"><div class="kpi-value">-</div><div class="kpi-label">Total Revenue</div></div>
-      <div class="kpi-card"><div class="kpi-value">-</div><div class="kpi-label">Total Costs</div></div>
-      <div class="kpi-card"><div class="kpi-value">-</div><div class="kpi-label">Net Profit</div></div>
-      <div class="kpi-card"><div class="kpi-value">-</div><div class="kpi-label">Profit Margin</div></div>
+    <div class="summary-row" id="kpiGrid">
+      <div class="summary-card">
+        <div class="accent" style="background:var(--success)"></div>
+        <div class="label">Total Revenue</div>
+        <div class="value">-</div>
+        <div class="sub">Loading...</div>
+      </div>
+      <div class="summary-card">
+        <div class="accent" style="background:var(--danger)"></div>
+        <div class="label">Total Costs</div>
+        <div class="value">-</div>
+        <div class="sub">Loading...</div>
+      </div>
+      <div class="summary-card">
+        <div class="accent" style="background:var(--primary)"></div>
+        <div class="label">Net Profit</div>
+        <div class="value">-</div>
+        <div class="sub">Loading...</div>
+      </div>
+      <div class="summary-card">
+        <div class="accent" style="background:var(--warning)"></div>
+        <div class="label">Profit Margin</div>
+        <div class="value">-</div>
+        <div class="sub">Loading...</div>
+      </div>
     </div>
 
     <!-- Tab bar -->
-    <div class="tab-bar">
-      <button class="active" onclick="switchTab('expenses', this)">Expenses</button>
-      <button onclick="switchTab('pnl', this)">P&amp;L</button>
-      <button onclick="switchTab('cost-settings', this)">Cost Settings</button>
-      <button onclick="switchTab('csv-import', this)">CSV Import</button>
-      <button onclick="switchTab('bank-connect', this)">Bank Connect</button>
+    <div class="tabs">
+      <button class="tab active" onclick="switchTab('expenses', this)">Expenses</button>
+      <button class="tab" onclick="switchTab('pnl', this)">P&amp;L</button>
+      <button class="tab" onclick="switchTab('cost-settings', this)">Cost Settings</button>
+      <button class="tab" onclick="switchTab('csv-import', this)">CSV Import</button>
+      <button class="tab" onclick="switchTab('bank-connect', this)">Bank Connect</button>
     </div>
 
     <!-- ═══ EXPENSES TAB ═══ -->
@@ -312,22 +76,24 @@
       </div>
 
       <div class="card">
-        <table class="data-table" id="expenseTable">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Property</th>
-              <th>Category</th>
-              <th>Amount</th>
-              <th>Description</th>
-              <th>Recurring</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="expenseTableBody">
-            <tr><td colspan="7" class="loading">Loading expenses...</td></tr>
-          </tbody>
-        </table>
+        <div class="card-body" style="padding-top:20px;">
+          <table class="data-table" id="expenseTable">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Property</th>
+                <th>Category</th>
+                <th>Amount</th>
+                <th>Description</th>
+                <th>Recurring</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="expenseTableBody">
+              <tr><td colspan="7" class="loading">Loading expenses...</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -345,44 +111,58 @@
         <button class="btn btn-secondary" id="pnlApplyCustom" style="display:none;" onclick="loadPnl()">Apply</button>
       </div>
 
-      <div class="chart-container">
-        <h3>Monthly P&amp;L</h3>
-        <div class="bar-chart" id="pnlChart" style="height:220px;"></div>
-        <div style="margin-top:0.5rem;font-size:0.8rem;color:#666;">
-          <span style="display:inline-block;width:12px;height:12px;background:#1a1a2e;border-radius:2px;vertical-align:middle;margin-right:3px;"></span> Revenue
-          <span style="display:inline-block;width:12px;height:12px;background:#e63946;border-radius:2px;vertical-align:middle;margin-left:12px;margin-right:3px;"></span> Costs
+      <div class="card">
+        <div class="card-header">
+          <h3>Monthly P&amp;L</h3>
+        </div>
+        <div class="card-body">
+          <div class="bar-chart" id="pnlChart" style="height:220px;"></div>
+          <div style="margin-top:0.5rem;font-size:0.8rem;color:var(--gray-500);">
+            <span style="display:inline-block;width:12px;height:12px;background:#10B981;border-radius:2px;vertical-align:middle;margin-right:3px;"></span> Revenue
+            <span style="display:inline-block;width:12px;height:12px;background:#EF4444;border-radius:2px;vertical-align:middle;margin-left:12px;margin-right:3px;"></span> Costs
+          </div>
         </div>
       </div>
 
-      <div class="chart-container">
-        <h3>Cost Breakdown by Category</h3>
-        <div class="h-bar-chart" id="costBreakdownChart"></div>
+      <div class="card" style="margin-top:24px;">
+        <div class="card-header">
+          <h3>Cost Breakdown by Category</h3>
+        </div>
+        <div class="card-body">
+          <div class="h-bar-chart" id="costBreakdownChart"></div>
+        </div>
       </div>
 
-      <div class="chart-container">
-        <h3>Per-Booking Profitability</h3>
-        <table class="data-table" id="bookingProfitTable">
-          <thead>
-            <tr>
-              <th>Guest</th>
-              <th>Property</th>
-              <th>Check-in</th>
-              <th>Check-out</th>
-              <th>Revenue</th>
-              <th>Cleaning</th>
-              <th>Platform Fee</th>
-              <th>Net Profit</th>
-            </tr>
-          </thead>
-          <tbody id="bookingProfitBody">
-            <tr><td colspan="8" class="loading">Select a date range above</td></tr>
-          </tbody>
-        </table>
+      <div class="card" style="margin-top:24px;">
+        <div class="card-header">
+          <h3>Per-Booking Profitability</h3>
+        </div>
+        <div class="card-body">
+          <table class="data-table" id="bookingProfitTable">
+            <thead>
+              <tr>
+                <th>Guest</th>
+                <th>Property</th>
+                <th>Check-in</th>
+                <th>Check-out</th>
+                <th>Revenue</th>
+                <th>Cleaning</th>
+                <th>Platform Fee</th>
+                <th>Net Profit</th>
+              </tr>
+            </thead>
+            <tbody id="bookingProfitBody">
+              <tr><td colspan="8" class="loading">Select a date range above</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <div class="chart-container" id="propertyBreakdownContainer" style="display:none;">
-        <h3>P&amp;L by Property</h3>
-        <div id="propertyBreakdownContent">
+      <div class="card" id="propertyBreakdownContainer" style="display:none;margin-top:24px;">
+        <div class="card-header">
+          <h3>P&amp;L by Property</h3>
+        </div>
+        <div class="card-body" id="propertyBreakdownContent">
           <div class="loading">Loading property breakdown...</div>
         </div>
       </div>
@@ -394,68 +174,84 @@
         <div class="loading">Loading cost settings...</div>
       </div>
 
-      <div class="chart-container" style="margin-top:1.5rem;">
-        <h3>Custom Categories</h3>
-        <p style="font-size:0.85rem;color:#666;margin-bottom:1rem;">Add custom expense categories. Default categories cannot be deleted.</p>
-        <div class="form-row" style="max-width:400px;">
-          <div class="form-group">
-            <input type="text" id="newCategoryName" placeholder="New category name">
-          </div>
-          <button class="btn btn-primary" onclick="addCategory()">Add</button>
+      <div class="card" style="margin-top:24px;">
+        <div class="card-header">
+          <h3>Custom Categories</h3>
         </div>
-        <div id="categoryList" style="margin-top:1rem;"></div>
+        <div class="card-body">
+          <p style="font-size:0.85rem;color:var(--gray-500);margin-bottom:1rem;">Add custom expense categories. Default categories cannot be deleted.</p>
+          <div class="form-row" style="max-width:400px;">
+            <div class="form-group">
+              <input type="text" id="newCategoryName" placeholder="New category name">
+            </div>
+            <button class="btn btn-primary" onclick="addCategory()">Add</button>
+          </div>
+          <div id="categoryList" style="margin-top:1rem;"></div>
+        </div>
       </div>
     </div>
 
     <!-- ═══ CSV IMPORT TAB ═══ -->
     <div class="tab-content" id="tab-csv-import">
-      <div class="chart-container">
-        <h3>Import Bank Statement CSV</h3>
-        <div class="form-group" style="max-width:300px;margin-bottom:1rem;">
-          <label>Property for Import</label>
-          <select id="csvPropertySelect"></select>
+      <div class="card">
+        <div class="card-header">
+          <h3>Import Bank Statement CSV</h3>
         </div>
-        <div class="file-upload" id="csvDropZone" onclick="document.getElementById('csvFileInput').click()">
-          <p style="font-size:1.1rem;color:#666;">Upload bank statement CSV</p>
-          <p style="font-size:0.85rem;color:#999;margin-top:0.5rem;">Click to browse or drag &amp; drop a .csv file</p>
-          <input type="file" id="csvFileInput" accept=".csv" style="display:none;" onchange="handleCsvFile(this.files[0])">
+        <div class="card-body">
+          <div class="form-group" style="max-width:300px;margin-bottom:1rem;">
+            <label>Property for Import</label>
+            <select id="csvPropertySelect"></select>
+          </div>
+          <div class="file-upload" id="csvDropZone" onclick="document.getElementById('csvFileInput').click()">
+            <p style="font-size:1.1rem;color:var(--gray-500);">Upload bank statement CSV</p>
+            <p style="font-size:0.85rem;color:var(--gray-400);margin-top:0.5rem;">Click to browse or drag &amp; drop a .csv file</p>
+            <input type="file" id="csvFileInput" accept=".csv" style="display:none;" onchange="handleCsvFile(this.files[0])">
+          </div>
         </div>
       </div>
 
-      <div class="chart-container" id="csvPreviewContainer" style="display:none;">
-        <h3>Preview Transactions</h3>
-        <div class="csv-preview">
-          <table class="data-table" id="csvPreviewTable">
-            <thead>
-              <tr>
-                <th>Date</th>
-                <th>Description</th>
-                <th>Amount</th>
-                <th>Category</th>
-              </tr>
-            </thead>
-            <tbody id="csvPreviewBody"></tbody>
-          </table>
+      <div class="card" id="csvPreviewContainer" style="display:none;margin-top:24px;">
+        <div class="card-header">
+          <h3>Preview Transactions</h3>
         </div>
-        <div class="actions" style="margin-top:1rem;">
-          <button class="btn btn-primary" onclick="confirmCsvImport()">Confirm Import</button>
-          <button class="btn btn-secondary" onclick="cancelCsvImport()">Cancel</button>
+        <div class="card-body">
+          <div class="csv-preview">
+            <table class="data-table" id="csvPreviewTable">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Description</th>
+                  <th>Amount</th>
+                  <th>Category</th>
+                </tr>
+              </thead>
+              <tbody id="csvPreviewBody"></tbody>
+            </table>
+          </div>
+          <div class="actions" style="margin-top:1rem;">
+            <button class="btn btn-primary" onclick="confirmCsvImport()">Confirm Import</button>
+            <button class="btn btn-secondary" onclick="cancelCsvImport()">Cancel</button>
+          </div>
         </div>
       </div>
 
-      <div class="chart-container" style="margin-top:1.5rem;">
-        <h3>Keyword Mappings</h3>
-        <p style="font-size:0.85rem;color:#666;margin-bottom:1rem;">Map keywords in transaction descriptions to expense categories for auto-categorization.</p>
-        <div class="form-row" style="max-width:500px;">
-          <div class="form-group">
-            <input type="text" id="newKeyword" placeholder="Keyword (e.g. electricity)">
-          </div>
-          <div class="form-group">
-            <select id="newKeywordCategory"></select>
-          </div>
-          <button class="btn btn-primary" onclick="addKeywordMapping()">Add</button>
+      <div class="card" style="margin-top:24px;">
+        <div class="card-header">
+          <h3>Keyword Mappings</h3>
         </div>
-        <div id="keywordMappingList" style="margin-top:1rem;"></div>
+        <div class="card-body">
+          <p style="font-size:0.85rem;color:var(--gray-500);margin-bottom:1rem;">Map keywords in transaction descriptions to expense categories for auto-categorization.</p>
+          <div class="form-row" style="max-width:500px;">
+            <div class="form-group">
+              <input type="text" id="newKeyword" placeholder="Keyword (e.g. electricity)">
+            </div>
+            <div class="form-group">
+              <select id="newKeywordCategory"></select>
+            </div>
+            <button class="btn btn-primary" onclick="addKeywordMapping()">Add</button>
+          </div>
+          <div id="keywordMappingList" style="margin-top:1rem;"></div>
+        </div>
       </div>
     </div>
 
@@ -466,7 +262,7 @@
         <p>Open Banking integration (Stitch for SA) will allow automatic bank transaction import.</p>
         <p style="margin-top:0.5rem;">This feature is coming soon. Enter your email below to be notified when it's available.</p>
         <div style="margin-top:1.5rem;max-width:400px;display:inline-flex;gap:0.5rem;">
-          <input type="email" id="bankConnectEmail" placeholder="your@email.com" style="flex:1;">
+          <input type="email" id="bankConnectEmail" placeholder="your@email.com" style="flex:1;" required>
           <button class="btn btn-primary" onclick="submitBankConnectInterest()">Notify Me</button>
         </div>
       </div>
@@ -495,8 +291,17 @@
             <select id="expCategory" required></select>
           </div>
           <div class="form-group">
-            <label>Amount (R)</label>
+            <label>Amount</label>
             <input type="number" id="expAmount" step="0.01" min="0" required>
+          </div>
+          <div class="form-group">
+            <label>Currency</label>
+            <select id="expCurrency">
+              <option value="ZAR">R - ZAR</option>
+              <option value="EUR">&euro; - EUR</option>
+              <option value="USD">$ - USD</option>
+              <option value="GBP">&pound; - GBP</option>
+            </select>
           </div>
         </div>
         <div class="form-group">

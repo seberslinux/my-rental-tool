@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cleaner Portal</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    .portal-nav { display:flex; align-items:center; gap:1rem; padding:0.75rem 1.5rem; background:#1a1a2e; color:#fff; flex-wrap:wrap; }
+    .portal-nav .logo { font-weight:700; font-size:1.1rem; margin-right:auto; white-space:nowrap; }
+    .portal-tabs { display:flex; gap:2px; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    .portal-tabs button { background:transparent; color:#ffffffaa; border:none; padding:0.5rem 0.75rem; font-size:0.8rem; cursor:pointer; border-radius:6px 6px 0 0; white-space:nowrap; font-family:inherit; }
+    .portal-tabs button.active { background:#ffffff20; color:#fff; font-weight:600; }
+    .portal-tabs button:hover { background:#ffffff15; color:#fff; }
+    .portal-user { display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; white-space:nowrap; }
+    .portal-user .btn-logout { background:#ffffff20; color:#fff; border:none; padding:0.3rem 0.6rem; border-radius:4px; cursor:pointer; font-size:0.75rem; }
+    .tab-panel { display:none; padding:1.5rem; max-width:1100px; margin:0 auto; }
+    .tab-panel.active { display:block; }
+    .job-card { border:1px solid #e5e7eb; border-radius:8px; padding:1rem; margin-bottom:0.75rem; position:relative; }
+    .job-card.pending { border-left:4px solid #f59e0b; }
+    .job-card.confirmed { border-left:4px solid #2563eb; }
+    .job-card.completed { border-left:4px solid #16a34a; }
+    .job-status { display:inline-block; font-size:0.7rem; padding:2px 8px; border-radius:10px; font-weight:600; text-transform:uppercase; }
+    .job-status.pending { background:#fef3c7; color:#92400e; }
+    .job-status.confirmed { background:#dbeafe; color:#1e40af; }
+    .job-status.completed { background:#dcfce7; color:#166534; }
+    .special-req { background:#fef3c7; border-radius:6px; padding:0.4rem 0.6rem; font-size:0.8rem; margin-top:0.5rem; color:#92400e; }
+    .msg-item { border:1px solid #e5e7eb; border-radius:6px; padding:0.75rem; margin-bottom:0.5rem; cursor:pointer; }
+    .msg-item.unread { background:#eff6ff; border-color:#93c5fd; font-weight:600; }
+    .msg-meta { font-size:0.75rem; color:#666; }
+    .checklist-row { display:flex; align-items:center; gap:0.75rem; padding:0.5rem 0; border-bottom:1px solid #f0f0f0; }
+    .checklist-row:last-child { border-bottom:none; }
+    .shop-item { display:flex; justify-content:space-between; align-items:center; padding:0.5rem 0; border-bottom:1px solid #f0f0f0; }
+    .shop-item.purchased { opacity:0.5; text-decoration:line-through; }
+    .view-toggle { display:flex; gap:4px; margin-bottom:1rem; }
+    .view-toggle button { font-size:0.8rem; }
+    .unread-badge { background:#ef4444; color:#fff; font-size:0.65rem; padding:1px 5px; border-radius:10px; margin-left:4px; }
+    @media (max-width:600px) {
+      .portal-nav { padding:0.5rem 0.75rem; }
+      .portal-tabs button { padding:0.4rem 0.5rem; font-size:0.7rem; }
+      .tab-panel { padding:1rem 0.75rem; }
+    }
+  </style>
+</head>
+<body>
+  <nav class="portal-nav">
+    <span class="logo">Rental Manager</span>
+    <div class="portal-tabs" id="portalTabs">
+      <button data-tab="jobs" class="active">Jobs</button>
+      <button data-tab="availability">Availability</button>
+      <button data-tab="messages">Messages</button>
+      <button data-tab="maintenance">Maintenance</button>
+      <button data-tab="inventory">Inventory</button>
+      <button data-tab="shopping">Shopping</button>
+      <button data-tab="settings">Settings</button>
+    </div>
+    <div class="portal-user" id="portalUser"></div>
+  </nav>
+
+  <!-- Jobs Tab -->
+  <div class="tab-panel active" id="panel-jobs">
+    <h2>My Cleaning Jobs</h2>
+    <div class="view-toggle">
+      <button class="btn btn-primary btn-sm" id="btnCalView" onclick="setJobView('calendar')">Calendar</button>
+      <button class="btn btn-secondary btn-sm" id="btnListView" onclick="setJobView('list')">List</button>
+    </div>
+    <div class="month-nav" style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem;">
+      <button class="btn btn-secondary btn-sm" onclick="changeJobMonth(-1)">&larr;</button>
+      <h3 id="jobMonthLabel" style="min-width:150px;text-align:center;"></h3>
+      <button class="btn btn-secondary btn-sm" onclick="changeJobMonth(1)">&rarr;</button>
+    </div>
+    <div id="jobCalendarView" class="calendar-grid"></div>
+    <div id="jobListView" style="display:none;"></div>
+  </div>
+
+  <!-- Availability Tab -->
+  <div class="tab-panel" id="panel-availability">
+    <h2>My Availability</h2>
+    <div class="card">
+      <h3>Weekly Schedule</h3>
+      <form id="availForm" onsubmit="saveMyAvailability(event)">
+        <div id="availSlots"></div>
+        <button type="submit" class="btn btn-primary" style="margin-top:1rem;">Save Schedule</button>
+      </form>
+    </div>
+    <div class="card" style="margin-top:1rem;">
+      <h3>Date Overrides</h3>
+      <div class="form-row" style="align-items:flex-end;">
+        <div class="form-group">
+          <label>Date</label>
+          <input type="date" id="overrideDate">
+        </div>
+        <div class="form-group">
+          <label>Status</label>
+          <select id="overrideStatus">
+            <option value="1">Available</option>
+            <option value="0">Unavailable</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <button type="button" class="btn btn-primary" onclick="addMyOverride()">Add Override</button>
+        </div>
+      </div>
+      <div id="overridesList" style="margin-top:0.5rem;"></div>
+    </div>
+  </div>
+
+  <!-- Messages Tab -->
+  <div class="tab-panel" id="panel-messages">
+    <h2>Messages</h2>
+    <div class="card">
+      <h3>Send Message</h3>
+      <div class="form-row" style="align-items:flex-end;">
+        <div class="form-group" style="flex:1;">
+          <label>To</label>
+          <select id="msgRecipient"><option value="">Everyone</option></select>
+        </div>
+        <div class="form-group" style="flex:1;">
+          <label>Subject</label>
+          <input type="text" id="msgSubject" placeholder="Optional">
+        </div>
+      </div>
+      <div class="form-group">
+        <textarea id="msgBody" rows="3" placeholder="Type your message..." style="width:100%;"></textarea>
+      </div>
+      <button class="btn btn-primary" onclick="sendMsg()">Send</button>
+    </div>
+    <div class="card" style="margin-top:1rem;">
+      <h3>Inbox</h3>
+      <div id="messagesList"></div>
+    </div>
+  </div>
+
+  <!-- Maintenance Tab -->
+  <div class="tab-panel" id="panel-maintenance">
+    <h2>Maintenance Issues</h2>
+    <div class="card">
+      <h3>Report an Issue</h3>
+      <form onsubmit="reportIssue(event)">
+        <div class="form-row">
+          <div class="form-group" style="flex:1;">
+            <label>Property</label>
+            <select id="maintProperty" required></select>
+          </div>
+          <div class="form-group" style="flex:1;">
+            <label>Priority</label>
+            <select id="maintPriority">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Title</label>
+          <input type="text" id="maintTitle" required placeholder="Brief description">
+        </div>
+        <div class="form-group">
+          <label>Details</label>
+          <textarea id="maintDesc" rows="2" placeholder="Optional details"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Category</label>
+          <select id="maintCategory">
+            <option>General</option><option>Plumbing</option><option>Electrical</option>
+            <option>Appliance</option><option>Furniture</option><option>Cleaning</option>
+            <option>Safety</option><option>Pest Control</option><option>Other</option>
+          </select>
+        </div>
+        <button type="submit" class="btn btn-primary">Report Issue</button>
+      </form>
+    </div>
+    <div class="card" style="margin-top:1rem;">
+      <h3>Open Issues</h3>
+      <div id="maintList"></div>
+    </div>
+  </div>
+
+  <!-- Inventory Tab -->
+  <div class="tab-panel" id="panel-inventory">
+    <h2>Inventory Checklist</h2>
+    <div class="form-row" style="align-items:flex-end;margin-bottom:1rem;">
+      <div class="form-group">
+        <label>Property</label>
+        <select id="invProperty" onchange="loadInventory()"></select>
+      </div>
+      <div class="form-group">
+        <label>Cleaning Job</label>
+        <select id="invJob" onchange="loadExistingChecks()"></select>
+      </div>
+    </div>
+    <div class="card">
+      <div id="inventoryList"></div>
+      <button class="btn btn-primary" onclick="submitInventoryCheck()" style="margin-top:1rem;" id="btnSubmitInv" disabled>Save Checklist</button>
+    </div>
+  </div>
+
+  <!-- Shopping Tab -->
+  <div class="tab-panel" id="panel-shopping">
+    <h2>Shopping List</h2>
+    <div class="card">
+      <h3>Add Item</h3>
+      <form onsubmit="addShopItem(event)">
+        <div class="form-row" style="align-items:flex-end;">
+          <div class="form-group" style="flex:2;">
+            <label>Item</label>
+            <input type="text" id="shopItem" required placeholder="e.g. Dish soap">
+          </div>
+          <div class="form-group" style="flex:1;">
+            <label>Qty</label>
+            <input type="number" id="shopQty" value="1" min="1">
+          </div>
+          <div class="form-group" style="flex:1;">
+            <label>Property</label>
+            <select id="shopProperty"><option value="">General</option></select>
+          </div>
+          <div class="form-group">
+            <button type="submit" class="btn btn-primary">Add</button>
+          </div>
+        </div>
+      </form>
+    </div>
+    <div class="card" style="margin-top:1rem;">
+      <div id="shopList"></div>
+    </div>
+  </div>
+
+  <!-- Settings Tab -->
+  <div class="tab-panel" id="panel-settings">
+    <h2>Settings</h2>
+    <div class="card">
+      <h3>WhatsApp Notifications</h3>
+      <p style="font-size:0.85rem;color:#666;margin-bottom:1rem;">Control when you receive WhatsApp messages about your cleaning jobs.</p>
+      <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
+        <input type="checkbox" id="prefEnabled" onchange="savePrefs()"> Enable WhatsApp notifications
+      </label>
+      <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
+        <input type="checkbox" id="pref7Days" onchange="savePrefs()"> 7 days before
+      </label>
+      <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
+        <input type="checkbox" id="pref1Day" onchange="savePrefs()"> 1 day before
+      </label>
+      <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
+        <input type="checkbox" id="pref2Hours" onchange="savePrefs()"> 2 hours before
+      </label>
+    </div>
+    <div class="card" style="margin-top:1rem;">
+      <h3>Calendar Subscription</h3>
+      <p style="font-size:0.85rem;color:#666;margin-bottom:0.75rem;">Subscribe to your cleaning calendar in Google Calendar, Apple Calendar, or Outlook.</p>
+      <div id="icalSection">
+        <button class="btn btn-primary" onclick="generateIcal()">Generate Calendar Link</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/shared.js"></script>
+  <script src="/cleaner-portal.js"></script>
+</body>
+</html>

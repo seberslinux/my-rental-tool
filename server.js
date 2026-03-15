@@ -1,8 +1,12 @@
 require('dotenv').config();
 const express = require('express');
+const session = require('express-session');
 const path = require('path');
 const { runMigrations } = require('./src/db/migrations');
 const { closeDb } = require('./src/db/database');
+const passport = require('./src/auth/passport-setup');
+const SqliteSessionStore = require('./src/auth/session-store');
+const { requireAuth } = require('./src/middleware/auth');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -14,7 +18,26 @@ app.use(express.static(path.join(__dirname, 'public')));
 // Run database migrations on startup
 runMigrations();
 
-// Routes
+// Session & Passport
+app.use(session({
+  store: new SqliteSessionStore(),
+  secret: process.env.SESSION_SECRET || 'change-me-in-production',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { maxAge: 7 * 24 * 60 * 60 * 1000, httpOnly: true, sameSite: 'lax' }
+}));
+app.use(passport.initialize());
+app.use(passport.session());
+
+// Public routes (no auth required)
+app.use('/api/auth', require('./src/routes/auth'));
+app.use('/webhook', require('./src/routes/webhook'));
+app.use('/ical', require('./src/routes/ical'));
+
+// Auth wall — all /api routes below require login
+app.use('/api', requireAuth);
+
+// Protected routes
 app.use('/api', require('./src/routes/api'));
 app.use('/api/properties', require('./src/routes/properties'));
 app.use('/api/cleaners', require('./src/routes/cleaners'));
@@ -22,7 +45,10 @@ app.use('/api/pricing', require('./src/routes/pricing'));
 app.use('/api/analytics', require('./src/routes/analytics'));
 app.use('/api/finances', require('./src/routes/finances'));
 app.use('/api/maintenance', require('./src/routes/maintenance'));
-app.use('/webhook', require('./src/routes/webhook'));
+app.use('/api/users', require('./src/routes/users'));
+app.use('/api/cleaner-portal', require('./src/routes/cleaner-portal'));
+app.use('/api/inventory', require('./src/routes/inventory'));
+app.use('/api/settings', require('./src/routes/settings'));
 
 // Cron jobs
 require('./src/cron/jobs');

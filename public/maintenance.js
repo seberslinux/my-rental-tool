@@ -1,243 +1,281 @@
 /* maintenance.js */
 
-let allIssues = [];
+let tickets = [];
+let properties = [];
+let currentFilter = 'all';
+let searchTimeout = null;
 
-document.addEventListener('DOMContentLoaded', () => {
-  loadIssues();
-  loadSummary();
+async function api(url, opts = {}) {
+  const res = await fetch(url, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  if (res.status === 401) { window.location.href = '/login.html'; return null; }
+  return res.json();
+}
 
-  document.getElementById('filterStatus').addEventListener('change', renderIssues);
-  document.getElementById('filterPriority').addEventListener('change', renderIssues);
+document.addEventListener('DOMContentLoaded', async () => {
+  const user = await checkAuth();
+  if (!user) return;
+  await loadProperties();
+  loadTickets();
 });
 
 window.addEventListener('propertyChanged', () => {
-  loadIssues();
-  loadSummary();
+  loadTickets();
 });
 
-async function loadIssues() {
+/* ───── Data loading ───── */
+
+async function loadProperties() {
+  try {
+    const result = await api('/api/properties');
+    if (!result) return;
+    properties = result;
+    populatePropertyDropdowns();
+  } catch (err) {
+    console.error('Error loading properties:', err);
+  }
+}
+
+async function loadTickets() {
   try {
     const propParam = getPropertyIdsParam();
     const qs = propParam !== 'all' ? `?property_id=${propParam}` : '';
-    const res = await fetch(`/api/maintenance${qs}`);
-    if (!res.ok) throw new Error('Failed to load issues');
-    allIssues = await res.json();
-    renderIssues();
+    const result = await api(`/api/maintenance${qs}`);
+    if (!result) return;
+    tickets = result;
+    updateStatusCounts();
+    renderTickets();
   } catch (err) {
-    console.error('Error loading issues:', err);
-    document.getElementById('issuesList').innerHTML =
-      '<div class="empty-state">Failed to load issues.</div>';
+    console.error('Error loading tickets:', err);
+    document.getElementById('ticketsGrid').innerHTML =
+      '<div style="grid-column:1/-1;text-align:center;padding:2rem;color:var(--gray-400);">Failed to load tickets.</div>';
   }
 }
 
-async function loadSummary() {
-  try {
-    const propParam = getPropertyIdsParam();
-    const qs = propParam !== 'all' ? `?property_id=${propParam}` : '';
-    const res = await fetch(`/api/maintenance/summary${qs}`);
-    if (!res.ok) throw new Error('Failed to load summary');
-    const data = await res.json();
-    renderSummary(data);
-  } catch (err) {
-    console.error('Error loading summary:', err);
-  }
+/* ───── Filtering ───── */
+
+function filterTicketsDebounced() {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(renderTickets, 300);
 }
 
-function renderSummary(data) {
-  const bar = document.getElementById('summaryBar');
-  bar.innerHTML = `
-    <div class="summary-stat">
-      <div class="stat-value">${data.total}</div>
-      <div class="stat-label">Total</div>
-    </div>
-    <div class="summary-stat">
-      <div class="stat-value">${data.open}</div>
-      <div class="stat-label">Open</div>
-    </div>
-    <div class="summary-stat">
-      <div class="stat-value">${data.in_progress}</div>
-      <div class="stat-label">In Progress</div>
-    </div>
-    <div class="summary-stat">
-      <div class="stat-value">${data.resolved}</div>
-      <div class="stat-label">Resolved</div>
-    </div>
-    <div class="summary-stat urgent">
-      <div class="stat-value">${data.urgent_open}</div>
-      <div class="stat-label">Urgent Open</div>
-    </div>
-  `;
+function filterTickets(status, btn) {
+  currentFilter = status;
+  document.querySelectorAll('#statusFilters .filter-btn').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  renderTickets();
 }
 
-function renderIssues() {
-  const statusFilter = document.getElementById('filterStatus').value;
-  const priorityFilter = document.getElementById('filterPriority').value;
+function toggleNewTicketForm() {
+  const form = document.getElementById('newTicketForm');
+  form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
 
-  let filtered = allIssues;
-  if (statusFilter) {
-    filtered = filtered.filter(i => i.status === statusFilter);
-  }
-  if (priorityFilter) {
-    filtered = filtered.filter(i => i.priority === priorityFilter);
+/* ───── Rendering ───── */
+
+function updateStatusCounts() {
+  const open = tickets.filter(t => t.status === 'open').length;
+  const inProgress = tickets.filter(t => t.status === 'in_progress').length;
+  const scheduled = tickets.filter(t => t.status === 'scheduled').length;
+  const resolved = tickets.filter(t => t.status === 'resolved').length;
+
+  const el = (id, val) => { const e = document.getElementById(id); if (e) e.textContent = val; };
+  el('openCount', open);
+  el('progressCount', inProgress);
+  el('scheduledCount', scheduled);
+  el('completedCount', resolved);
+}
+
+function renderTicketCard(ticket, propertyName) {
+  const priorityColors = {
+    urgent: 'var(--danger)',
+    high: 'var(--warning)',
+    medium: 'var(--primary)',
+    low: 'var(--gray-300)'
+  };
+  const statusColors = {
+    open: 'var(--danger)',
+    in_progress: 'var(--warning)',
+    scheduled: 'var(--primary)',
+    resolved: 'var(--success)'
+  };
+  const statusLabels = {
+    open: 'Open',
+    in_progress: 'In Progress',
+    scheduled: 'Scheduled',
+    resolved: 'Completed'
+  };
+  const borderColor = priorityColors[ticket.priority] || 'var(--gray-300)';
+  const statusColor = statusColors[ticket.status] || 'var(--gray-400)';
+  const opacity = ticket.status === 'resolved' ? 'opacity:0.8;' : '';
+
+  return `
+  <div class="ticket-card" style="border-left:4px solid ${borderColor};${opacity}">
+    <div class="ticket-header">
+      <div>
+        <div class="ticket-title">${escHtml(ticket.title)}</div>
+        <div class="ticket-property">${escHtml(propertyName)}</div>
+      </div>
+      <span class="priority-badge ${ticket.priority}">${escHtml(ticket.priority.charAt(0).toUpperCase() + ticket.priority.slice(1))}</span>
+    </div>
+    <div class="ticket-body">
+      ${ticket.description ? `<div class="ticket-desc">${escHtml(ticket.description)}</div>` : ''}
+      <div class="ticket-meta">
+        <div class="meta-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          ${ticket.reported_date ? 'Reported ' + new Date(ticket.reported_date).toLocaleDateString('en-ZA', {month:'short', day:'numeric'}) : ''}
+        </div>
+        ${ticket.category ? `<div class="meta-item">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 7V4a2 2 0 012-2h4.586a1 1 0 01.707.293l7.414 7.414a2 2 0 010 2.828l-4.586 4.586a2 2 0 01-2.828 0L4.707 10.293A1 1 0 014 9.586V7z"/></svg>
+          ${escHtml(ticket.category)}
+        </div>` : ''}
+      </div>
+    </div>
+    <div class="ticket-footer">
+      <div class="ticket-status"><div class="dot" style="background:${statusColor}"></div> ${statusLabels[ticket.status] || ticket.status}</div>
+      <div class="ticket-actions">
+        ${ticket.status === 'open' ? `<button class="primary" onclick="updateTicketStatus(${ticket.id}, 'in_progress')">Start</button>` : ''}
+        ${ticket.status === 'in_progress' ? `<button class="primary" onclick="updateTicketStatus(${ticket.id}, 'resolved')">Complete</button>` : ''}
+        ${ticket.status !== 'resolved' ? `<button onclick="deleteTicket(${ticket.id})">Delete</button>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderTickets() {
+  const grid = document.getElementById('ticketsGrid');
+  if (!grid) return;
+
+  let filtered = [...tickets];
+
+  // Status filter
+  if (currentFilter !== 'all') {
+    filtered = filtered.filter(t => t.status === currentFilter);
   }
 
-  const container = document.getElementById('issuesList');
+  // Search filter
+  const search = (document.getElementById('ticketSearch')?.value || '').toLowerCase();
+  if (search) {
+    filtered = filtered.filter(t =>
+      (t.title || '').toLowerCase().includes(search) ||
+      (t.description || '').toLowerCase().includes(search) ||
+      (t.category || '').toLowerCase().includes(search)
+    );
+  }
+
+  // Property filter
+  const propFilter = document.getElementById('ticketPropertyFilter')?.value;
+  if (propFilter) {
+    filtered = filtered.filter(t => String(t.property_id) === String(propFilter));
+  }
 
   if (filtered.length === 0) {
-    container.innerHTML = '<div class="empty-state">No maintenance issues found.</div>';
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:2rem;color:var(--gray-400);">No tickets found.</div>';
     return;
   }
 
-  container.innerHTML = filtered.map(issue => {
-    const statusClass = `badge-status-${issue.status}`;
-    const priorityClass = `badge-priority-${issue.priority}`;
-    const statusLabel = issue.status === 'in_progress' ? 'In Progress' :
-      issue.status.charAt(0).toUpperCase() + issue.status.slice(1);
-    const priorityLabel = issue.priority.charAt(0).toUpperCase() + issue.priority.slice(1);
-
-    let meta = `<span>Reported: ${escHtml(issue.reported_date)}</span>`;
-    if (issue.resolved_date) {
-      meta += `<span>Resolved: ${escHtml(issue.resolved_date)}</span>`;
-    }
-    if (issue.cost > 0) {
-      meta += `<span>Cost: R ${fmtNum(issue.cost)}</span>`;
-    }
-    if (issue.assigned_to) {
-      meta += `<span>Assigned to: ${escHtml(issue.assigned_to)}</span>`;
-    }
-
-    const resolveBtn = issue.status !== 'resolved'
-      ? `<button class="btn-resolve" onclick="resolveIssue(${issue.id})">Resolve</button>`
-      : '';
-
-    return `
-      <div class="issue-card">
-        <div class="issue-card-header">
-          <h3>${escHtml(issue.title)}</h3>
-          <div class="issue-badges">
-            <span class="badge badge-property">${escHtml(issue.property_name)}</span>
-            <span class="badge badge-category">${escHtml(issue.category)}</span>
-            <span class="badge ${statusClass}">${statusLabel}</span>
-            <span class="badge ${priorityClass}">${priorityLabel}</span>
-          </div>
-        </div>
-        ${issue.description ? `<div class="issue-desc">${escHtml(issue.description)}</div>` : ''}
-        <div class="issue-meta">${meta}</div>
-        <div class="issue-actions">
-          <button onclick="openEditModal(${issue.id})">Edit</button>
-          ${resolveBtn}
-          <button class="btn-delete" onclick="deleteIssue(${issue.id})">Delete</button>
-        </div>
-      </div>
-    `;
+  grid.innerHTML = filtered.map(t => {
+    const prop = properties.find(p => String(p.id) === String(t.property_id));
+    return renderTicketCard(t, prop ? prop.name : (t.property_name || 'Unknown'));
   }).join('');
 }
 
-function populatePropertyDropdown() {
-  const sel = document.getElementById('issueProperty');
-  sel.innerHTML = '';
-  for (const p of _allProperties) {
-    const opt = document.createElement('option');
-    opt.value = p.id;
-    opt.textContent = p.name;
-    sel.appendChild(opt);
+/* ───── Dropdowns ───── */
+
+function populatePropertyDropdowns() {
+  // Populate the filter dropdown
+  const filterSelect = document.getElementById('ticketPropertyFilter');
+  if (filterSelect) {
+    // Keep the "All Properties" option
+    filterSelect.innerHTML = '<option value="">All Properties</option>';
+    for (const p of properties) {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name;
+      filterSelect.appendChild(opt);
+    }
+  }
+
+  // Populate the new ticket form dropdown
+  const ticketSelect = document.getElementById('ticketProperty');
+  if (ticketSelect) {
+    ticketSelect.innerHTML = '';
+    for (const p of properties) {
+      const opt = document.createElement('option');
+      opt.value = p.id;
+      opt.textContent = p.name;
+      ticketSelect.appendChild(opt);
+    }
   }
 }
 
-function openAddModal() {
-  document.getElementById('issueModalTitle').textContent = 'Add Issue';
-  document.getElementById('issueEditId').value = '';
-  document.getElementById('issueForm').reset();
-  document.getElementById('issuePriority').value = 'medium';
-  document.getElementById('issueStatusGroup').style.display = 'none';
-  populatePropertyDropdown();
-  document.getElementById('issueModal').classList.add('active');
-}
+/* ───── Actions ───── */
 
-function openEditModal(id) {
-  const issue = allIssues.find(i => i.id === id);
-  if (!issue) return;
-
-  document.getElementById('issueModalTitle').textContent = 'Edit Issue';
-  document.getElementById('issueEditId').value = issue.id;
-  populatePropertyDropdown();
-
-  document.getElementById('issueProperty').value = issue.property_id;
-  document.getElementById('issueTitle').value = issue.title;
-  document.getElementById('issueDescription').value = issue.description || '';
-  document.getElementById('issueCategory').value = issue.category || 'General';
-  document.getElementById('issuePriority').value = issue.priority || 'medium';
-  document.getElementById('issueCost').value = issue.cost || 0;
-  document.getElementById('issueAssigned').value = issue.assigned_to || '';
-  document.getElementById('issueStatus').value = issue.status || 'open';
-  document.getElementById('issueStatusGroup').style.display = 'block';
-
-  document.getElementById('issueModal').classList.add('active');
-}
-
-function closeModal() {
-  document.getElementById('issueModal').classList.remove('active');
-}
-
-async function saveIssue(e) {
+async function createTicket(e) {
   e.preventDefault();
 
-  const editId = document.getElementById('issueEditId').value;
   const body = {
-    property_id: parseInt(document.getElementById('issueProperty').value),
-    title: document.getElementById('issueTitle').value.trim(),
-    description: document.getElementById('issueDescription').value.trim(),
-    category: document.getElementById('issueCategory').value,
-    priority: document.getElementById('issuePriority').value,
-    cost: parseFloat(document.getElementById('issueCost').value) || 0,
-    assigned_to: document.getElementById('issueAssigned').value.trim(),
+    property_id: parseInt(document.getElementById('ticketProperty').value),
+    title: document.getElementById('ticketTitle').value.trim(),
+    description: document.getElementById('ticketDescription').value.trim(),
+    category: document.getElementById('ticketCategory').value,
+    priority: document.getElementById('ticketPriority').value,
+    cost: parseFloat(document.getElementById('ticketCost').value) || 0,
+    assigned_to: document.getElementById('ticketAssignee').value.trim(),
   };
 
-  if (editId) {
-    body.status = document.getElementById('issueStatus').value;
-  }
+  if (!body.title) return;
 
   try {
-    const url = editId ? `/api/maintenance/${editId}` : '/api/maintenance';
-    const method = editId ? 'PUT' : 'POST';
-    const res = await fetch(url, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
+    const result = await api('/api/maintenance', {
+      method: 'POST',
       body: JSON.stringify(body),
     });
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.error || 'Failed to save');
+    if (!result) return;
+
+    // Reset form and hide it
+    document.querySelector('#newTicketForm form').reset();
+    document.getElementById('ticketPriority').value = 'medium';
+    toggleNewTicketForm();
+
+    // Reload tickets
+    loadTickets();
+    showToast('Ticket created successfully');
+  } catch (err) {
+    alert('Error creating ticket: ' + err.message);
+  }
+}
+
+async function updateTicketStatus(id, newStatus) {
+  try {
+    if (newStatus === 'resolved') {
+      // Use the dedicated resolve endpoint
+      const result = await api(`/api/maintenance/${id}/resolve`, { method: 'PATCH' });
+      if (!result) return;
+    } else {
+      const result = await api(`/api/maintenance/${id}`, {
+        method: 'PUT',
+        body: JSON.stringify({ status: newStatus }),
+      });
+      if (!result) return;
     }
-
-    closeModal();
-    loadIssues();
-    loadSummary();
+    loadTickets();
+    showToast('Ticket updated');
   } catch (err) {
-    alert('Error: ' + err.message);
+    alert('Error updating ticket: ' + err.message);
   }
 }
 
-async function resolveIssue(id) {
-  if (!confirm('Mark this issue as resolved?')) return;
+async function deleteTicket(id) {
+  if (!confirm('Delete this ticket? This cannot be undone.')) return;
   try {
-    const res = await fetch(`/api/maintenance/${id}/resolve`, { method: 'PATCH' });
-    if (!res.ok) throw new Error('Failed to resolve');
-    loadIssues();
-    loadSummary();
+    const result = await api(`/api/maintenance/${id}`, { method: 'DELETE' });
+    if (!result) return;
+    loadTickets();
+    showToast('Ticket deleted');
   } catch (err) {
-    alert('Error: ' + err.message);
-  }
-}
-
-async function deleteIssue(id) {
-  if (!confirm('Delete this issue? This cannot be undone.')) return;
-  try {
-    const res = await fetch(`/api/maintenance/${id}`, { method: 'DELETE' });
-    if (!res.ok) throw new Error('Failed to delete');
-    loadIssues();
-    loadSummary();
-  } catch (err) {
-    alert('Error: ' + err.message);
+    alert('Error deleting ticket: ' + err.message);
   }
 }

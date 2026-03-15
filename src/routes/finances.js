@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getDb } = require('../db/database');
+const { bulkConvert, bulkConvertExpenses, getDisplayCurrency } = require('../services/exchange-rates');
 
 // Helper: parse property_id param (supports comma-separated IDs or 'all')
 function parsePropertyIds(raw) {
@@ -140,7 +141,7 @@ router.get('/expenses', (req, res) => {
 router.post('/expenses', (req, res) => {
   try {
     const db = getDb();
-    const { property_id, category, amount, description, expense_date, receipt_path, recurring, recurring_frequency } = req.body;
+    const { property_id, category, amount, description, expense_date, receipt_path, recurring, recurring_frequency, currency } = req.body;
 
     if (!property_id || !category || amount == null || !expense_date) {
       return res.status(400).json({ error: 'property_id, category, amount, and expense_date are required' });
@@ -153,9 +154,9 @@ router.post('/expenses', (req, res) => {
     }
 
     const result = db.prepare(`
-      INSERT INTO expenses (property_id, category, amount, description, expense_date, receipt_path, recurring, recurring_frequency)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(property_id, category, amount, description || '', expense_date, receipt_path || '', recurring ? 1 : 0, recurring_frequency || '');
+      INSERT INTO expenses (property_id, category, amount, description, expense_date, receipt_path, recurring, recurring_frequency, currency)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(property_id, category, amount, description || '', expense_date, receipt_path || '', recurring ? 1 : 0, recurring_frequency || '', currency || 'ZAR');
 
     res.status(201).json({ id: result.lastInsertRowid });
   } catch (err) {
@@ -169,7 +170,7 @@ router.put('/expenses/:id', (req, res) => {
     const existing = db.prepare('SELECT * FROM expenses WHERE id = ?').get(req.params.id);
     if (!existing) return res.status(404).json({ error: 'Expense not found' });
 
-    const fields = ['property_id', 'category', 'amount', 'description', 'expense_date', 'receipt_path', 'recurring', 'recurring_frequency'];
+    const fields = ['property_id', 'category', 'amount', 'description', 'expense_date', 'receipt_path', 'recurring', 'recurring_frequency', 'currency'];
     const updates = [];
     const params = [];
 
@@ -326,11 +327,12 @@ router.delete('/keyword-mappings/:id', (req, res) => {
 
 // ─── P&L Data ───
 
-router.get('/pnl', (req, res) => {
+router.get('/pnl', async (req, res) => {
   try {
     const db = getDb();
     const { property_id, from, to } = req.query;
     const propIds = parsePropertyIds(property_id);
+    const displayCurrency = getDisplayCurrency();
 
     // Build date filters
     let bookingWhere = "b.status = 'confirmed'";
@@ -353,89 +355,95 @@ router.get('/pnl', (req, res) => {
       expenseParams.push(to);
     }
 
-    // Total revenue from bookings
-    const revenueRow = db.prepare(`
-      SELECT COALESCE(SUM(b.total_price), 0) as total_revenue
-      FROM bookings b
-      WHERE ${bookingWhere}
-    `).get(...bookingParams);
-    const totalRevenue = revenueRow.total_revenue;
+    // Fetch individual bookings for currency conversion
+    const revenueBookings = db.prepare(`
+      SELECT b.total_price, b.check_in, b.currency FROM bookings b WHERE ${bookingWhere}
+    `).all(...bookingParams);
+    await bulkConvert(revenueBookings, displayCurrency);
+    const totalRevenue = revenueBookings.reduce((sum, b) => sum + (b.converted_total_price || 0), 0);
 
-    // Total costs from expenses
-    const costRow = db.prepare(`
-      SELECT COALESCE(SUM(e.amount), 0) as total_costs
-      FROM expenses e
-      WHERE ${expenseWhere}
-    `).get(...expenseParams);
-    const totalCosts = costRow.total_costs;
+    // Fetch individual expenses for currency conversion
+    const expenseRows = db.prepare(`
+      SELECT e.amount, e.expense_date, e.currency FROM expenses e WHERE ${expenseWhere}
+    `).all(...expenseParams);
+    await bulkConvertExpenses(expenseRows, displayCurrency);
+    const totalCosts = expenseRows.reduce((sum, e) => sum + (e.converted_amount || 0), 0);
 
     const netProfit = totalRevenue - totalCosts;
     const profitMargin = totalRevenue > 0 ? Math.round((netProfit / totalRevenue) * 100 * 10) / 10 : 0;
 
-    // Monthly P&L
-    const monthlyRevenue = db.prepare(`
-      SELECT substr(b.check_in, 1, 7) as month, SUM(b.total_price) as revenue
-      FROM bookings b
-      WHERE ${bookingWhere}
-      GROUP BY substr(b.check_in, 1, 7)
-      ORDER BY month ASC
-    `).all(...bookingParams);
+    // Monthly P&L (with conversion)
+    const monthlyRevenueMap = {};
+    for (const b of revenueBookings) {
+      const month = b.check_in.substring(0, 7);
+      monthlyRevenueMap[month] = (monthlyRevenueMap[month] || 0) + (b.converted_total_price || 0);
+    }
 
-    const monthlyCosts = db.prepare(`
-      SELECT substr(e.expense_date, 1, 7) as month, SUM(e.amount) as costs
-      FROM expenses e
-      WHERE ${expenseWhere}
-      GROUP BY substr(e.expense_date, 1, 7)
-      ORDER BY month ASC
-    `).all(...expenseParams);
+    const monthlyCostsMap = {};
+    for (const e of expenseRows) {
+      const month = e.expense_date.substring(0, 7);
+      monthlyCostsMap[month] = (monthlyCostsMap[month] || 0) + (e.converted_amount || 0);
+    }
 
     // Merge monthly data
     const monthMap = {};
-    for (const r of monthlyRevenue) {
-      monthMap[r.month] = { month: r.month, revenue: r.revenue, costs: 0, net_profit: 0 };
+    for (const [month, revenue] of Object.entries(monthlyRevenueMap)) {
+      monthMap[month] = { month, revenue: Math.round(revenue * 100) / 100, costs: 0, net_profit: 0 };
     }
-    for (const c of monthlyCosts) {
-      if (!monthMap[c.month]) monthMap[c.month] = { month: c.month, revenue: 0, costs: 0, net_profit: 0 };
-      monthMap[c.month].costs = c.costs;
+    for (const [month, costs] of Object.entries(monthlyCostsMap)) {
+      if (!monthMap[month]) monthMap[month] = { month, revenue: 0, costs: 0, net_profit: 0 };
+      monthMap[month].costs = Math.round(costs * 100) / 100;
     }
     const monthlyPnl = Object.values(monthMap)
       .sort((a, b) => a.month.localeCompare(b.month))
-      .map(m => ({ ...m, net_profit: m.revenue - m.costs }));
+      .map(m => ({ ...m, net_profit: Math.round((m.revenue - m.costs) * 100) / 100 }));
 
-    // Cost breakdown by category
-    const costBreakdown = db.prepare(`
-      SELECT e.category, SUM(e.amount) as amount
-      FROM expenses e
-      WHERE ${expenseWhere}
-      GROUP BY e.category
-      ORDER BY amount DESC
+    // Cost breakdown by category (with conversion)
+    const allExpenses = db.prepare(`
+      SELECT e.category, e.amount, e.expense_date, e.currency FROM expenses e WHERE ${expenseWhere}
     `).all(...expenseParams);
+    await bulkConvertExpenses(allExpenses, displayCurrency);
+    const catMap = {};
+    for (const e of allExpenses) {
+      catMap[e.category] = (catMap[e.category] || 0) + (e.converted_amount || 0);
+    }
+    const costBreakdown = Object.entries(catMap)
+      .map(([category, amount]) => ({ category, amount: Math.round(amount * 100) / 100 }))
+      .sort((a, b) => b.amount - a.amount);
 
     // Booking profitability
-    let profBookingWhere = bookingWhere;
-    const profBookingParams = [...bookingParams];
-
     const bookings = db.prepare(`
       SELECT b.id as booking_id, b.guest_name, b.check_in, b.check_out, b.total_price,
-             b.platform, b.property_id,
+             b.platform, b.property_id, b.currency,
              p.name as property_name, p.cleaning_hours_required,
-             p.commission_airbnb, p.commission_booking, p.commission_vrbo
+             p.commission_airbnb, p.commission_booking, p.commission_vrbo,
+             p.bank_charge_airbnb, p.bank_charge_booking, p.bank_charge_vrbo, p.vat_rate
       FROM bookings b
       JOIN properties p ON b.property_id = p.id
-      WHERE ${profBookingWhere}
+      WHERE ${bookingWhere}
       ORDER BY b.check_in DESC
-    `).all(...profBookingParams);
+    `).all(...bookingParams);
+    await bulkConvert(bookings, displayCurrency);
 
     const bookingProfitability = bookings.map(bk => {
-      const revenue = bk.total_price || 0;
+      const revenue = bk.converted_total_price || 0;
 
-      // Platform fee
+      // Platform fee + bank charge
       const platform = (bk.platform || '').toLowerCase();
       let commissionRate = 0;
-      if (platform.includes('airbnb')) commissionRate = (bk.commission_airbnb || 3) / 100;
-      else if (platform.includes('booking')) commissionRate = (bk.commission_booking || 15) / 100;
-      else if (platform.includes('vrbo') || platform.includes('homeaway')) commissionRate = (bk.commission_vrbo || 8) / 100;
+      let bankChargeRate = 0;
+      if (platform.includes('airbnb')) {
+        commissionRate = (bk.commission_airbnb || 18) / 100;
+        bankChargeRate = (bk.bank_charge_airbnb || 0) / 100;
+      } else if (platform.includes('booking')) {
+        commissionRate = (bk.commission_booking || 15) / 100;
+        bankChargeRate = (bk.bank_charge_booking || 2.1) / 100;
+      } else if (platform.includes('vrbo') || platform.includes('homeaway')) {
+        commissionRate = (bk.commission_vrbo || 8) / 100;
+        bankChargeRate = (bk.bank_charge_vrbo || 0) / 100;
+      }
       const platformFee = Math.round(revenue * commissionRate * 100) / 100;
+      const bankCharge = Math.round(revenue * bankChargeRate * 100) / 100;
 
       // Cleaning cost: find the cleaner assigned to this booking's cleaning job
       let cleaningCost = 0;
@@ -455,7 +463,7 @@ router.get('/pnl', (req, res) => {
         }
       }
 
-      const netProfit = revenue - platformFee - cleaningCost;
+      const netProfit = revenue - platformFee - bankCharge - cleaningCost;
 
       return {
         booking_id: bk.booking_id,
@@ -463,18 +471,21 @@ router.get('/pnl', (req, res) => {
         property_name: bk.property_name,
         check_in: bk.check_in,
         check_out: bk.check_out,
+        platform: bk.platform,
         revenue,
         cleaning_cost: Math.round(cleaningCost * 100) / 100,
         platform_fee: platformFee,
+        bank_charge: bankCharge,
         net_profit: Math.round(netProfit * 100) / 100,
       };
     });
 
     res.json({
+      display_currency: displayCurrency,
       summary: {
-        total_revenue: totalRevenue,
-        total_costs: totalCosts,
-        net_profit: netProfit,
+        total_revenue: Math.round(totalRevenue * 100) / 100,
+        total_costs: Math.round(totalCosts * 100) / 100,
+        net_profit: Math.round(netProfit * 100) / 100,
         profit_margin: profitMargin,
       },
       monthly_pnl: monthlyPnl,

@@ -6,7 +6,7 @@ let allExpenses = [];
 let csvPreviewData = [];
 let pnlData = null;
 
-const COLORS = ['#1a1a2e', '#e63946', '#457b9d', '#2a9d8f', '#e9c46a', '#6a4c93', '#f4845f', '#264653', '#f4a261'];
+const COLORS = ['#2563EB', '#EF4444', '#457b9d', '#10B981', '#F59E0B', '#6a4c93', '#f4845f', '#264653', '#f4a261'];
 
 // ─── API helper ───
 
@@ -15,6 +15,7 @@ async function api(url, opts = {}) {
     headers: { 'Content-Type': 'application/json' },
     ...opts,
   });
+  if (res.status === 401) { window.location.href = '/login.html'; return null; }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || res.statusText);
@@ -25,12 +26,25 @@ async function api(url, opts = {}) {
 // ─── Init ───
 
 document.addEventListener('DOMContentLoaded', async () => {
+  const user = await checkAuth();
+  if (!user) return;
   await loadBaseData();
   loadExpenses();
   loadPnl();
   loadCostSettings();
   loadKeywordMappings();
   restoreDateFilters();
+
+  // Deep-link to tab via URL hash (e.g. #cost-settings)
+  const hash = window.location.hash.replace('#', '');
+  if (hash && document.getElementById('tab-' + hash)) {
+    const tabs = ['expenses', 'pnl', 'cost-settings', 'csv-import', 'bank-connect'];
+    const idx = tabs.indexOf(hash);
+    if (idx >= 0) {
+      const btn = document.querySelectorAll('.tabs .tab')[idx];
+      if (btn) switchTab(hash, btn);
+    }
+  }
 });
 
 window.addEventListener('propertyChanged', () => {
@@ -43,7 +57,7 @@ window.addEventListener('propertyChanged', () => {
 
 function switchTab(tabId, btn) {
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.tab-bar button').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tabs .tab').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + tabId).classList.add('active');
   btn.classList.add('active');
 }
@@ -125,14 +139,10 @@ function renderKPIs(summary) {
   if (!summary) return;
   const fmt = n => 'R ' + Math.round(n).toLocaleString('en-ZA');
   const noCosts = summary.total_costs === 0;
-  const profitCls = noCosts ? 'muted' : (summary.net_profit >= 0 ? 'positive' : 'negative');
-  const marginCls = noCosts ? 'muted' : (summary.profit_margin >= 0 ? 'positive' : 'negative');
-  const kpis = [
-    { value: fmt(summary.total_revenue), label: 'Total Revenue', cls: '' },
-    { value: fmt(summary.total_costs), label: 'Total Costs', cls: '' },
-    { value: fmt(summary.net_profit), label: 'Net Profit', cls: profitCls },
-    { value: summary.profit_margin + '%', label: 'Profit Margin', cls: marginCls },
-  ];
+  const rev = summary.total_revenue || 0;
+  const costs = summary.total_costs || 0;
+  const profit = summary.net_profit || 0;
+  const margin = summary.profit_margin || (rev > 0 ? ((profit / rev) * 100).toFixed(1) : '0.0');
 
   // Scope label
   const ids = getSelectedPropertyIds();
@@ -144,9 +154,43 @@ function renderKPIs(summary) {
     scopeLabel = ids.length + ' Properties';
   }
 
-  document.getElementById('kpiGrid').innerHTML =
-    `<div style="grid-column:1/-1;font-size:0.85rem;color:#666;margin-bottom:-0.5rem;">Showing: <strong>${escHtml(scopeLabel)}</strong></div>` +
-    kpis.map(k => `<div class="kpi-card"><div class="kpi-value ${k.cls}">${k.value}</div><div class="kpi-label">${k.label}</div></div>`).join('');
+  // Determine period label from P&L date inputs
+  const pnlFrom = document.getElementById('pnlFrom').value;
+  const pnlTo = document.getElementById('pnlTo').value;
+  let periodLabel = 'Current period';
+  if (pnlFrom && pnlTo) {
+    periodLabel = pnlFrom + ' to ' + pnlTo;
+  } else if (pnlFrom) {
+    periodLabel = 'From ' + pnlFrom;
+  }
+
+  const subLine = escHtml(scopeLabel) + ' &middot; ' + escHtml(periodLabel);
+
+  document.getElementById('kpiGrid').innerHTML = `
+    <div class="summary-card">
+      <div class="accent" style="background:var(--success)"></div>
+      <div class="label">Total Revenue</div>
+      <div class="value">${fmt(rev)}</div>
+      <div class="sub">${subLine}</div>
+    </div>
+    <div class="summary-card">
+      <div class="accent" style="background:var(--danger)"></div>
+      <div class="label">Total Costs</div>
+      <div class="value">${fmt(costs)}</div>
+      <div class="sub">${subLine}</div>
+    </div>
+    <div class="summary-card">
+      <div class="accent" style="background:var(--primary)"></div>
+      <div class="label">Net Profit</div>
+      <div class="value" style="color:${profit >= 0 ? 'var(--success)' : 'var(--danger)'}">${fmt(profit)}</div>
+      <div class="sub">${margin}% margin</div>
+    </div>
+    <div class="summary-card">
+      <div class="accent" style="background:var(--warning)"></div>
+      <div class="label">Profit Margin</div>
+      <div class="value">${margin}%</div>
+      <div class="sub">${noCosts ? 'No costs configured' : subLine}</div>
+    </div>`;
 
   // Warning banner when no costs
   let banner = document.getElementById('finNoCostsBanner');
@@ -156,8 +200,8 @@ function renderKPIs(summary) {
     const kpiGrid = document.getElementById('kpiGrid');
     kpiGrid.parentNode.insertBefore(banner, kpiGrid.nextSibling);
   }
-  if (noCosts && summary.total_revenue > 0) {
-    banner.innerHTML = '<div style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;padding:0.6rem 1rem;border-radius:6px;margin-top:0.5rem;font-size:0.9rem;">No costs configured — profit figures are estimates only. <a href="#" onclick="switchTab(\'costs\', document.querySelector(\'.tab-bar button:nth-child(3)\'));return false;" style="color:#92400e;font-weight:600;">Add fixed costs in Cost Settings</a></div>';
+  if (noCosts && rev > 0) {
+    banner.innerHTML = '<div class="alert-banner warning" style="margin-top:0.5rem;">No costs configured — profit figures are estimates only. <a href="#" onclick="switchTab(\'cost-settings\', document.querySelectorAll(\'.tabs .tab\')[2]);return false;">Add fixed costs in Cost Settings</a></div>';
   } else {
     banner.innerHTML = '';
   }
@@ -186,7 +230,7 @@ async function loadExpenses() {
   } catch (err) {
     console.error('Failed to load expenses:', err);
     document.getElementById('expenseTableBody').innerHTML =
-      `<tr><td colspan="7" style="color:#cc0000;">Failed to load expenses: ${escHtml(err.message)}</td></tr>`;
+      `<tr><td colspan="7" style="color:var(--danger);">Failed to load expenses: ${escHtml(err.message)}</td></tr>`;
   }
 }
 
@@ -201,7 +245,7 @@ function renderExpenses() {
     <tr>
       <td>${escHtml(e.expense_date)}</td>
       <td>${escHtml(e.property_name)}</td>
-      <td>${escHtml(e.category)}</td>
+      <td><span class="type-badge expense">${escHtml(e.category)}</span></td>
       <td>R ${Number(e.amount).toLocaleString('en-ZA', { minimumFractionDigits: 2 })}</td>
       <td>${escHtml(e.description)}</td>
       <td>${e.recurring ? '<span class="badge badge-confirmed">' + escHtml(e.recurring_frequency || 'Yes') + '</span>' : '-'}</td>
@@ -242,6 +286,7 @@ async function saveExpense(event) {
     expense_date: document.getElementById('expDate').value,
     recurring: document.getElementById('expRecurring').checked ? 1 : 0,
     recurring_frequency: document.getElementById('expRecurring').checked ? document.getElementById('expFrequency').value : '',
+    currency: document.getElementById('expCurrency').value || 'ZAR',
   };
 
   try {
@@ -270,6 +315,7 @@ function editExpense(id) {
   document.getElementById('expAmount').value = exp.amount;
   document.getElementById('expDescription').value = exp.description || '';
   document.getElementById('expRecurring').checked = !!exp.recurring;
+  document.getElementById('expCurrency').value = exp.currency || 'ZAR';
   document.getElementById('recurringFreqGroup').style.display = exp.recurring ? 'block' : 'none';
   if (exp.recurring_frequency) {
     document.getElementById('expFrequency').value = exp.recurring_frequency;
@@ -378,10 +424,10 @@ function renderPnlChart() {
     const hCost = Math.max(2, (m.costs / maxVal) * 100);
     const label = fmtMonth(m.month);
     return `<div class="bar-col">
-      <div class="bar-value" style="font-size:0.55rem;">R ${fmtNum(m.revenue)}</div>
+      <div class="bar-value" style="font-size:0.55rem;">${fmtMoney(m.revenue)}</div>
       <div class="pnl-bar-group">
-        <div class="bar" style="height:${hRev}%;background:#1a1a2e;width:18px;max-width:18px;" title="Revenue: R ${fmtNum(m.revenue)}"></div>
-        <div class="bar" style="height:${hCost}%;background:#e63946;width:18px;max-width:18px;" title="Costs: R ${fmtNum(m.costs)}"></div>
+        <div class="bar" style="height:${hRev}%;background:#10B981;width:18px;max-width:18px;" title="Revenue: ${fmtMoney(m.revenue)}"></div>
+        <div class="bar" style="height:${hCost}%;background:#EF4444;width:18px;max-width:18px;" title="Costs: ${fmtMoney(m.costs)}"></div>
       </div>
       <div class="bar-label">${label}</div>
     </div>`;
@@ -405,7 +451,7 @@ function renderCostBreakdown() {
     return `<div class="h-bar-row">
       <div class="h-bar-label">${escHtml(b.category)}</div>
       <div class="h-bar-track">
-        <div class="h-bar-fill" style="width:${pct}%;background:${color};">R ${fmtNum(b.amount)}</div>
+        <div class="h-bar-fill" style="width:${pct}%;background:${color};">${fmtMoney(b.amount)}</div>
       </div>
     </div>`;
   }).join('');
@@ -421,16 +467,16 @@ function renderBookingProfitability() {
   }
 
   body.innerHTML = bookings.map(b => {
-    const profitClass = b.net_profit >= 0 ? 'color:#00aa44' : 'color:#cc0000';
+    const profitClass = b.net_profit >= 0 ? 'color:var(--success)' : 'color:var(--danger)';
     return `<tr>
       <td>${escHtml(b.guest_name || '-')}</td>
       <td>${escHtml(b.property_name)}</td>
       <td>${b.check_in}</td>
       <td>${b.check_out}</td>
-      <td>R ${fmtNum(b.revenue)}</td>
-      <td>R ${fmtNum(b.cleaning_cost)}</td>
-      <td>R ${fmtNum(b.platform_fee)}</td>
-      <td style="${profitClass};font-weight:600;">R ${fmtNum(b.net_profit)}</td>
+      <td>${fmtMoney(b.revenue)}</td>
+      <td>${fmtMoney(b.cleaning_cost)}</td>
+      <td>${fmtMoney(b.platform_fee)}</td>
+      <td style="${profitClass};font-weight:600;">${fmtMoney(b.net_profit)}</td>
     </tr>`;
   }).join('');
 }
@@ -486,8 +532,8 @@ async function renderPropertyBreakdown() {
       totalCosts += costs;
       totalProfit += profit;
 
-      var profitStyle = profit >= 0 ? 'color:#00aa44' : 'color:#cc0000';
-      var marginStyle = margin >= 0 ? 'color:#00aa44' : 'color:#cc0000';
+      var profitStyle = profit >= 0 ? 'color:var(--success)' : 'color:var(--danger)';
+      var marginStyle = margin >= 0 ? 'color:var(--success)' : 'color:var(--danger)';
 
       return '<tr>' +
         '<td>' + escHtml(r.property.name) + '</td>' +
@@ -499,8 +545,8 @@ async function renderPropertyBreakdown() {
     });
 
     var totalMargin = totalRevenue > 0 ? Math.round((totalProfit / totalRevenue) * 100) : 0;
-    var totalProfitStyle = totalProfit >= 0 ? 'color:#00aa44' : 'color:#cc0000';
-    var totalMarginStyle = totalMargin >= 0 ? 'color:#00aa44' : 'color:#cc0000';
+    var totalProfitStyle = totalProfit >= 0 ? 'color:var(--success)' : 'color:var(--danger)';
+    var totalMarginStyle = totalMargin >= 0 ? 'color:var(--success)' : 'color:var(--danger)';
 
     rows.push(
       '<tr style="font-weight:700;border-top:2px solid #333;background:#f8f8f8;">' +
@@ -517,7 +563,7 @@ async function renderPropertyBreakdown() {
       '<tbody>' + rows.join('') + '</tbody>' +
       '</table>';
   } catch (err) {
-    content.innerHTML = '<div style="color:#cc0000;">Failed to load property breakdown: ' + escHtml(err.message) + '</div>';
+    content.innerHTML = '<div style="color:var(--danger);">Failed to load property breakdown: ' + escHtml(err.message) + '</div>';
   }
 }
 
@@ -538,37 +584,41 @@ async function loadCostSettings() {
       const costMap = {};
       costs.forEach(c => { costMap[c.category_id] = c; });
 
-      html += `<div class="cost-property-section">
-        <h3>${escHtml(p.name)}</h3>
-        <table class="data-table cost-table">
-          <thead>
-            <tr><th>Category</th><th>Monthly Amount (R)</th><th>Variable</th></tr>
-          </thead>
-          <tbody>
-            ${categories.map(cat => {
-              const existing = costMap[cat.id];
-              return `<tr>
-                <td>${escHtml(cat.name)}</td>
-                <td><input type="number" step="0.01" min="0" id="cost-${p.id}-${cat.id}" value="${existing ? existing.monthly_amount : 0}"></td>
-                <td>
-                  <label class="toggle-switch">
-                    <input type="checkbox" id="var-${p.id}-${cat.id}" ${existing && existing.is_variable ? 'checked' : ''}>
-                    <span class="slider"></span>
-                  </label>
-                </td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-        <div class="actions">
-          <button class="btn btn-primary" onclick="saveCosts(${p.id})">Save Costs for ${escHtml(p.name)}</button>
+      html += `<div class="card" style="margin-bottom:24px;">
+        <div class="card-header">
+          <h3>${escHtml(p.name)}</h3>
+        </div>
+        <div class="card-body">
+          <table class="data-table cost-table">
+            <thead>
+              <tr><th>Category</th><th>Monthly Amount (R)</th><th>Variable</th></tr>
+            </thead>
+            <tbody>
+              ${categories.map(cat => {
+                const existing = costMap[cat.id];
+                return `<tr>
+                  <td>${escHtml(cat.name)}</td>
+                  <td><input type="number" step="0.01" min="0" id="cost-${p.id}-${cat.id}" value="${existing ? existing.monthly_amount : 0}" style="width:120px;"></td>
+                  <td>
+                    <label class="toggle-switch">
+                      <input type="checkbox" id="var-${p.id}-${cat.id}" ${existing && existing.is_variable ? 'checked' : ''}>
+                      <span class="slider"></span>
+                    </label>
+                  </td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+          <div class="actions" style="margin-top:1rem;">
+            <button class="btn btn-primary" onclick="saveCosts(${p.id})">Save Costs for ${escHtml(p.name)}</button>
+          </div>
         </div>
       </div>`;
     }
     container.innerHTML = html;
     renderCategoryList();
   } catch (err) {
-    container.innerHTML = `<div style="color:#cc0000;">Error loading cost settings: ${escHtml(err.message)}</div>`;
+    container.innerHTML = `<div style="color:var(--danger);">Error loading cost settings: ${escHtml(err.message)}</div>`;
   }
 }
 
@@ -589,9 +639,9 @@ async function saveCosts(propertyId) {
         }),
       });
     }
-    alert('Costs saved successfully!');
+    showToast('Costs saved!');
   } catch (err) {
-    alert('Error saving costs: ' + err.message);
+    showToast('Error saving costs: ' + err.message, 'error');
   }
 }
 
@@ -745,7 +795,7 @@ function renderCsvPreview() {
           <option value="">-- Select --</option>
           ${catOptions}
         </select>
-        ${t.auto ? '<span style="font-size:0.7rem;color:#00aa44;margin-left:3px;">auto</span>' : ''}
+        ${t.auto ? '<span style="font-size:0.7rem;color:var(--success);margin-left:3px;">auto</span>' : ''}
       </td>
     </tr>`;
   }).join('');
@@ -831,9 +881,21 @@ function renderKeywordMappings(mappings) {
 }
 
 async function addKeywordMapping() {
-  const keyword = document.getElementById('newKeyword').value.trim();
+  const keywordEl = document.getElementById('newKeyword');
+  const keyword = keywordEl.value.trim();
   const categoryId = document.getElementById('newKeywordCategory').value;
-  if (!keyword || !categoryId) return;
+  // Clear previous error
+  const prevErr = keywordEl.parentElement.querySelector('.field-error');
+  if (prevErr) prevErr.remove();
+  keywordEl.style.borderColor = '';
+
+  if (!keyword) {
+    keywordEl.style.borderColor = '#dc2626';
+    keywordEl.insertAdjacentHTML('afterend', '<div class="field-error" style="color:#dc2626;font-size:0.8rem;margin-top:0.2rem;">Keyword is required</div>');
+    keywordEl.focus();
+    return;
+  }
+  if (!categoryId) return;
 
   try {
     await api('/api/finances/keyword-mappings', {
@@ -860,13 +922,22 @@ async function deleteKeywordMapping(id) {
 // ─── BANK CONNECT ───
 
 function submitBankConnectInterest() {
-  const email = document.getElementById('bankConnectEmail').value.trim();
-  if (!email) {
-    alert('Please enter your email address.');
+  const emailEl = document.getElementById('bankConnectEmail');
+  const email = emailEl.value.trim();
+  // Clear previous error
+  const prevErr = emailEl.parentElement.querySelector('.field-error');
+  if (prevErr) prevErr.remove();
+  emailEl.style.borderColor = '';
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!email || !emailRegex.test(email)) {
+    emailEl.style.borderColor = '#dc2626';
+    emailEl.insertAdjacentHTML('afterend', '<div class="field-error" style="color:#dc2626;font-size:0.8rem;margin-top:0.2rem;">Please enter a valid email address</div>');
+    emailEl.focus();
     return;
   }
-  alert('Thank you! We\'ll notify you at ' + email + ' when bank connect is available.');
-  document.getElementById('bankConnectEmail').value = '';
+  showToast('Thank you! We\'ll notify you when bank connect is available.');
+  emailEl.value = '';
 }
 
 // ─── DRAG & DROP for CSV ───
@@ -878,8 +949,8 @@ function submitBankConnectInterest() {
 
     dropZone.addEventListener('dragover', e => {
       e.preventDefault();
-      dropZone.style.borderColor = '#1a1a2e';
-      dropZone.style.background = '#f8f9ff';
+      dropZone.style.borderColor = 'var(--primary)';
+      dropZone.style.background = 'var(--primary-50)';
     });
 
     dropZone.addEventListener('dragleave', () => {

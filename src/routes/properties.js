@@ -1,17 +1,32 @@
 const express = require('express');
 const router = express.Router();
 const { getDb } = require('../db/database');
+const { scopeProperties } = require('../middleware/auth');
+
+// Apply property scoping to all routes
+router.use(scopeProperties);
 
 // Get all properties
 router.get('/', (req, res) => {
   const db = getDb();
-  const properties = db.prepare('SELECT * FROM properties ORDER BY name ASC').all();
+  let properties;
+  if (req.accessiblePropertyIds === null) {
+    properties = db.prepare('SELECT * FROM properties ORDER BY name ASC').all();
+  } else {
+    const ids = req.accessiblePropertyIds;
+    if (ids.length === 0) return res.json([]);
+    const placeholders = ids.map(() => '?').join(',');
+    properties = db.prepare(`SELECT * FROM properties WHERE id IN (${placeholders}) ORDER BY name ASC`).all(...ids);
+  }
   res.json(properties);
 });
 
 // Get a single property
 router.get('/:id', (req, res) => {
   const db = getDb();
+  if (req.accessiblePropertyIds !== null && !req.accessiblePropertyIds.includes(parseInt(req.params.id))) {
+    return res.status(403).json({ error: 'Access denied to this property' });
+  }
   const property = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
   if (!property) return res.status(404).json({ error: 'Property not found' });
   res.json(property);
@@ -20,6 +35,9 @@ router.get('/:id', (req, res) => {
 // Get property performance summary
 router.get('/:id/summary', (req, res) => {
   const db = getDb();
+  if (req.accessiblePropertyIds !== null && !req.accessiblePropertyIds.includes(parseInt(req.params.id))) {
+    return res.status(403).json({ error: 'Access denied to this property' });
+  }
   const property = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
   if (!property) return res.status(404).json({ error: 'Property not found' });
 
@@ -155,7 +173,7 @@ router.put('/:id', (req, res) => {
   const property = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
   if (!property) return res.status(404).json({ error: 'Property not found' });
 
-  const fields = ['address','cleaning_hours_required','base_price','airbnb_url','airbnb_id','booking_url','booking_id_ext','vrbo_url','vrbo_id','commission_airbnb','commission_booking','commission_vrbo','property_type','bedrooms','bathrooms','max_guests','location','neighbourhood','wifi_network','wifi_password','access_code','checkin_instructions','checkout_instructions','supply_checklist','emergency_contact'];
+  const fields = ['address','cleaning_hours_required','base_price','base_currency','airbnb_url','airbnb_id','booking_url','booking_id_ext','vrbo_url','vrbo_id','commission_airbnb','commission_booking','commission_vrbo','bank_charge_airbnb','bank_charge_booking','bank_charge_vrbo','vat_rate','property_type','bedrooms','bathrooms','max_guests','location','neighbourhood','wifi_network','wifi_password','access_code','checkin_instructions','checkout_instructions','supply_checklist','emergency_contact'];
   const updates = [];
   const values = [];
   for (const f of fields) {

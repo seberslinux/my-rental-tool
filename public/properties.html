@@ -4,29 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Properties - Rental Manager</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <nav>
-    <span class="logo">Rental Manager</span>
-    <div class="nav-links">
-      <a href="/">Dashboard</a>
-      <a href="/properties.html" class="active">Properties</a>
-      <a href="/cleaners.html">Cleaners</a>
-      <a href="/analytics.html">Analytics</a>
-      <a href="/finances.html">Finances</a>
-      <a href="/maintenance.html">Maintenance</a>
-    </div>
-    <div class="property-selector"><select id="globalPropertySelect"></select></div>
-  </nav>
 
   <div class="container">
-    <h1>Property Settings</h1>
-    <p style="color:#666;margin-bottom:1.5rem;">
+    <p class="subtitle" style="font-size:14px;color:var(--gray-500);margin-bottom:24px;">
       Sync properties from Smoobu first, then configure settings for each property below.
     </p>
 
-    <div id="propertiesList">
+    <div class="property-cards" id="propertiesList">
       <div class="loading">Loading properties...</div>
     </div>
   </div>

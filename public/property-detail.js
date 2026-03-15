@@ -1,6 +1,9 @@
 /* property-detail.js – Per-property performance page */
 
 (async function () {
+  const user = await checkAuth();
+  if (!user) return;
+
   const params = new URLSearchParams(window.location.search);
   const id = params.get('id');
   if (!id) {
@@ -40,10 +43,10 @@
 
   // --- KPIs ---
   var kpiItems = [
-    { label: 'Revenue (30d)', value: 'R ' + fmtNum(kpis.revenue_30d) },
+    { label: 'Revenue (30d)', value: fmtMoney(kpis.revenue_30d) },
     { label: 'Occupancy (30d)', value: fmtNum(kpis.occupancy_30d) + '%' },
-    { label: 'Avg Nightly Rate', value: 'R ' + fmtNum(kpis.avg_nightly_rate_30d) },
-    { label: 'Net Profit (30d)', value: 'R ' + fmtNum(kpis.net_profit_30d) },
+    { label: 'Avg Nightly Rate', value: fmtMoney(kpis.avg_nightly_rate_30d) },
+    { label: 'Net Profit (30d)', value: fmtMoney(kpis.net_profit_30d) },
     { label: 'Cancellation Rate', value: fmtNum(kpis.cancellation_rate_30d) + '%' },
   ];
   document.getElementById('kpiGrid').innerHTML = kpiItems.map(function (k) {

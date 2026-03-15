@@ -1,14 +1,41 @@
-/* cleaners.js – enhanced cleaners management */
+/* cleaners.js – redesigned cleaners management */
 
 let allProperties = [];
 let allCleaners = [];
+let allJobs = [];
 let cleanerCalendarMonth = {};
 let combinedMonth = new Date();
-let viewMode = 'per-cleaner';
 let payData = null;
 let payPayments = [];
+let weekOffset = 0;
+
+/* Aliases used by new rendering functions */
+let cleaners = [];
+let properties = [];
 
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/* ───── Color palette for properties & cleaners ───── */
+const PROPERTY_COLORS = [
+  { bg: '#2563eb18', border: '#2563eb', text: '#1e40af' },
+  { bg: '#d946ef18', border: '#d946ef', text: '#a21caf' },
+  { bg: '#f59e0b18', border: '#f59e0b', text: '#b45309' },
+  { bg: '#10b98118', border: '#10b981', text: '#047857' },
+  { bg: '#ef444418', border: '#ef4444', text: '#b91c1c' },
+  { bg: '#8b5cf618', border: '#8b5cf6', text: '#6d28d9' },
+];
+
+const CLEANER_COLORS = ['#8B5CF6', '#F59E0B', '#10B981', '#2563EB', '#EF4444', '#EC4899'];
+
+function getPropertyColor(propertyId) {
+  const idx = allProperties.findIndex(p => p.id === propertyId);
+  return PROPERTY_COLORS[(idx >= 0 ? idx : 0) % PROPERTY_COLORS.length];
+}
+
+function getCleanerColor(cleanerId) {
+  const idx = allCleaners.findIndex(c => c.id === cleanerId);
+  return CLEANER_COLORS[(idx >= 0 ? idx : 0) % CLEANER_COLORS.length];
+}
 
 /* ───── API helper ───── */
 
@@ -17,6 +44,7 @@ async function api(url, opts = {}) {
     headers: { 'Content-Type': 'application/json' },
     ...opts,
   });
+  if (res.status === 401) { window.location.href = '/login.html'; return null; }
   return res.json();
 }
 
@@ -24,7 +52,6 @@ async function api(url, opts = {}) {
 
 window.addEventListener('propertyChanged', () => {
   loadData();
-  // Reload pay summary if a month is selected
   const payInput = document.getElementById('payMonthInput');
   if (payInput && payInput.value) loadPaySummary(payInput.value);
 });
@@ -38,49 +65,62 @@ function getFilteredCleaners() {
   return allCleaners.filter(c => c.properties.some(p => idSet.has(p.id)));
 }
 
+/* ───── Show / Hide Add Form ───── */
+
+function showAddForm() {
+  document.getElementById('addCleanerArea').style.display = 'none';
+  document.getElementById('addCleanerForm').style.display = 'block';
+}
+function hideAddForm() {
+  document.getElementById('addCleanerForm').style.display = 'none';
+  document.getElementById('addCleanerArea').style.display = 'flex';
+}
+
+/* ───── Populate add-form property select ───── */
+
+function populateAddPropertySelect() {
+  const sel = document.getElementById('addPropertySelect');
+  if (!sel) return;
+  sel.innerHTML = (allProperties || []).map(p =>
+    `<option value="${p.id}">${escHtml(p.name)}</option>`
+  ).join('');
+}
+
 /* ───── Data loading ───── */
 
 async function loadData() {
   try {
-    const [cleaners, properties] = await Promise.all([
+    const [cleanersData, propertiesData] = await Promise.all([
       api('/api/cleaners'),
       api('/api/properties'),
     ]);
-    allProperties = properties;
-    allCleaners = cleaners;
-    renderCleaners(getFilteredCleaners());
-    if (viewMode === 'combined') {
-      renderCombinedCalendar();
-    }
+    allProperties = propertiesData;
+    allCleaners = cleanersData;
+    properties = allProperties;
+    cleaners = getFilteredCleaners();
+
+    // Load all jobs for all cleaners
+    const jobPromises = cleaners.map(c =>
+      api(`/api/cleaners/${c.id}/jobs`).then(jobs => jobs || []).catch(() => [])
+    );
+    const jobArrays = await Promise.all(jobPromises);
+    allJobs = jobArrays.flat();
+
+    populateAddPropertySelect();
+    renderCleanerCards();
+    renderAvailGrid();
+    renderUpcomingJobs();
   } catch (err) {
-    document.getElementById('cleanersList').innerHTML =
-      `<div class="alert alert-error">Failed to load: ${err.message}</div>`;
+    const grid = document.getElementById('cleanerCards');
+    if (grid) grid.innerHTML = `<div class="alert alert-error">Failed to load: ${err.message}</div>`;
   }
 }
 
-/* ───── Rate type toggles ───── */
-
-function toggleAddRate(value) {
-  document.getElementById('addHourlyGroup').style.display = value === 'hourly' ? '' : 'none';
-  document.getElementById('addFlatGroup').style.display = value === 'flat' ? '' : 'none';
-}
+/* ───── Rate type toggle (edit modal) ───── */
 
 function toggleEditRate(value) {
   document.getElementById('editHourlyGroup').style.display = value === 'hourly' ? '' : 'none';
   document.getElementById('editFlatGroup').style.display = value === 'flat' ? '' : 'none';
-}
-
-/* ───── View mode ───── */
-
-function setViewMode(mode) {
-  viewMode = mode;
-  document.getElementById('btnPerCleaner').className = mode === 'per-cleaner' ? 'btn btn-primary' : 'btn btn-secondary';
-  document.getElementById('btnCombined').className = mode === 'combined' ? 'btn btn-primary' : 'btn btn-secondary';
-  document.getElementById('cleanersList').style.display = mode === 'per-cleaner' ? '' : 'none';
-  document.getElementById('combinedCalendarView').style.display = mode === 'combined' ? '' : 'none';
-  if (mode === 'combined') {
-    renderCombinedCalendar();
-  }
 }
 
 /* ───── Add cleaner ───── */
@@ -92,19 +132,30 @@ async function addCleaner(event) {
   const data = {
     name: form.name.value,
     phone: form.phone.value,
-    email: form.email.value,
+    email: form.email.value || '',
     rate_type: rateType,
     hourly_rate: rateType === 'hourly' ? parseFloat(form.hourly_rate.value) || 0 : 0,
-    flat_rate: rateType === 'flat' ? parseFloat(form.flat_rate.value) || 0 : 0,
+    flat_rate: rateType === 'flat' ? parseFloat(form.hourly_rate.value) || 0 : 0,
     notes: form.notes.value,
   };
 
   try {
-    await api('/api/cleaners', { method: 'POST', body: JSON.stringify(data) });
+    const newCleaner = await api('/api/cleaners', { method: 'POST', body: JSON.stringify(data) });
+
+    // Assign selected properties
+    const sel = form.property_ids;
+    if (sel && newCleaner && newCleaner.id) {
+      const selectedIds = Array.from(sel.selectedOptions).map(o => parseInt(o.value));
+      for (const pid of selectedIds) {
+        await api(`/api/cleaners/${newCleaner.id}/properties`, {
+          method: 'POST',
+          body: JSON.stringify({ property_id: pid }),
+        });
+      }
+    }
+
     form.reset();
-    // Reset radio to hourly
-    form.rate_type.value = 'hourly';
-    toggleAddRate('hourly');
+    hideAddForm();
     loadData();
   } catch (err) {
     alert('Failed to add cleaner: ' + err.message);
@@ -113,7 +164,9 @@ async function addCleaner(event) {
 
 /* ───── Edit cleaner modal ───── */
 
-function openEditModal(cleaner) {
+function openEditModal(cleanerId) {
+  const cleaner = allCleaners.find(c => c.id === cleanerId);
+  if (!cleaner) return;
   const form = document.getElementById('editCleanerForm');
   document.getElementById('editCleanerId').value = cleaner.id;
   form.name.value = cleaner.name;
@@ -154,293 +207,231 @@ async function updateCleaner(event) {
   }
 }
 
-/* ───── Render cleaners (per-cleaner view) ───── */
+/* ───── Render Cleaner Cards ───── */
 
-function renderCleaners(cleaners) {
-  const container = document.getElementById('cleanersList');
-
-  if (cleaners.length === 0) {
-    container.innerHTML = '<div class="alert alert-info">No cleaners added yet.</div>';
+function renderCleanerCards() {
+  const grid = document.getElementById('cleanerCards');
+  if (!grid) return;
+  if (!cleaners || cleaners.length === 0) {
+    grid.innerHTML = '<div style="grid-column:1/-1;text-align:center;padding:2rem;color:var(--gray-400);">No cleaners yet. Add one below.</div>';
     return;
   }
 
-  container.innerHTML = cleaners.map((c) => {
-    const assignedIds = new Set(c.properties.map((p) => p.id));
-    cleanerCalendarMonth[c.id] = cleanerCalendarMonth[c.id] || new Date();
+  grid.innerHTML = cleaners.map((c, i) => {
+    const color = CLEANER_COLORS[i % CLEANER_COLORS.length];
+    const initials = (c.name || '').split(' ').map(w => w[0]).join('').toUpperCase().substring(0, 2);
+    const rate = c.rate_type === 'flat' ? `R ${c.flat_rate || 0}/job` : `R ${c.hourly_rate || 0}/hr`;
+    const props = (c.properties || []).map(p => `<span class="chip">${escHtml(p.name)}</span>`).join('');
 
-    const rateDisplay = c.rate_type === 'flat'
-      ? `R ${fmtNum(c.flat_rate)}/job`
-      : `R ${fmtNum(c.hourly_rate)}/hr`;
+    // Weekly schedule
+    const days = ['M','T','W','T','F','S','S'];
+    const avail = c.availability || [];
+    const schedule = days.map((d, di) => {
+      // Map: M=1, T=2, W=3, T=4, F=5, S=6, S=0
+      const dow = di === 6 ? 0 : di + 1;
+      const hasSlot = avail.some(a => a.day_of_week === dow);
+      return `<div class="day ${hasSlot ? 'on' : 'off'}">${d}</div>`;
+    }).join('');
 
     return `
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-        <div>
-          <h2 style="margin-bottom:0.3rem;">${escHtml(c.name)}</h2>
-          <span style="color:#666;font-size:0.85rem;">${escHtml(c.phone)} ${c.email ? '| ' + escHtml(c.email) : ''}</span>
-          <span style="margin-left:0.8rem;font-weight:600;color:#2563eb;">${rateDisplay}</span>
+    <div class="cleaner-card">
+      <div class="cleaner-card-header">
+        <div class="cleaner-info">
+          <div class="cleaner-avatar" style="background:${color};">${initials}</div>
+          <div><div class="cleaner-name">${escHtml(c.name)}</div><div class="cleaner-phone">${escHtml(c.phone || '')}</div></div>
         </div>
-        <div class="actions" style="margin-top:0;">
-          <button class="btn btn-secondary btn-sm" onclick='openEditModal(${JSON.stringify(c).replace(/'/g, "&#39;")})'>Edit</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteCleaner(${c.id})">Delete</button>
-        </div>
+        <div class="cleaner-rate">${rate}</div>
       </div>
-
-      ${c.notes ? `<div style="margin-bottom:0.8rem;font-size:0.85rem;color:#555;"><em>${escHtml(c.notes)}</em></div>` : ''}
-
-      <div style="margin-bottom:1rem;">
-        <strong>Assigned Properties:</strong>
-        <div class="tag-list" style="margin-top:0.3rem;">
-          ${c.properties.map((p) => `
-            <span class="tag">${escHtml(p.name)}
-              <span class="remove" onclick="removeProperty(${c.id}, ${p.id})">&times;</span>
-            </span>`).join('')}
-          <select onchange="assignProperty(${c.id}, this.value); this.value='';" style="width:auto;font-size:0.8rem;">
-            <option value="">+ Assign...</option>
-            ${allProperties.filter((p) => !assignedIds.has(p.id)).map((p) =>
-              `<option value="${p.id}">${escHtml(p.name)}</option>`
-            ).join('')}
-          </select>
-        </div>
+      <div class="cleaner-card-body">
+        <div class="detail-label">Assigned Properties</div>
+        <div class="chip-group">${props || '<span style="color:var(--gray-400);font-size:11px;">None</span>'}</div>
+        <div class="schedule-mini">${schedule}</div>
       </div>
-
-      <div style="margin-bottom:1rem;">
-        <strong>Weekly Schedule:</strong>
-        <div style="margin-top:0.3rem;font-size:0.85rem;">
-          ${c.availability.length === 0
-            ? '<span style="color:#999">No schedule set</span>'
-            : c.availability.map((a) =>
-                `<span class="tag">${DAY_NAMES[a.day_of_week]}: ${a.start_time}\u2013${a.end_time}</span>`
-              ).join(' ')}
-        </div>
-        <div class="actions" style="margin-top:0.5rem;">
-          <button class="btn btn-secondary btn-sm" onclick="openAvailabilityModal(${c.id}, '${escHtml(c.name)}', ${JSON.stringify(c.availability).replace(/"/g, '&quot;')})">Edit Schedule</button>
-          <button class="btn btn-secondary btn-sm" onclick="openOverrideModal(${c.id})">Add Date Override</button>
-        </div>
-        ${c.overrides.length > 0 ? `
-          <div style="margin-top:0.5rem;font-size:0.85rem;">
-            <strong>Overrides:</strong>
-            ${c.overrides.map((o) => `
-              <span class="tag" style="background:${o.available ? '#00800020' : '#ff000015'}">
-                ${o.date}: ${o.available ? 'Available' : 'Unavailable'}
-                <span class="remove" onclick="deleteOverride(${c.id}, ${o.id})">&times;</span>
-              </span>`).join(' ')}
-          </div>` : ''}
-      </div>
-
-      <div>
-        <strong>Calendar:</strong>
-        <div class="month-nav" style="margin-top:0.5rem;display:flex;align-items:center;gap:0.5rem;">
-          <button class="btn btn-secondary btn-sm" onclick="changeCleanerMonth(${c.id}, -1)">&larr;</button>
-          <h3 id="cleaner-month-${c.id}" style="min-width:150px;text-align:center;font-size:0.95rem;"></h3>
-          <button class="btn btn-secondary btn-sm" onclick="changeCleanerMonth(${c.id}, 1)">&rarr;</button>
-        </div>
-        <div class="calendar-grid" id="cleaner-cal-${c.id}"></div>
+      <div class="cleaner-card-footer">
+        <button class="card-btn" onclick="openEditModal(${c.id})">Edit</button>
+        <button class="card-btn" onclick="openAvailModal(${c.id})">Schedule</button>
+        <button class="card-btn danger" onclick="deleteCleaner(${c.id})">Remove</button>
       </div>
     </div>`;
   }).join('');
-
-  // Render calendars and fetch jobs for each
-  for (const c of cleaners) {
-    renderCleanerCalendar(c);
-  }
 }
 
-/* ───── Per-cleaner calendar ───── */
+/* ───── Combined Availability Grid (2-week view) ───── */
 
-async function renderCleanerCalendar(cleaner) {
-  const grid = document.getElementById(`cleaner-cal-${cleaner.id}`);
-  const monthLabel = document.getElementById(`cleaner-month-${cleaner.id}`);
-  if (!grid) return;
-
-  const month = cleanerCalendarMonth[cleaner.id] || new Date();
-  const year = month.getFullYear();
-  const m = month.getMonth();
-
-  monthLabel.textContent = new Date(year, m).toLocaleString('default', { month: 'long', year: 'numeric' });
-
-  const firstDay = new Date(year, m, 1).getDay();
-  const daysInMonth = new Date(year, m + 1, 0).getDate();
-
-  // Build availability map
-  const weeklyAvail = {};
-  for (const a of cleaner.availability) {
-    weeklyAvail[a.day_of_week] = a;
-  }
-
-  const overrideMap = {};
-  for (const o of cleaner.overrides) {
-    overrideMap[o.date] = o.available;
-  }
-
-  // Fetch jobs for this cleaner
-  let jobDates = {};
-  try {
-    const jobs = await api(`/api/cleaners/${cleaner.id}/jobs`);
-    for (const j of jobs) {
-      jobDates[j.cleaning_date] = j;
-    }
-  } catch (e) {
-    // ignore
-  }
-
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  let html = days.map((d) => `<div class="day-header">${d}</div>`).join('');
-
-  for (let i = 0; i < firstDay; i++) {
-    html += '<div class="day"></div>';
-  }
-
-  for (let day = 1; day <= daysInMonth; day++) {
-    const dateStr = `${year}-${String(m + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const dow = new Date(year, m, day).getDay();
-
-    let classes = 'day';
-    let label = '';
-
-    // Check if there is a job on this date
-    if (jobDates[dateStr]) {
-      classes += ' has-job';
-      label = jobDates[dateStr].property_name || 'Job';
-    } else if (overrideMap[dateStr] !== undefined) {
-      classes += overrideMap[dateStr] ? ' available' : ' unavailable';
-      label = overrideMap[dateStr] ? 'Override: Avail' : 'Override: Off';
-    } else if (weeklyAvail[dow]) {
-      classes += ' available';
-      label = `${weeklyAvail[dow].start_time}\u2013${weeklyAvail[dow].end_time}`;
-    } else {
-      classes += ' unavailable';
-    }
-
-    html += `<div class="${classes}" style="cursor:pointer;" onclick="clickCalendarDay(${cleaner.id}, '${dateStr}')">
-      <div class="date-num">${day}</div>
-      <div class="booking-label">${escHtml(label)}</div>
-    </div>`;
-  }
-
-  grid.innerHTML = html;
+function changeCombinedWeek(delta) {
+  weekOffset += delta;
+  renderAvailGrid();
 }
 
-/* ───── Click calendar day to toggle override ───── */
+function goToToday() {
+  weekOffset = 0;
+  renderAvailGrid();
+}
 
-async function clickCalendarDay(cleanerId, date) {
-  const cleaner = allCleaners.find((c) => c.id === cleanerId);
-  if (!cleaner) return;
+function renderAvailGrid() {
+  const head = document.getElementById('availGridHead');
+  const body = document.getElementById('availGridBody');
+  const label = document.getElementById('weekLabel');
+  if (!head || !body) return;
 
-  const dow = new Date(date + 'T12:00:00').getDay();
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const todayStr = today.toISOString().split('T')[0];
 
-  // Determine current state
-  const override = cleaner.overrides.find((o) => o.date === date);
-  const weeklyAvail = {};
-  for (const a of cleaner.availability) {
-    weeklyAvail[a.day_of_week] = true;
+  // Start from Monday of current week + offset
+  const startDate = new Date(today);
+  const dayOfWeek = startDate.getDay();
+  const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  startDate.setDate(startDate.getDate() + mondayOffset + (weekOffset * 14));
+
+  const days = [];
+  for (let i = 0; i < 14; i++) {
+    const d = new Date(startDate);
+    d.setDate(d.getDate() + i);
+    days.push(d);
   }
 
-  let currentlyAvailable;
-  if (override) {
-    currentlyAvailable = !!override.available;
-  } else {
-    currentlyAvailable = !!weeklyAvail[dow];
+  const endDate = days[days.length - 1];
+  if (label) {
+    label.textContent = `${startDate.toLocaleDateString('en-ZA', {month:'short', day:'numeric'})} \u2013 ${endDate.toLocaleDateString('en-ZA', {month:'short', day:'numeric', year:'numeric'})}`;
   }
 
-  // Toggle: if available, mark unavailable; if unavailable, mark available
-  await api(`/api/cleaners/${cleanerId}/overrides`, {
-    method: 'POST',
-    body: JSON.stringify({ date, available: !currentlyAvailable }),
+  // Header
+  const dayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun','Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  head.innerHTML = '<tr><th></th>' + days.map((d, i) => {
+    const ds = d.toISOString().split('T')[0];
+    const isToday = ds === todayStr;
+    return `<th${isToday ? ' class="today"' : ''}>${dayNames[i]} ${d.getDate()}</th>`;
+  }).join('') + '</tr>';
+
+  // Get all jobs for this period
+  const jobs = allJobs || [];
+
+  // Body rows per cleaner
+  let html = '';
+  (cleaners || []).forEach((c, ci) => {
+    const color = CLEANER_COLORS[ci % CLEANER_COLORS.length];
+    html += '<tr>';
+    html += `<td><div class="cleaner-row-label"><div class="cleaner-dot" style="background:${color}"></div><span class="cleaner-row-name">${escHtml(c.name)}</span></div></td>`;
+
+    days.forEach(d => {
+      const ds = d.toISOString().split('T')[0];
+      const dow = d.getDay();
+
+      // Check for job
+      const job = jobs.find(j => String(j.cleaner_id) === String(c.id) && j.cleaning_date === ds);
+      if (job) {
+        const propName = (properties || []).find(p => String(p.id) === String(job.property_id))?.name || 'Job';
+        const shortName = propName.length > 8 ? propName.substring(0, 8) : propName;
+        html += `<td><div class="avail-cell job" style="background:${color};">${escHtml(shortName)}<div class="job-tooltip">${job.start_time || ''} \u2014 ${escHtml(propName)}</div></div></td>`;
+        return;
+      }
+
+      // Check availability
+      const override = (c.overrides || []).find(o => o.date === ds);
+      if (override) {
+        html += `<td><div class="avail-cell ${override.available ? 'available' : 'unavailable'}">${override.available ? '\u2713' : '\u2014'}</div></td>`;
+        return;
+      }
+
+      const hasSlot = (c.availability || []).some(a => a.day_of_week === dow);
+      html += `<td><div class="avail-cell ${hasSlot ? 'available' : 'unavailable'}">${hasSlot ? '\u2713' : '\u2014'}</div></td>`;
+    });
+
+    html += '</tr>';
   });
 
-  loadData();
+  // Coverage summary row
+  html += '<tr class="summary-row"><td><div class="cleaner-row-label"><span class="cleaner-row-name" style="color:var(--gray-500);">Coverage</span></div></td>';
+  days.forEach(d => {
+    const ds = d.toISOString().split('T')[0];
+    const dow = d.getDay();
+    let available = 0;
+    (cleaners || []).forEach(c => {
+      const override = (c.overrides || []).find(o => o.date === ds);
+      if (override) { if (override.available) available++; return; }
+      if ((c.availability || []).some(a => a.day_of_week === dow)) available++;
+    });
+    const cls = available === 0 ? 'none' : available === 1 ? 'partial' : 'good';
+    html += `<td><div class="coverage-indicator ${cls}">${available}</div></td>`;
+  });
+  html += '</tr>';
+
+  body.innerHTML = html;
+
+  // Coverage alert
+  renderCoverageAlert(days);
 }
 
-/* ───── Combined calendar ───── */
+/* ───── Coverage Alert ───── */
 
-function changeCombinedMonth(delta) {
-  combinedMonth.setMonth(combinedMonth.getMonth() + delta);
-  renderCombinedCalendar();
+function renderCoverageAlert(days) {
+  const alertEl = document.getElementById('coverageAlert');
+  if (!alertEl) return;
+
+  const gapDays = [];
+  days.forEach(d => {
+    const ds = d.toISOString().split('T')[0];
+    const dow = d.getDay();
+    let available = 0;
+    (cleaners || []).forEach(c => {
+      const override = (c.overrides || []).find(o => o.date === ds);
+      if (override) { if (override.available) available++; return; }
+      if ((c.availability || []).some(a => a.day_of_week === dow)) available++;
+    });
+    if (available === 0) {
+      gapDays.push(d.toLocaleDateString('en-ZA', {weekday:'short', month:'short', day:'numeric'}));
+    }
+  });
+
+  if (gapDays.length > 0) {
+    alertEl.innerHTML = `<div class="alert-banner danger">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <div><strong>No cleaner available on ${gapDays.join(', ')}.</strong> Consider finding backup coverage.</div>
+    </div>`;
+  } else {
+    alertEl.innerHTML = '';
+  }
 }
 
-async function renderCombinedCalendar() {
-  const label = document.getElementById('combinedMonthLabel');
-  const head = document.getElementById('combinedCalendarHead');
-  const body = document.getElementById('combinedCalendarBody');
+/* ───── Upcoming Jobs ───── */
 
-  const year = combinedMonth.getFullYear();
-  const m = combinedMonth.getMonth();
-  label.textContent = new Date(year, m).toLocaleString('default', { month: 'long', year: 'numeric' });
+function renderUpcomingJobs() {
+  const tbody = document.getElementById('upcomingJobsBody');
+  if (!tbody) return;
 
-  const daysInMonth = new Date(year, m + 1, 0).getDate();
+  const today = new Date().toISOString().split('T')[0];
+  const in7days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-  // Header row: Cleaner | 1 | 2 | 3 | ...
-  let headHtml = '<tr><th style="position:sticky;left:0;background:#fff;z-index:2;">Cleaner</th>';
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dow = new Date(year, m, d).getDay();
-    const dayLabel = ['S', 'M', 'T', 'W', 'T', 'F', 'S'][dow];
-    headHtml += `<th style="min-width:32px;text-align:center;font-size:0.75rem;">${d}<br>${dayLabel}</th>`;
-  }
-  headHtml += '</tr>';
-  head.innerHTML = headHtml;
+  const upcoming = (allJobs || []).filter(j => j.cleaning_date >= today && j.cleaning_date <= in7days)
+    .sort((a, b) => a.cleaning_date.localeCompare(b.cleaning_date));
 
-  // Fetch all cleaner jobs for the month (filtered by property)
-  const filtered = getFilteredCleaners();
-  const jobsByCleanerDate = {};
-  for (const c of filtered) {
-    jobsByCleanerDate[c.id] = {};
-    try {
-      const jobs = await api(`/api/cleaners/${c.id}/jobs`);
-      for (const j of jobs) {
-        jobsByCleanerDate[c.id][j.cleaning_date] = j;
-      }
-    } catch (e) {
-      // ignore
-    }
+  if (upcoming.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--gray-400);padding:1rem;">No upcoming jobs.</td></tr>';
+    return;
   }
 
-  let bodyHtml = '';
-  for (const c of filtered) {
-    const weeklyAvail = {};
-    for (const a of c.availability) {
-      weeklyAvail[a.day_of_week] = true;
-    }
-    const overrideMap = {};
-    for (const o of c.overrides) {
-      overrideMap[o.date] = o.available;
-    }
+  tbody.innerHTML = upcoming.map(j => {
+    const d = new Date(j.cleaning_date + 'T12:00:00');
+    const dateStr = d.toLocaleDateString('en-ZA', {weekday:'short', month:'short', day:'numeric'});
+    const prop = (properties || []).find(p => String(p.id) === String(j.property_id));
+    const cleaner = (cleaners || []).find(c => String(c.id) === String(j.cleaner_id));
+    const ci = cleaners ? cleaners.indexOf(cleaner) : -1;
+    const color = ci >= 0 ? CLEANER_COLORS[ci % CLEANER_COLORS.length] : 'var(--gray-400)';
+    const isUnassigned = !cleaner;
 
-    bodyHtml += `<tr><td style="position:sticky;left:0;background:#fff;z-index:1;white-space:nowrap;font-weight:600;font-size:0.85rem;">${escHtml(c.name)}</td>`;
-
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dateStr = `${year}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-      const dow = new Date(year, m, d).getDay();
-
-      let bg = '#ff000020'; // unavailable = red
-      let title = 'Unavailable';
-
-      if (jobsByCleanerDate[c.id] && jobsByCleanerDate[c.id][dateStr]) {
-        bg = '#3b82f620'; // job = blue
-        title = 'Job: ' + (jobsByCleanerDate[c.id][dateStr].property_name || '');
-      } else if (overrideMap[dateStr] !== undefined) {
-        bg = overrideMap[dateStr] ? '#00800020' : '#ff000020';
-        title = overrideMap[dateStr] ? 'Available (override)' : 'Unavailable (override)';
-      } else if (weeklyAvail[dow]) {
-        bg = '#00800020'; // available = green
-        title = 'Available';
-      }
-
-      bodyHtml += `<td style="background:${bg};text-align:center;cursor:pointer;padding:4px;" title="${escHtml(title)}" onclick="clickCalendarDay(${c.id}, '${dateStr}')"></td>`;
-    }
-    bodyHtml += '</tr>';
-  }
-
-  body.innerHTML = bodyHtml;
-}
-
-/* ───── Cleaner month nav ───── */
-
-function changeCleanerMonth(cleanerId, delta) {
-  const m = cleanerCalendarMonth[cleanerId] || new Date();
-  m.setMonth(m.getMonth() + delta);
-  cleanerCalendarMonth[cleanerId] = m;
-  loadData();
+    return `<tr${isUnassigned ? ' style="background:var(--danger-bg);"' : ''}>
+      <td style="font-weight:600;${isUnassigned ? 'color:var(--danger);' : ''}">${dateStr}</td>
+      <td>${j.start_time || '-'}</td>
+      <td>${prop ? escHtml(prop.name) : '-'}</td>
+      <td>${j.type || 'Checkout Clean'}</td>
+      <td>${cleaner
+        ? `<span class="cleaner-tag"><span class="dot" style="background:${color}"></span> ${escHtml(cleaner.name)}</span>`
+        : `<span class="cleaner-tag" style="background:var(--danger-bg);color:var(--danger);"><span class="dot" style="background:var(--danger)"></span> None</span>`
+      }</td>
+      <td><span class="status-chip ${cleaner ? 'assigned' : 'unassigned'}">${cleaner ? 'Assigned' : 'Unassigned'}</span></td>
+    </tr>`;
+  }).join('');
 }
 
 /* ───── Property assignment ───── */
@@ -468,6 +459,12 @@ async function deleteCleaner(id) {
 }
 
 /* ───── Availability modal ───── */
+
+function openAvailModal(cleanerId) {
+  const cleaner = allCleaners.find(c => c.id === cleanerId);
+  if (!cleaner) return;
+  openAvailabilityModal(cleanerId, cleaner.name, cleaner.availability);
+}
 
 function openAvailabilityModal(cleanerId, name, currentAvail) {
   document.getElementById('modalCleanerId').value = cleanerId;
@@ -565,7 +562,7 @@ async function deleteOverride(cleanerId, overrideId) {
 async function loadPaySummary(month) {
   if (!month) return;
   const container = document.getElementById('paySummaryContainer');
-  container.innerHTML = '<p style="color:#999;">Loading...</p>';
+  container.innerHTML = '<p style="color:var(--gray-400);">Loading...</p>';
 
   try {
     const propParam = typeof getPropertyIdsParam === 'function' ? getPropertyIdsParam() : 'all';
@@ -580,7 +577,6 @@ async function loadPaySummary(month) {
     payData = summaryData;
     payPayments = payments;
     renderPaySummary(payData);
-    loadPaymentHistory();
   } catch (err) {
     container.innerHTML = `<div class="alert alert-error">Failed to load pay summary: ${err.message}</div>`;
   }
@@ -604,7 +600,7 @@ function renderPaySummary(data) {
   const container = document.getElementById('paySummaryContainer');
 
   if (!data.cleaners || data.cleaners.length === 0) {
-    container.innerHTML = '<p style="color:#999;">No completed jobs found for this month.</p>';
+    container.innerHTML = '<p style="color:var(--gray-400);">No completed jobs found for this month.</p>';
     return;
   }
 
@@ -643,8 +639,8 @@ function renderPaySummary(data) {
         <td>${escHtml(job.property_name)}</td>
         <td>${job.cleaning_date}</td>
         <td>${job.rate_type === 'flat' ? 'Flat' : fmtNum(job.hours) + ' hrs'}</td>
-        <td>R ${fmtNum(job.rate)}${job.rate_type === 'flat' ? '/job' : '/hr'}</td>
-        <td style="text-align:right;">R ${fmtNum(job.amount)}</td>`;
+        <td>${fmtMoney(job.rate)}${job.rate_type === 'flat' ? '/job' : '/hr'}</td>
+        <td style="text-align:right;">${fmtMoney(job.amount)}</td>`;
 
       if (i === 0) {
         html += `<td rowspan="${cleaner.jobs.length}" style="vertical-align:top;">`;
@@ -672,7 +668,7 @@ function renderPaySummary(data) {
 
   html += `<tr style="background:#e0e7ff;font-weight:700;font-size:1.1rem;">
     <td colspan="6" style="text-align:right;">Grand Total</td>
-    <td style="text-align:right;">R ${fmtNum(data.grand_total)}</td>
+    <td style="text-align:right;">${fmtMoney(data.grand_total)}</td>
   </tr>`;
 
   html += '</tbody></table>';
@@ -709,7 +705,6 @@ async function confirmPayment(cleanerId, amount) {
   if (!month) return;
 
   try {
-    // Create the payment record
     const payment = await api('/api/cleaners/payments', {
       method: 'POST',
       body: JSON.stringify({
@@ -721,64 +716,11 @@ async function confirmPayment(cleanerId, amount) {
       }),
     });
 
-    // Mark it as paid
     await api(`/api/cleaners/payments/${payment.id}/mark-paid`, { method: 'PATCH' });
 
-    // Reload
     loadPaySummary(month);
   } catch (err) {
     alert('Failed to record payment: ' + err.message);
-  }
-}
-
-/* ───── Payment History ───── */
-
-async function loadPaymentHistory() {
-  const container = document.getElementById('paymentHistoryContainer');
-  if (!container) return;
-
-  try {
-    const payments = await api('/api/cleaners/payments');
-
-    if (!payments || payments.length === 0) {
-      container.innerHTML = '<p style="color:#999;">No payments recorded yet.</p>';
-      return;
-    }
-
-    let html = `
-    <table class="table" style="margin-top:1rem;">
-      <thead>
-        <tr>
-          <th>Cleaner</th>
-          <th>Month</th>
-          <th style="text-align:right;">Amount</th>
-          <th>Method</th>
-          <th>Paid Date</th>
-          <th>Status</th>
-        </tr>
-      </thead>
-      <tbody>`;
-
-    for (const p of payments) {
-      const paidDate = p.paid_at ? new Date(p.paid_at).toLocaleDateString() : '-';
-      const status = p.paid_at
-        ? '<span style="background:#00800020;color:#166534;padding:0.15rem 0.4rem;border-radius:4px;font-size:0.8rem;font-weight:600;">Paid</span>'
-        : '<span style="background:#ff000015;color:#991b1b;padding:0.15rem 0.4rem;border-radius:4px;font-size:0.8rem;font-weight:600;">Pending</span>';
-
-      html += `<tr>
-        <td>${escHtml(p.cleaner_name || '')}</td>
-        <td>${escHtml(p.month)}</td>
-        <td style="text-align:right;">R ${fmtNum(p.amount)}</td>
-        <td>${escHtml(p.payment_method || '-')}</td>
-        <td>${paidDate}</td>
-        <td>${status}</td>
-      </tr>`;
-    }
-
-    html += '</tbody></table>';
-    container.innerHTML = html;
-  } catch (err) {
-    container.innerHTML = `<div class="alert alert-error">Failed to load payment history: ${err.message}</div>`;
   }
 }
 
@@ -830,5 +772,9 @@ if (payInput) {
   payInput.value = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
 }
 
-loadData();
-loadPaymentHistory();
+// Initial load (with auth check)
+(async () => {
+  const user = await checkAuth();
+  if (!user) return;
+  loadData();
+})();

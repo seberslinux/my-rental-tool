@@ -4,341 +4,115 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Maintenance - Rental Manager</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
-  <style>
-    .filter-bar {
-      display: flex;
-      gap: 0.75rem;
-      align-items: flex-end;
-      flex-wrap: wrap;
-      margin-bottom: 1.5rem;
-    }
-    .filter-bar .form-group {
-      margin-bottom: 0;
-    }
-    .filter-bar .form-group label {
-      display: block;
-      font-size: 0.8rem;
-      font-weight: 600;
-      color: #555;
-      margin-bottom: 0.2rem;
-    }
-    .filter-bar select {
-      width: auto;
-      min-width: 130px;
-      padding: 0.5rem;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-size: 0.85rem;
-    }
-
-    .issue-cards {
-      display: grid;
-      gap: 1rem;
-    }
-    .issue-card {
-      background: #fff;
-      border-radius: 8px;
-      padding: 1.2rem;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    .issue-card-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 0.6rem;
-      gap: 0.5rem;
-      flex-wrap: wrap;
-    }
-    .issue-card-header h3 {
-      margin: 0;
-      font-size: 1.05rem;
-      color: #1a1a2e;
-    }
-    .issue-badges {
-      display: flex;
-      gap: 0.4rem;
-      flex-wrap: wrap;
-    }
-    .badge {
-      display: inline-block;
-      padding: 0.15rem 0.5rem;
-      border-radius: 10px;
-      font-size: 0.7rem;
-      font-weight: 600;
-    }
-    .badge-property {
-      background: #e8e8f0;
-      color: #1a1a2e;
-    }
-    .badge-category {
-      background: #f0f0f0;
-      color: #555;
-    }
-    .badge-status-open {
-      background: #f8d7da;
-      color: #721c24;
-    }
-    .badge-status-in_progress {
-      background: #fff3cd;
-      color: #856404;
-    }
-    .badge-status-resolved {
-      background: #d4edda;
-      color: #155724;
-    }
-    .badge-priority-urgent {
-      background: #f8d7da;
-      color: #721c24;
-    }
-    .badge-priority-high {
-      background: #ffe0cc;
-      color: #b35900;
-    }
-    .badge-priority-medium {
-      background: #d6e9f8;
-      color: #1a5276;
-    }
-    .badge-priority-low {
-      background: #e8e8e8;
-      color: #666;
-    }
-    .issue-desc {
-      color: #555;
-      font-size: 0.9rem;
-      margin-bottom: 0.6rem;
-    }
-    .issue-meta {
-      font-size: 0.8rem;
-      color: #888;
-      margin-bottom: 0.6rem;
-    }
-    .issue-meta span {
-      margin-right: 1rem;
-    }
-    .issue-actions {
-      display: flex;
-      gap: 0.4rem;
-      flex-wrap: wrap;
-    }
-    .issue-actions button {
-      padding: 0.3rem 0.7rem;
-      font-size: 0.8rem;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      cursor: pointer;
-      background: #fff;
-      color: #555;
-    }
-    .issue-actions button:hover {
-      background: #f0f0f0;
-    }
-    .issue-actions .btn-resolve {
-      background: #d4edda;
-      color: #155724;
-      border-color: #c3e6cb;
-    }
-    .issue-actions .btn-delete {
-      background: #f8d7da;
-      color: #721c24;
-      border-color: #f5c6cb;
-    }
-
-    .modal-overlay {
-      display: none;
-      position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.5);
-      z-index: 1000;
-      justify-content: center;
-      align-items: center;
-    }
-    .modal-overlay.active { display: flex; }
-    .modal {
-      background: #fff;
-      border-radius: 8px;
-      padding: 2rem;
-      max-width: 550px;
-      width: 90%;
-      max-height: 90vh;
-      overflow-y: auto;
-    }
-    .modal h2 { margin-bottom: 1.5rem; }
-    .form-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 1rem;
-    }
-    .form-group { margin-bottom: 1rem; }
-    .form-group label {
-      display: block;
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: #555;
-      margin-bottom: 0.3rem;
-    }
-    .form-group input,
-    .form-group select,
-    .form-group textarea {
-      width: 100%;
-      padding: 0.5rem;
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      font-size: 0.9rem;
-      box-sizing: border-box;
-    }
-    .actions {
-      display: flex;
-      gap: 0.5rem;
-      justify-content: flex-end;
-      margin-top: 1rem;
-    }
-
-    .summary-bar {
-      display: flex;
-      gap: 1rem;
-      margin-bottom: 1.5rem;
-      flex-wrap: wrap;
-    }
-    .summary-stat {
-      background: #fff;
-      border-radius: 8px;
-      padding: 0.8rem 1.2rem;
-      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-      text-align: center;
-      min-width: 100px;
-    }
-    .summary-stat .stat-value {
-      font-size: 1.5rem;
-      font-weight: 700;
-      color: #1a1a2e;
-    }
-    .summary-stat .stat-label {
-      font-size: 0.75rem;
-      color: #666;
-      margin-top: 0.2rem;
-    }
-    .summary-stat.urgent .stat-value { color: #721c24; }
-
-    .empty-state {
-      text-align: center;
-      padding: 3rem 1rem;
-      color: #999;
-    }
-  </style>
 </head>
 <body>
-  <nav>
-    <span class="logo">Rental Manager</span>
-    <div class="nav-links">
-      <a href="/">Dashboard</a>
-      <a href="/properties.html">Properties</a>
-      <a href="/cleaners.html">Cleaners</a>
-      <a href="/analytics.html">Analytics</a>
-      <a href="/finances.html">Finances</a>
-      <a href="/maintenance.html" class="active">Maintenance</a>
-    </div>
-    <div class="property-selector"><select id="globalPropertySelect"></select></div>
-  </nav>
-
   <div class="container">
-    <h1>Maintenance &amp; Issues Log</h1>
-
-    <!-- Summary -->
-    <div class="summary-bar" id="summaryBar"></div>
-
-    <!-- Filter bar -->
-    <div class="filter-bar">
-      <div class="form-group">
-        <label>Status</label>
-        <select id="filterStatus">
-          <option value="">All</option>
-          <option value="open">Open</option>
-          <option value="in_progress">In Progress</option>
-          <option value="resolved">Resolved</option>
-        </select>
+    <!-- Status Summary Cards -->
+    <div class="status-row" id="statusRow">
+      <div class="status-card">
+        <div class="status-icon" style="background:var(--danger-bg);color:var(--danger);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </div>
+        <div class="status-info"><div class="count" id="openCount">0</div><div class="label">Open</div></div>
       </div>
-      <div class="form-group">
-        <label>Priority</label>
-        <select id="filterPriority">
-          <option value="">All</option>
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-          <option value="urgent">Urgent</option>
-        </select>
+      <div class="status-card">
+        <div class="status-icon" style="background:var(--warning-bg);color:var(--warning);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </div>
+        <div class="status-info"><div class="count" id="progressCount">0</div><div class="label">In Progress</div></div>
       </div>
-      <button class="btn btn-primary" onclick="openAddModal()">Add Issue</button>
+      <div class="status-card">
+        <div class="status-icon" style="background:var(--primary-50);color:var(--primary);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        </div>
+        <div class="status-info"><div class="count" id="scheduledCount">0</div><div class="label">Scheduled</div></div>
+      </div>
+      <div class="status-card">
+        <div class="status-icon" style="background:var(--success-bg);color:var(--success);">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        </div>
+        <div class="status-info"><div class="count" id="completedCount">0</div><div class="label">Completed (90d)</div></div>
+      </div>
     </div>
 
-    <!-- Issues list -->
-    <div class="issue-cards" id="issuesList">
-      <div class="loading">Loading issues...</div>
+    <!-- Filters -->
+    <div class="filters">
+      <div class="filter-group" id="statusFilters">
+        <button class="filter-btn active" onclick="filterTickets('all', this)">All</button>
+        <button class="filter-btn" onclick="filterTickets('open', this)">Open</button>
+        <button class="filter-btn" onclick="filterTickets('in_progress', this)">In Progress</button>
+        <button class="filter-btn" onclick="filterTickets('scheduled', this)">Scheduled</button>
+        <button class="filter-btn" onclick="filterTickets('resolved', this)">Completed</button>
+      </div>
+      <div class="search-wrap">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input class="search-input" type="text" placeholder="Search tickets..." id="ticketSearch" oninput="filterTicketsDebounced()">
+      </div>
+      <select id="ticketPropertyFilter" onchange="renderTickets()" style="padding:8px 12px;border-radius:var(--radius-sm);border:1px solid var(--gray-200);font-size:13px;font-family:inherit;background:white;">
+        <option value="">All Properties</option>
+      </select>
+      <button class="btn btn-primary" onclick="toggleNewTicketForm()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        New Ticket
+      </button>
     </div>
-  </div>
 
-  <!-- Add/Edit Issue Modal -->
-  <div class="modal-overlay" id="issueModal">
-    <div class="modal">
-      <h2 id="issueModalTitle">Add Issue</h2>
-      <form id="issueForm" onsubmit="saveIssue(event)">
-        <input type="hidden" id="issueEditId">
-        <div class="form-group">
-          <label>Property</label>
-          <select id="issueProperty" required></select>
-        </div>
-        <div class="form-group">
-          <label>Title</label>
-          <input type="text" id="issueTitle" required placeholder="Brief description of the issue">
-        </div>
-        <div class="form-group">
-          <label>Description</label>
-          <textarea id="issueDescription" rows="3" placeholder="Detailed description (optional)"></textarea>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Category</label>
-            <select id="issueCategory">
-              <option value="General">General</option>
-              <option value="Plumbing">Plumbing</option>
-              <option value="Electrical">Electrical</option>
-              <option value="Appliance">Appliance</option>
-              <option value="Structural">Structural</option>
-              <option value="Cleaning">Cleaning</option>
-              <option value="Other">Other</option>
-            </select>
+    <!-- Ticket Cards -->
+    <div class="tickets-grid" id="ticketsGrid">
+      <div class="loading">Loading tickets...</div>
+    </div>
+
+    <!-- New Ticket Form (hidden by default) -->
+    <div class="new-ticket-form" id="newTicketForm" style="display:none;">
+      <h3>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Create Maintenance Ticket
+      </h3>
+      <form onsubmit="createTicket(event)">
+        <div class="form-grid" style="grid-template-columns:1fr 1fr;">
+          <div class="form-field">
+            <label>Title</label>
+            <input type="text" id="ticketTitle" required placeholder="Brief description of the issue">
           </div>
-          <div class="form-group">
+          <div class="form-field">
+            <label>Property</label>
+            <select id="ticketProperty" required></select>
+          </div>
+          <div class="form-field">
             <label>Priority</label>
-            <select id="issuePriority">
+            <select id="ticketPriority">
               <option value="low">Low</option>
               <option value="medium" selected>Medium</option>
               <option value="high">High</option>
               <option value="urgent">Urgent</option>
             </select>
           </div>
-        </div>
-        <div class="form-row">
-          <div class="form-group">
-            <label>Cost (R)</label>
-            <input type="number" id="issueCost" step="0.01" min="0" value="0">
+          <div class="form-field">
+            <label>Category</label>
+            <select id="ticketCategory">
+              <option>General</option><option>Plumbing</option><option>Electrical</option>
+              <option>Appliance</option><option>Furniture</option><option>Cleaning</option>
+              <option>Safety</option><option>Pest Control</option><option>Other</option>
+            </select>
           </div>
-          <div class="form-group">
-            <label>Assigned To</label>
-            <input type="text" id="issueAssigned" placeholder="Name (optional)">
+          <div class="form-field full">
+            <label>Description</label>
+            <textarea id="ticketDescription" placeholder="Describe the issue in detail..."></textarea>
+          </div>
+          <div class="form-field">
+            <label>Estimated Cost (ZAR)</label>
+            <input type="number" id="ticketCost" placeholder="0.00">
+          </div>
+          <div class="form-field">
+            <label>Assign To</label>
+            <input type="text" id="ticketAssignee" placeholder="Contractor / vendor name">
           </div>
         </div>
-        <div class="form-group" id="issueStatusGroup" style="display:none;">
-          <label>Status</label>
-          <select id="issueStatus">
-            <option value="open">Open</option>
-            <option value="in_progress">In Progress</option>
-            <option value="resolved">Resolved</option>
-          </select>
-        </div>
-        <div class="actions">
-          <button type="submit" class="btn btn-primary">Save</button>
-          <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary" onclick="toggleNewTicketForm()">Cancel</button>
+          <button type="submit" class="btn btn-primary">Create Ticket</button>
         </div>
       </form>
     </div>

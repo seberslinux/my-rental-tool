@@ -191,7 +191,114 @@ function runMigrations() {
       assigned_to TEXT,
       FOREIGN KEY (property_id) REFERENCES properties(id)
     );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'cleaner' CHECK(role IN ('admin','property_manager','cleaner')),
+      google_id TEXT UNIQUE,
+      avatar_url TEXT DEFAULT '',
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS user_property_access (
+      user_id INTEGER NOT NULL,
+      property_id INTEGER NOT NULL,
+      PRIMARY KEY (user_id, property_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sender_id INTEGER NOT NULL,
+      recipient_id INTEGER,
+      subject TEXT DEFAULT '',
+      body TEXT NOT NULL,
+      read INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (sender_id) REFERENCES users(id),
+      FOREIGN KEY (recipient_id) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS inventory_checklists (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      property_id INTEGER NOT NULL,
+      item_name TEXT NOT NULL,
+      category TEXT DEFAULT 'General',
+      expected_quantity INTEGER DEFAULT 1,
+      sort_order INTEGER DEFAULT 0,
+      FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS inventory_checks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      checklist_item_id INTEGER NOT NULL,
+      cleaning_job_id INTEGER NOT NULL,
+      actual_quantity INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'ok' CHECK(status IN ('ok','low','missing','damaged')),
+      notes TEXT DEFAULT '',
+      checked_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (checklist_item_id) REFERENCES inventory_checklists(id) ON DELETE CASCADE,
+      FOREIGN KEY (cleaning_job_id) REFERENCES cleaning_jobs(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS shopping_list (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      property_id INTEGER,
+      item_name TEXT NOT NULL,
+      quantity INTEGER DEFAULT 1,
+      unit TEXT DEFAULT '',
+      added_by INTEGER NOT NULL,
+      status TEXT DEFAULT 'needed' CHECK(status IN ('needed','purchased')),
+      notes TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now')),
+      purchased_at TEXT,
+      FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE,
+      FOREIGN KEY (added_by) REFERENCES users(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS cleaner_notification_prefs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cleaner_id INTEGER NOT NULL UNIQUE,
+      whatsapp_enabled INTEGER DEFAULT 1,
+      notify_7_days INTEGER DEFAULT 1,
+      notify_1_day INTEGER DEFAULT 1,
+      notify_2_hours INTEGER DEFAULT 1,
+      FOREIGN KEY (cleaner_id) REFERENCES cleaners(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS ical_tokens (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      cleaner_id INTEGER NOT NULL UNIQUE,
+      token TEXT NOT NULL UNIQUE,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (cleaner_id) REFERENCES cleaners(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS app_settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS exchange_rates (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      base_currency TEXT NOT NULL DEFAULT 'EUR',
+      target_currency TEXT NOT NULL,
+      rate REAL NOT NULL,
+      rate_date TEXT NOT NULL,
+      fetched_at TEXT DEFAULT (datetime('now')),
+      UNIQUE(base_currency, target_currency, rate_date)
+    );
   `);
+
+  // Seed default settings
+  db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('display_currency', 'ZAR')").run();
 
   // Add columns to existing bookings table if missing
   const alterColumns = [
@@ -199,6 +306,12 @@ function runMigrations() {
     ['lead_time_days', 'INTEGER DEFAULT 0'],
     ['length_of_stay', 'INTEGER DEFAULT 1'],
     ['price_per_night', 'REAL DEFAULT 0'],
+    ['special_requirements', "TEXT DEFAULT ''"],
+    ['commission', 'REAL DEFAULT 0'],
+    ['language', "TEXT DEFAULT ''"],
+    ['children', 'INTEGER DEFAULT 0'],
+    ['guest_country', "TEXT DEFAULT ''"],
+    ['currency', "TEXT DEFAULT 'ZAR'"],
   ];
   for (const [col, type] of alterColumns) {
     try {
@@ -216,9 +329,13 @@ function runMigrations() {
     ['booking_id_ext', "TEXT DEFAULT ''"],
     ['vrbo_url', "TEXT DEFAULT ''"],
     ['vrbo_id', "TEXT DEFAULT ''"],
-    ['commission_airbnb', 'REAL DEFAULT 3'],
+    ['commission_airbnb', 'REAL DEFAULT 18'],
     ['commission_booking', 'REAL DEFAULT 15'],
     ['commission_vrbo', 'REAL DEFAULT 8'],
+    ['bank_charge_airbnb', 'REAL DEFAULT 0'],
+    ['bank_charge_booking', 'REAL DEFAULT 2.1'],
+    ['bank_charge_vrbo', 'REAL DEFAULT 0'],
+    ['vat_rate', 'REAL DEFAULT 0'],
     ['property_type', "TEXT DEFAULT 'apartment'"],
     ['bedrooms', 'INTEGER DEFAULT 1'],
     ['bathrooms', 'INTEGER DEFAULT 1'],
@@ -232,6 +349,7 @@ function runMigrations() {
     ['checkout_instructions', "TEXT DEFAULT ''"],
     ['supply_checklist', "TEXT DEFAULT ''"],
     ['emergency_contact', "TEXT DEFAULT ''"],
+    ['base_currency', "TEXT DEFAULT 'ZAR'"],
   ];
   for (const [col, type] of propertyColumns) {
     try {
@@ -256,6 +374,18 @@ function runMigrations() {
     }
   }
 
+  // Add columns to existing expenses table if missing
+  const expenseColumns = [
+    ['currency', "TEXT DEFAULT 'ZAR'"],
+  ];
+  for (const [col, type] of expenseColumns) {
+    try {
+      db.exec(`ALTER TABLE expenses ADD COLUMN ${col} ${type}`);
+    } catch (e) {
+      // Column already exists, ignore
+    }
+  }
+
   // Add columns to existing reviews table if missing
   const reviewColumns = [
     ['sentiment', "TEXT DEFAULT ''"],
@@ -274,6 +404,35 @@ function runMigrations() {
     const cats = ['Cleaning','Electricity','Water','Supplies','Gardening','Repair & Maintenance','Improvements','Platform Fees','Insurance','Mortgage/Bond','Other'];
     const ins = db.prepare('INSERT INTO expense_categories (name, is_default) VALUES (?, 1)');
     for (const c of cats) ins.run(c);
+  }
+
+  // Bootstrap admin user from env vars
+  if (process.env.ADMIN_EMAIL) {
+    const bcrypt = require('bcrypt');
+    const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get();
+    if (userCount.c === 0) {
+      const hash = process.env.ADMIN_PASSWORD
+        ? bcrypt.hashSync(process.env.ADMIN_PASSWORD, 10)
+        : null;
+      db.prepare(
+        'INSERT INTO users (email, password_hash, name, role) VALUES (?, ?, ?, ?)'
+      ).run(process.env.ADMIN_EMAIL, hash, process.env.ADMIN_NAME || 'Admin', 'admin');
+      console.log(`Admin user bootstrapped: ${process.env.ADMIN_EMAIL}`);
+    } else {
+      // Ensure env admin exists — update first admin if email changed
+      const envAdmin = db.prepare('SELECT id FROM users WHERE email = ?').get(process.env.ADMIN_EMAIL);
+      if (!envAdmin) {
+        const firstAdmin = db.prepare("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get();
+        if (firstAdmin) {
+          const hash = process.env.ADMIN_PASSWORD
+            ? bcrypt.hashSync(process.env.ADMIN_PASSWORD, 10)
+            : null;
+          db.prepare('UPDATE users SET email = ?, password_hash = ?, name = ?, updated_at = datetime(\'now\') WHERE id = ?')
+            .run(process.env.ADMIN_EMAIL, hash, process.env.ADMIN_NAME || 'Admin', firstAdmin.id);
+          console.log(`Admin user updated to: ${process.env.ADMIN_EMAIL}`);
+        }
+      }
+    }
   }
 
   console.log('Database migrations complete.');
