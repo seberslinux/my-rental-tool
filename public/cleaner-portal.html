@@ -21,10 +21,12 @@
     .job-card.pending { border-left:4px solid #f59e0b; }
     .job-card.confirmed { border-left:4px solid #2563eb; }
     .job-card.completed { border-left:4px solid #16a34a; }
+    .job-card.ready { border-left:4px solid #8b5cf6; }
     .job-status { display:inline-block; font-size:0.7rem; padding:2px 8px; border-radius:10px; font-weight:600; text-transform:uppercase; }
     .job-status.pending { background:#fef3c7; color:#92400e; }
     .job-status.confirmed { background:#dbeafe; color:#1e40af; }
     .job-status.completed { background:#dcfce7; color:#166534; }
+    .job-status.ready { background:#ede9fe; color:#6d28d9; }
     .special-req { background:#fef3c7; border-radius:6px; padding:0.4rem 0.6rem; font-size:0.8rem; margin-top:0.5rem; color:#92400e; }
     .msg-item { border:1px solid #e5e7eb; border-radius:6px; padding:0.75rem; margin-bottom:0.5rem; cursor:pointer; }
     .msg-item.unread { background:#eff6ff; border-color:#93c5fd; font-weight:600; }
@@ -49,10 +51,10 @@
     <div class="portal-tabs" id="portalTabs">
       <button data-tab="jobs" class="active">Jobs</button>
       <button data-tab="availability">Availability</button>
-      <button data-tab="messages">Messages</button>
+      <button data-tab="messages" class="staff-only-tab">Messages</button>
       <button data-tab="maintenance">Maintenance</button>
-      <button data-tab="inventory">Inventory</button>
-      <button data-tab="shopping">Shopping</button>
+      <button data-tab="checklist">Checklist</button>
+      <button data-tab="shopping" class="staff-only-tab">Shopping</button>
       <button data-tab="settings">Settings</button>
     </div>
     <div class="portal-user" id="portalUser"></div>
@@ -178,9 +180,9 @@
     </div>
   </div>
 
-  <!-- Inventory Tab -->
-  <div class="tab-panel" id="panel-inventory">
-    <h2>Inventory Checklist</h2>
+  <!-- Checklist Tab -->
+  <div class="tab-panel" id="panel-checklist">
+    <h2>Pre-Check-in Checklist</h2>
     <div class="form-row" style="align-items:flex-end;margin-bottom:1rem;">
       <div class="form-group">
         <label>Property</label>
@@ -188,12 +190,15 @@
       </div>
       <div class="form-group">
         <label>Cleaning Job</label>
-        <select id="invJob" onchange="loadExistingChecks()"></select>
+        <select id="invJob" onchange="loadJobChecklist()"></select>
       </div>
     </div>
     <div class="card">
       <div id="inventoryList"></div>
-      <button class="btn btn-primary" onclick="submitInventoryCheck()" style="margin-top:1rem;" id="btnSubmitInv" disabled>Save Checklist</button>
+      <div style="display:flex;gap:0.5rem;margin-top:1rem;">
+        <button class="btn btn-primary" onclick="submitInventoryCheck()" id="btnSubmitInv" disabled>Save Checklist</button>
+        <button class="btn btn-sm" onclick="markReadyForCheckin()" id="btnReady" disabled style="background:#16a34a;color:#fff;border:none;padding:0.5rem 1rem;border-radius:6px;font-weight:600;cursor:pointer;">Ready for Check-in</button>
+      </div>
     </div>
   </div>
 

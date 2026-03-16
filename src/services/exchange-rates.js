@@ -1,10 +1,10 @@
 /**
  * Exchange rate service using Frankfurter API (ECB data, free, no key).
- * Caches rates in SQLite to minimize API calls.
+ * Caches rates in PostgreSQL to minimize API calls.
  */
 
 const axios = require('axios');
-const { getDb } = require('../db/database');
+const { getOne, run } = require('../db/database');
 
 const API_BASE = 'https://api.frankfurter.app';
 
@@ -31,12 +31,11 @@ const FALLBACK_RATES = {
 async function getRate(fromCurrency, toCurrency, date) {
   if (fromCurrency === toCurrency) return 1;
 
-  const db = getDb();
-
   // 1. Check cache
-  const cached = db.prepare(
-    'SELECT rate FROM exchange_rates WHERE base_currency = ? AND target_currency = ? AND rate_date = ?'
-  ).get(fromCurrency, toCurrency, date);
+  const cached = await getOne(
+    'SELECT rate FROM exchange_rates WHERE base_currency = $1 AND target_currency = $2 AND rate_date = $3',
+    [fromCurrency, toCurrency, date]
+  );
   if (cached) return cached.rate;
 
   // 2. Try API
@@ -47,9 +46,10 @@ async function getRate(fromCurrency, toCurrency, date) {
     });
     const rate = res.data?.rates?.[toCurrency];
     if (rate) {
-      db.prepare(
-        'INSERT OR IGNORE INTO exchange_rates (base_currency, target_currency, rate, rate_date) VALUES (?, ?, ?, ?)'
-      ).run(fromCurrency, toCurrency, rate, date);
+      await run(
+        'INSERT INTO exchange_rates (base_currency, target_currency, rate, rate_date) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING',
+        [fromCurrency, toCurrency, rate, date]
+      );
       return rate;
     }
   } catch (err) {
@@ -57,9 +57,10 @@ async function getRate(fromCurrency, toCurrency, date) {
   }
 
   // 3. Fallback: most recent cached rate for this pair
-  const recent = db.prepare(
-    'SELECT rate FROM exchange_rates WHERE base_currency = ? AND target_currency = ? ORDER BY rate_date DESC LIMIT 1'
-  ).get(fromCurrency, toCurrency);
+  const recent = await getOne(
+    'SELECT rate FROM exchange_rates WHERE base_currency = $1 AND target_currency = $2 ORDER BY rate_date DESC LIMIT 1',
+    [fromCurrency, toCurrency]
+  );
   if (recent) {
     console.warn(`Using most recent cached rate for ${fromCurrency}->${toCurrency}: ${recent.rate}`);
     return recent.rate;
@@ -179,9 +180,8 @@ async function bulkConvertExpenses(expenses, toCurrency) {
 /**
  * Read display currency from app_settings.
  */
-function getDisplayCurrency() {
-  const db = getDb();
-  const row = db.prepare("SELECT value FROM app_settings WHERE key = 'display_currency'").get();
+async function getDisplayCurrency() {
+  const row = await getOne("SELECT value FROM app_settings WHERE key = 'display_currency'", []);
   return row?.value || 'ZAR';
 }
 

@@ -1,44 +1,41 @@
 const express = require('express');
 const router = express.Router();
-const { getDb } = require('../db/database');
+const { getAll, getOne, run, inParams } = require('../db/database');
 const { scopeProperties } = require('../middleware/auth');
 
 // Apply property scoping to all routes
 router.use(scopeProperties);
 
 // Get all properties
-router.get('/', (req, res) => {
-  const db = getDb();
+router.get('/', async (req, res) => {
   let properties;
   if (req.accessiblePropertyIds === null) {
-    properties = db.prepare('SELECT * FROM properties ORDER BY name ASC').all();
+    properties = await getAll('SELECT * FROM properties ORDER BY name ASC');
   } else {
     const ids = req.accessiblePropertyIds;
     if (ids.length === 0) return res.json([]);
-    const placeholders = ids.map(() => '?').join(',');
-    properties = db.prepare(`SELECT * FROM properties WHERE id IN (${placeholders}) ORDER BY name ASC`).all(...ids);
+    const ph = inParams(ids, 1);
+    properties = await getAll(`SELECT * FROM properties WHERE id IN (${ph}) ORDER BY name ASC`, ids);
   }
   res.json(properties);
 });
 
 // Get a single property
-router.get('/:id', (req, res) => {
-  const db = getDb();
+router.get('/:id', async (req, res) => {
   if (req.accessiblePropertyIds !== null && !req.accessiblePropertyIds.includes(parseInt(req.params.id))) {
     return res.status(403).json({ error: 'Access denied to this property' });
   }
-  const property = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
+  const property = await getOne('SELECT * FROM properties WHERE id = $1', [req.params.id]);
   if (!property) return res.status(404).json({ error: 'Property not found' });
   res.json(property);
 });
 
 // Get property performance summary
-router.get('/:id/summary', (req, res) => {
-  const db = getDb();
+router.get('/:id/summary', async (req, res) => {
   if (req.accessiblePropertyIds !== null && !req.accessiblePropertyIds.includes(parseInt(req.params.id))) {
     return res.status(403).json({ error: 'Access denied to this property' });
   }
-  const property = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
+  const property = await getOne('SELECT * FROM properties WHERE id = $1', [req.params.id]);
   if (!property) return res.status(404).json({ error: 'Property not found' });
 
   const id = req.params.id;
@@ -48,16 +45,17 @@ router.get('/:id/summary', (req, res) => {
   // --- KPIs (last 30 days) ---
 
   // Revenue: sum of total_price for confirmed bookings overlapping last 30 days
-  const revenue30d = db.prepare(`
+  const revenue30dRow = await getOne(`
     SELECT COALESCE(SUM(total_price), 0) AS val FROM bookings
-    WHERE property_id = ? AND status != 'cancelled' AND check_in <= ? AND check_out >= ?
-  `).get(id, today, thirtyDaysAgo).val;
+    WHERE property_id = $1 AND status != 'cancelled' AND check_in <= $2 AND check_out >= $3
+  `, [id, today, thirtyDaysAgo]);
+  const revenue30d = revenue30dRow.val;
 
   // Booked nights in last 30 days
-  const bookings30d = db.prepare(`
+  const bookings30d = await getAll(`
     SELECT check_in, check_out FROM bookings
-    WHERE property_id = ? AND status != 'cancelled' AND check_in <= ? AND check_out >= ?
-  `).all(id, today, thirtyDaysAgo);
+    WHERE property_id = $1 AND status != 'cancelled' AND check_in <= $2 AND check_out >= $3
+  `, [id, today, thirtyDaysAgo]);
 
   let bookedNights = 0;
   for (const b of bookings30d) {
@@ -69,27 +67,31 @@ router.get('/:id/summary', (req, res) => {
   const occupancy30d = Math.min(100, (bookedNights / 30) * 100);
 
   // Average nightly rate
-  const avgRate30d = db.prepare(`
+  const avgRate30dRow = await getOne(`
     SELECT COALESCE(AVG(price_per_night), 0) AS val FROM bookings
-    WHERE property_id = ? AND status != 'cancelled' AND check_in <= ? AND check_out >= ? AND price_per_night > 0
-  `).get(id, today, thirtyDaysAgo).val;
+    WHERE property_id = $1 AND status != 'cancelled' AND check_in <= $2 AND check_out >= $3 AND price_per_night > 0
+  `, [id, today, thirtyDaysAgo]);
+  const avgRate30d = avgRate30dRow.val;
 
   // Net profit: revenue - expenses in last 30 days
-  const expenses30d = db.prepare(`
+  const expenses30dRow = await getOne(`
     SELECT COALESCE(SUM(amount), 0) AS val FROM expenses
-    WHERE property_id = ? AND expense_date >= ? AND expense_date <= ?
-  `).get(id, thirtyDaysAgo, today).val;
+    WHERE property_id = $1 AND expense_date >= $2 AND expense_date <= $3
+  `, [id, thirtyDaysAgo, today]);
+  const expenses30d = expenses30dRow.val;
   const netProfit30d = revenue30d - expenses30d;
 
   // Cancellation rate
-  const totalBookings30d = db.prepare(`
+  const totalBookings30dRow = await getOne(`
     SELECT COUNT(*) AS val FROM bookings
-    WHERE property_id = ? AND check_in <= ? AND check_out >= ?
-  `).get(id, today, thirtyDaysAgo).val;
-  const cancelledBookings30d = db.prepare(`
+    WHERE property_id = $1 AND check_in <= $2 AND check_out >= $3
+  `, [id, today, thirtyDaysAgo]);
+  const totalBookings30d = totalBookings30dRow.val;
+  const cancelledBookings30dRow = await getOne(`
     SELECT COUNT(*) AS val FROM bookings
-    WHERE property_id = ? AND status = 'cancelled' AND check_in <= ? AND check_out >= ?
-  `).get(id, today, thirtyDaysAgo).val;
+    WHERE property_id = $1 AND status = 'cancelled' AND check_in <= $2 AND check_out >= $3
+  `, [id, today, thirtyDaysAgo]);
+  const cancelledBookings30d = cancelledBookings30dRow.val;
   const cancellationRate30d = totalBookings30d > 0 ? (cancelledBookings30d / totalBookings30d) * 100 : 0;
 
   // --- Monthly data (last 12 months) ---
@@ -107,18 +109,18 @@ router.get('/:id/summary', (req, res) => {
     const monthEnd = new Date(nextMonth - 86400000).toISOString().slice(0, 10);
     const daysInMonth = new Date(nextMonth - 86400000).getDate();
 
-    const mRev = db.prepare(`
+    const mRev = await getOne(`
       SELECT COALESCE(SUM(total_price), 0) AS revenue, COUNT(*) AS booking_count,
              COALESCE(AVG(CASE WHEN price_per_night > 0 THEN price_per_night END), 0) AS avg_rate
       FROM bookings
-      WHERE property_id = ? AND status != 'cancelled' AND check_in <= ? AND check_out >= ?
-    `).get(id, monthEnd, monthStart);
+      WHERE property_id = $1 AND status != 'cancelled' AND check_in <= $2 AND check_out >= $3
+    `, [id, monthEnd, monthStart]);
 
     // Occupancy for this month
-    const mBookings = db.prepare(`
+    const mBookings = await getAll(`
       SELECT check_in, check_out FROM bookings
-      WHERE property_id = ? AND status != 'cancelled' AND check_in <= ? AND check_out >= ?
-    `).all(id, monthEnd, monthStart);
+      WHERE property_id = $1 AND status != 'cancelled' AND check_in <= $2 AND check_out >= $3
+    `, [id, monthEnd, monthStart]);
     let mNights = 0;
     for (const b of mBookings) {
       const s = new Date(Math.max(new Date(b.check_in).getTime(), new Date(monthStart).getTime()));
@@ -136,21 +138,21 @@ router.get('/:id/summary', (req, res) => {
   }
 
   // --- Upcoming bookings ---
-  const upcomingBookings = db.prepare(`
+  const upcomingBookings = await getAll(`
     SELECT guest_name, check_in, check_out, length_of_stay AS nights, platform, total_price
     FROM bookings
-    WHERE property_id = ? AND status = 'confirmed' AND check_in >= ?
+    WHERE property_id = $1 AND status = 'confirmed' AND check_in >= $2
     ORDER BY check_in ASC
-  `).all(id, today);
+  `, [id, today]);
 
   // --- Recent reviews ---
-  const recentReviews = db.prepare(`
+  const recentReviews = await getAll(`
     SELECT guest_name, rating, comment, review_date, platform
     FROM reviews
-    WHERE property_id = ?
+    WHERE property_id = $1
     ORDER BY review_date DESC
     LIMIT 5
-  `).all(id);
+  `, [id]);
 
   res.json({
     property,
@@ -168,9 +170,8 @@ router.get('/:id/summary', (req, res) => {
 });
 
 // Update property settings
-router.put('/:id', (req, res) => {
-  const db = getDb();
-  const property = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
+router.put('/:id', async (req, res) => {
+  const property = await getOne('SELECT * FROM properties WHERE id = $1', [req.params.id]);
   if (!property) return res.status(404).json({ error: 'Property not found' });
 
   const fields = ['address','cleaning_hours_required','base_price','base_currency','airbnb_url','airbnb_id','booking_url','booking_id_ext','vrbo_url','vrbo_id','commission_airbnb','commission_booking','commission_vrbo','bank_charge_airbnb','bank_charge_booking','bank_charge_vrbo','vat_rate','property_type','bedrooms','bathrooms','max_guests','location','neighbourhood','wifi_network','wifi_password','access_code','checkin_instructions','checkout_instructions','supply_checklist','emergency_contact'];
@@ -178,16 +179,16 @@ router.put('/:id', (req, res) => {
   const values = [];
   for (const f of fields) {
     if (req.body[f] !== undefined) {
-      updates.push(`${f} = ?`);
+      updates.push(`${f} = $${values.length + 1}`);
       values.push(req.body[f]);
     }
   }
   if (updates.length > 0) {
     values.push(req.params.id);
-    db.prepare(`UPDATE properties SET ${updates.join(', ')} WHERE id = ?`).run(...values);
+    await run(`UPDATE properties SET ${updates.join(', ')} WHERE id = $${values.length}`, values);
   }
 
-  const updated = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.id);
+  const updated = await getOne('SELECT * FROM properties WHERE id = $1', [req.params.id]);
   res.json(updated);
 });
 

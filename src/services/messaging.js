@@ -1,20 +1,18 @@
-const { getDb } = require('../db/database');
+const { getAll } = require('../db/database');
 const smoobu = require('./smoobu');
 
 // Send check-in instructions 24 hours before check-in
 async function sendCheckinMessages() {
-  const db = getDb();
   const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000)
     .toISOString()
     .split('T')[0];
 
-  const bookings = db
-    .prepare(
-      `SELECT b.*, p.name as property_name FROM bookings b
-       JOIN properties p ON b.property_id = p.id
-       WHERE b.check_in = ? AND b.status = 'confirmed'`
-    )
-    .all(tomorrow);
+  const bookings = await getAll(
+    `SELECT b.*, p.name as property_name FROM bookings b
+     JOIN properties p ON b.property_id = p.id
+     WHERE b.check_in = $1 AND b.status = 'confirmed'`,
+    [tomorrow]
+  );
 
   const template =
     process.env.CHECKIN_MESSAGE_TEMPLATE ||
@@ -46,16 +44,14 @@ async function sendCheckinMessages() {
 
 // Send checkout reminders on the morning of checkout
 async function sendCheckoutMessages() {
-  const db = getDb();
   const today = new Date().toISOString().split('T')[0];
 
-  const bookings = db
-    .prepare(
-      `SELECT b.*, p.name as property_name FROM bookings b
-       JOIN properties p ON b.property_id = p.id
-       WHERE b.check_out = ? AND b.status = 'confirmed'`
-    )
-    .all(today);
+  const bookings = await getAll(
+    `SELECT b.*, p.name as property_name FROM bookings b
+     JOIN properties p ON b.property_id = p.id
+     WHERE b.check_out = $1 AND b.status = 'confirmed'`,
+    [today]
+  );
 
   const template =
     process.env.CHECKOUT_MESSAGE_TEMPLATE ||

@@ -1,24 +1,23 @@
 const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
-const { getDb } = require('../db/database');
+const { getAll, getOne, run } = require('../db/database');
 const { requireRole } = require('../middleware/auth');
 
 // All user routes require admin
 router.use(requireRole('admin'));
 
 // List all users
-router.get('/', (req, res) => {
-  const db = getDb();
-  const users = db.prepare(
+router.get('/', async (req, res) => {
+  const users = await getAll(
     'SELECT id, email, name, role, avatar_url, active, created_at FROM users ORDER BY name'
-  ).all();
+  );
 
   // Attach property access for property_managers
-  const accessStmt = db.prepare('SELECT property_id FROM user_property_access WHERE user_id = ?');
   for (const user of users) {
     if (user.role === 'property_manager') {
-      user.property_ids = accessStmt.all(user.id).map(r => r.property_id);
+      const rows = await getAll('SELECT property_id FROM user_property_access WHERE user_id = $1', [user.id]);
+      user.property_ids = rows.map(r => r.property_id);
     } else {
       user.property_ids = [];
     }
@@ -28,8 +27,7 @@ router.get('/', (req, res) => {
 });
 
 // Create user
-router.post('/', (req, res) => {
-  const db = getDb();
+router.post('/', async (req, res) => {
   const { email, name, role, password, property_ids } = req.body;
 
   if (!email || !name || !role) {
@@ -41,24 +39,24 @@ router.post('/', (req, res) => {
   }
 
   // Check for duplicate email
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+  const existing = await getOne('SELECT id FROM users WHERE email = $1', [email]);
   if (existing) {
     return res.status(409).json({ error: 'A user with this email already exists' });
   }
 
   const passwordHash = password ? bcrypt.hashSync(password, 10) : null;
 
-  const result = db.prepare(
-    'INSERT INTO users (email, name, role, password_hash) VALUES (?, ?, ?, ?)'
-  ).run(email, name, role, passwordHash);
+  const result = await run(
+    'INSERT INTO users (email, name, role, password_hash) VALUES ($1, $2, $3, $4) RETURNING id',
+    [email, name, role, passwordHash]
+  );
 
-  const userId = result.lastInsertRowid;
+  const userId = result.rows[0].id;
 
   // Set property access for property_manager
   if (role === 'property_manager' && Array.isArray(property_ids)) {
-    const ins = db.prepare('INSERT INTO user_property_access (user_id, property_id) VALUES (?, ?)');
     for (const pid of property_ids) {
-      ins.run(userId, pid);
+      await run('INSERT INTO user_property_access (user_id, property_id) VALUES ($1, $2)', [userId, pid]);
     }
   }
 
@@ -66,12 +64,11 @@ router.post('/', (req, res) => {
 });
 
 // Update user
-router.put('/:id', (req, res) => {
-  const db = getDb();
+router.put('/:id', async (req, res) => {
   const userId = parseInt(req.params.id);
   const { name, role, active, password, property_ids } = req.body;
 
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+  const user = await getOne('SELECT * FROM users WHERE id = $1', [userId]);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
   // Prevent admin from deactivating themselves
@@ -81,52 +78,51 @@ router.put('/:id', (req, res) => {
 
   const updates = [];
   const params = [];
+  let paramIndex = 1;
 
-  if (name !== undefined) { updates.push('name = ?'); params.push(name); }
+  if (name !== undefined) { updates.push(`name = $${paramIndex++}`); params.push(name); }
   if (role !== undefined) {
     if (!['admin', 'property_manager', 'cleaner'].includes(role)) {
       return res.status(400).json({ error: 'Invalid role' });
     }
-    updates.push('role = ?'); params.push(role);
+    updates.push(`role = $${paramIndex++}`); params.push(role);
   }
-  if (active !== undefined) { updates.push('active = ?'); params.push(active ? 1 : 0); }
-  if (password) { updates.push('password_hash = ?'); params.push(bcrypt.hashSync(password, 10)); }
+  if (active !== undefined) { updates.push(`active = $${paramIndex++}`); params.push(active ? 1 : 0); }
+  if (password) { updates.push(`password_hash = $${paramIndex++}`); params.push(bcrypt.hashSync(password, 10)); }
 
   if (updates.length > 0) {
-    updates.push('updated_at = datetime(\'now\')');
+    updates.push('updated_at = NOW()');
     params.push(userId);
-    db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    await run(`UPDATE users SET ${updates.join(', ')} WHERE id = $${paramIndex}`, params);
   }
 
   // Update property access
   const effectiveRole = role !== undefined ? role : user.role;
   if (effectiveRole === 'property_manager' && Array.isArray(property_ids)) {
-    db.prepare('DELETE FROM user_property_access WHERE user_id = ?').run(userId);
-    const ins = db.prepare('INSERT INTO user_property_access (user_id, property_id) VALUES (?, ?)');
+    await run('DELETE FROM user_property_access WHERE user_id = $1', [userId]);
     for (const pid of property_ids) {
-      ins.run(userId, pid);
+      await run('INSERT INTO user_property_access (user_id, property_id) VALUES ($1, $2)', [userId, pid]);
     }
   } else if (effectiveRole !== 'property_manager') {
     // Clear property access if role changed away from property_manager
-    db.prepare('DELETE FROM user_property_access WHERE user_id = ?').run(userId);
+    await run('DELETE FROM user_property_access WHERE user_id = $1', [userId]);
   }
 
   res.json({ ok: true });
 });
 
 // Soft-delete user
-router.delete('/:id', (req, res) => {
-  const db = getDb();
+router.delete('/:id', async (req, res) => {
   const userId = parseInt(req.params.id);
 
   if (userId === req.user.id) {
     return res.status(400).json({ error: 'Cannot delete your own account' });
   }
 
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(userId);
+  const user = await getOne('SELECT id FROM users WHERE id = $1', [userId]);
   if (!user) return res.status(404).json({ error: 'User not found' });
 
-  db.prepare('UPDATE users SET active = 0, updated_at = datetime(\'now\') WHERE id = ?').run(userId);
+  await run('UPDATE users SET active = 0, updated_at = NOW() WHERE id = $1', [userId]);
   res.json({ ok: true });
 });
 

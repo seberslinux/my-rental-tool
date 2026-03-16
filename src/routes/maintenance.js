@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
-const { getDb } = require('../db/database');
+const { getAll, getOne, run } = require('../db/database');
+const { scopeProperties, enforcePropertyScope } = require('../middleware/auth');
+
+// Apply property scoping to all maintenance routes
+router.use(scopeProperties);
 
 // Helper: parse comma-separated property IDs
 function parsePropertyIds(raw) {
@@ -8,9 +12,13 @@ function parsePropertyIds(raw) {
   return raw.split(',').map(s => s.trim()).filter(Boolean);
 }
 
+function scopedPropertyIds(req) {
+  return enforcePropertyScope(req, parsePropertyIds(req.query.property_id));
+}
+
 function addPropertyFilter(propIds, column, params) {
   if (!propIds) return '';
-  const placeholders = propIds.map(() => '?').join(',');
+  const placeholders = propIds.map((id, i) => `$${params.length + i + 1}`).join(',');
   propIds.forEach(id => params.push(id));
   return ` AND ${column} IN (${placeholders})`;
 }
@@ -19,32 +27,31 @@ function addPropertyFilter(propIds, column, params) {
 const PRIORITY_ORDER = { urgent: 0, high: 1, medium: 2, low: 3 };
 
 // GET /maintenance/summary — must be defined before /:id
-router.get('/summary', (req, res) => {
+router.get('/summary', async (req, res) => {
   try {
-    const db = getDb();
-    const propIds = parsePropertyIds(req.query.property_id);
+    const propIds = scopedPropertyIds(req);
     let where = '1=1';
     const params = [];
     where += addPropertyFilter(propIds, 'm.property_id', params);
 
-    const rows = db.prepare(`
+    const rows = await getAll(`
       SELECT m.status, m.priority, COUNT(*) as cnt
       FROM maintenance_issues m
       WHERE ${where}
       GROUP BY m.status, m.priority
-    `).all(...params);
+    `, params);
 
     let open = 0, in_progress = 0, resolved = 0, total = 0, urgent_open = 0;
     for (const r of rows) {
-      total += r.cnt;
+      total += parseInt(r.cnt);
       if (r.status === 'open') {
-        open += r.cnt;
-        if (r.priority === 'urgent') urgent_open += r.cnt;
+        open += parseInt(r.cnt);
+        if (r.priority === 'urgent') urgent_open += parseInt(r.cnt);
       } else if (r.status === 'in_progress') {
-        in_progress += r.cnt;
-        if (r.priority === 'urgent') urgent_open += r.cnt;
+        in_progress += parseInt(r.cnt);
+        if (r.priority === 'urgent') urgent_open += parseInt(r.cnt);
       } else if (r.status === 'resolved') {
-        resolved += r.cnt;
+        resolved += parseInt(r.cnt);
       }
     }
 
@@ -55,11 +62,10 @@ router.get('/summary', (req, res) => {
 });
 
 // GET /maintenance — list all issues
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
   try {
-    const db = getDb();
-    const { property_id, status, priority } = req.query;
-    const propIds = parsePropertyIds(property_id);
+    const { status, priority } = req.query;
+    const propIds = scopedPropertyIds(req);
 
     let where = '1=1';
     const params = [];
@@ -67,15 +73,15 @@ router.get('/', (req, res) => {
     where += addPropertyFilter(propIds, 'm.property_id', params);
 
     if (status) {
-      where += ' AND m.status = ?';
       params.push(status);
+      where += ` AND m.status = $${params.length}`;
     }
     if (priority) {
-      where += ' AND m.priority = ?';
       params.push(priority);
+      where += ` AND m.priority = $${params.length}`;
     }
 
-    const issues = db.prepare(`
+    const issues = await getAll(`
       SELECT m.*, p.name as property_name
       FROM maintenance_issues m
       JOIN properties p ON m.property_id = p.id
@@ -89,7 +95,7 @@ router.get('/', (req, res) => {
           ELSE 4
         END ASC,
         m.reported_date DESC
-    `).all(...params);
+    `, params);
 
     res.json(issues);
   } catch (err) {
@@ -98,15 +104,14 @@ router.get('/', (req, res) => {
 });
 
 // GET /maintenance/:id — single issue
-router.get('/:id', (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
-    const db = getDb();
-    const issue = db.prepare(`
+    const issue = await getOne(`
       SELECT m.*, p.name as property_name
       FROM maintenance_issues m
       JOIN properties p ON m.property_id = p.id
-      WHERE m.id = ?
-    `).get(req.params.id);
+      WHERE m.id = $1
+    `, [req.params.id]);
 
     if (!issue) return res.status(404).json({ error: 'Issue not found' });
     res.json(issue);
@@ -116,9 +121,8 @@ router.get('/:id', (req, res) => {
 });
 
 // POST /maintenance — create issue
-router.post('/', (req, res) => {
+router.post('/', async (req, res) => {
   try {
-    const db = getDb();
     const { property_id, title, description, category, priority, cost, assigned_to } = req.body;
 
     if (!property_id || !title) {
@@ -127,10 +131,10 @@ router.post('/', (req, res) => {
 
     const reported_date = new Date().toISOString().split('T')[0];
 
-    const result = db.prepare(`
+    const result = await run(`
       INSERT INTO maintenance_issues (property_id, title, description, category, priority, cost, assigned_to, reported_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id
+    `, [
       property_id,
       title,
       description || '',
@@ -139,14 +143,14 @@ router.post('/', (req, res) => {
       cost || 0,
       assigned_to || '',
       reported_date
-    );
+    ]);
 
-    const issue = db.prepare(`
+    const issue = await getOne(`
       SELECT m.*, p.name as property_name
       FROM maintenance_issues m
       JOIN properties p ON m.property_id = p.id
-      WHERE m.id = ?
-    `).get(result.lastInsertRowid);
+      WHERE m.id = $1
+    `, [result.rows[0].id]);
 
     res.status(201).json(issue);
   } catch (err) {
@@ -155,10 +159,9 @@ router.post('/', (req, res) => {
 });
 
 // PUT /maintenance/:id — update issue
-router.put('/:id', (req, res) => {
+router.put('/:id', async (req, res) => {
   try {
-    const db = getDb();
-    const existing = db.prepare('SELECT * FROM maintenance_issues WHERE id = ?').get(req.params.id);
+    const existing = await getOne('SELECT * FROM maintenance_issues WHERE id = $1', [req.params.id]);
     if (!existing) return res.status(404).json({ error: 'Issue not found' });
 
     const fields = ['property_id', 'title', 'description', 'category', 'status', 'priority', 'reported_date', 'resolved_date', 'cost', 'assigned_to'];
@@ -167,7 +170,7 @@ router.put('/:id', (req, res) => {
 
     for (const field of fields) {
       if (req.body[field] !== undefined) {
-        updates.push(`${field} = ?`);
+        updates.push(`${field} = $${params.length + 1}`);
         params.push(req.body[field]);
       }
     }
@@ -175,14 +178,14 @@ router.put('/:id', (req, res) => {
     if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
 
     params.push(req.params.id);
-    db.prepare(`UPDATE maintenance_issues SET ${updates.join(', ')} WHERE id = ?`).run(...params);
+    await run(`UPDATE maintenance_issues SET ${updates.join(', ')} WHERE id = $${params.length}`, params);
 
-    const issue = db.prepare(`
+    const issue = await getOne(`
       SELECT m.*, p.name as property_name
       FROM maintenance_issues m
       JOIN properties p ON m.property_id = p.id
-      WHERE m.id = ?
-    `).get(req.params.id);
+      WHERE m.id = $1
+    `, [req.params.id]);
 
     res.json(issue);
   } catch (err) {
@@ -191,21 +194,20 @@ router.put('/:id', (req, res) => {
 });
 
 // PATCH /maintenance/:id/resolve — resolve issue
-router.patch('/:id/resolve', (req, res) => {
+router.patch('/:id/resolve', async (req, res) => {
   try {
-    const db = getDb();
-    const existing = db.prepare('SELECT * FROM maintenance_issues WHERE id = ?').get(req.params.id);
+    const existing = await getOne('SELECT * FROM maintenance_issues WHERE id = $1', [req.params.id]);
     if (!existing) return res.status(404).json({ error: 'Issue not found' });
 
     const resolved_date = new Date().toISOString().split('T')[0];
-    db.prepare(`UPDATE maintenance_issues SET status = 'resolved', resolved_date = ? WHERE id = ?`).run(resolved_date, req.params.id);
+    await run(`UPDATE maintenance_issues SET status = 'resolved', resolved_date = $1 WHERE id = $2`, [resolved_date, req.params.id]);
 
-    const issue = db.prepare(`
+    const issue = await getOne(`
       SELECT m.*, p.name as property_name
       FROM maintenance_issues m
       JOIN properties p ON m.property_id = p.id
-      WHERE m.id = ?
-    `).get(req.params.id);
+      WHERE m.id = $1
+    `, [req.params.id]);
 
     res.json(issue);
   } catch (err) {
@@ -214,13 +216,12 @@ router.patch('/:id/resolve', (req, res) => {
 });
 
 // DELETE /maintenance/:id
-router.delete('/:id', (req, res) => {
+router.delete('/:id', async (req, res) => {
   try {
-    const db = getDb();
-    const existing = db.prepare('SELECT * FROM maintenance_issues WHERE id = ?').get(req.params.id);
+    const existing = await getOne('SELECT * FROM maintenance_issues WHERE id = $1', [req.params.id]);
     if (!existing) return res.status(404).json({ error: 'Issue not found' });
 
-    db.prepare('DELETE FROM maintenance_issues WHERE id = ?').run(req.params.id);
+    await run('DELETE FROM maintenance_issues WHERE id = $1', [req.params.id]);
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

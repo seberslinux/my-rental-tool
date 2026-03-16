@@ -1,22 +1,23 @@
 const express = require('express');
 const router = express.Router();
-const { getDb } = require('../db/database');
+const { getAll, getOne } = require('../db/database');
 
-router.get('/:token', (req, res) => {
-  const db = getDb();
-  const row = db.prepare(
-    'SELECT it.cleaner_id, c.name FROM ical_tokens it JOIN cleaners c ON it.cleaner_id = c.id WHERE it.token = ?'
-  ).get(req.params.token);
+router.get('/:token', async (req, res) => {
+  const row = await getOne(
+    'SELECT it.cleaner_id, c.name FROM ical_tokens it JOIN cleaners c ON it.cleaner_id = c.id WHERE it.token = $1',
+    [req.params.token]
+  );
 
   if (!row) return res.status(404).send('Not found');
 
-  const jobs = db.prepare(
+  const jobs = await getAll(
     `SELECT cj.*, p.name as property_name, p.address as property_address
      FROM cleaning_jobs cj
      JOIN properties p ON cj.property_id = p.id
-     WHERE cj.cleaner_id = ?
-     ORDER BY cj.cleaning_date ASC`
-  ).all(row.cleaner_id);
+     WHERE cj.cleaner_id = $1
+     ORDER BY cj.cleaning_date ASC`,
+    [row.cleaner_id]
+  );
 
   const lines = [
     'BEGIN:VCALENDAR',

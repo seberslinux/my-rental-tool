@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Data Validation Script
- * Fetches fresh data from Smoobu API and compares it against the local SQLite database.
+ * Fetches fresh data from Smoobu API and compares it against the PostgreSQL database.
  * Outputs:
  *   1. exports/smoobu-raw-bookings.csv     — raw Smoobu data for Excel review
  *   2. exports/local-db-bookings.csv       — what's in our database
@@ -13,7 +13,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const smoobu = require('../src/services/smoobu');
-const { getDb, closeDb } = require('../src/db/database');
+const { getAll, closeDb } = require('../src/db/database');
 
 const EXPORTS_DIR = path.join(__dirname, '..', 'exports');
 
@@ -54,8 +54,6 @@ async function main() {
   if (!fs.existsSync(EXPORTS_DIR)) {
     fs.mkdirSync(EXPORTS_DIR, { recursive: true });
   }
-
-  const db = getDb();
 
   // --- Step 1: Fetch all bookings from Smoobu ---
   console.log('\n=== FETCHING FROM SMOOBU API ===');
@@ -116,12 +114,12 @@ async function main() {
 
   // --- Step 3: Get local DB bookings ---
   console.log('\n=== READING LOCAL DATABASE ===');
-  const localBookings = db.prepare(`
+  const localBookings = await getAll(`
     SELECT b.*, p.name as property_name, p.smoobu_id as property_smoobu_id, p.base_price
     FROM bookings b
     LEFT JOIN properties p ON b.property_id = p.id
     ORDER BY b.check_in ASC
-  `).all();
+  `);
   console.log(`  Found ${localBookings.length} bookings in local DB`);
 
   // --- Step 4: Write raw CSVs ---
@@ -443,7 +441,7 @@ async function main() {
   console.log(`  ${EXPORTS_DIR}/validation-report.csv     — all mismatches`);
   console.log('\nOpen these in Excel to investigate further.\n');
 
-  closeDb();
+  await closeDb();
 }
 
 main().catch(err => {

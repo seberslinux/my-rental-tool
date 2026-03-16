@@ -15,7 +15,7 @@ async function checkAuth() {
     }
     if (!res.ok) { window.location.href = '/login.html'; return null; }
     currentUser = await res.json();
-    // Redirect cleaners to their portal
+    // Redirect cleaners to their portal (both Passport-auth and PIN-auth)
     const onPortal = window.location.pathname === '/cleaner-portal.html';
     if (currentUser.role === 'cleaner' && !onPortal) {
       window.location.href = '/cleaner-portal.html';

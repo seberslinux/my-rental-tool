@@ -1,11 +1,9 @@
-const { getDb } = require('./database');
+const { pool, getOne } = require('./database');
 
-function runMigrations() {
-  const db = getDb();
-
-  db.exec(`
+async function runMigrations() {
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS properties (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       smoobu_id INTEGER UNIQUE NOT NULL,
       name TEXT NOT NULL,
       address TEXT DEFAULT '',
@@ -14,7 +12,7 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS cleaners (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       name TEXT NOT NULL,
       phone TEXT NOT NULL,
       email TEXT DEFAULT ''
@@ -29,7 +27,7 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS cleaner_availability (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       cleaner_id INTEGER NOT NULL,
       day_of_week INTEGER NOT NULL CHECK(day_of_week BETWEEN 0 AND 6),
       start_time TEXT NOT NULL,
@@ -38,7 +36,7 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS cleaner_availability_overrides (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       cleaner_id INTEGER NOT NULL,
       date TEXT NOT NULL,
       available INTEGER NOT NULL DEFAULT 1,
@@ -46,7 +44,7 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS cleaning_jobs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       property_id INTEGER NOT NULL,
       cleaner_id INTEGER,
       booking_id INTEGER,
@@ -61,7 +59,7 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS blocked_dates (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       property_id INTEGER NOT NULL,
       date TEXT NOT NULL,
       reason TEXT DEFAULT '',
@@ -69,7 +67,7 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS bookings (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       smoobu_id INTEGER UNIQUE NOT NULL,
       property_id INTEGER NOT NULL,
       guest_name TEXT DEFAULT '',
@@ -87,19 +85,19 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS daily_rates (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       property_id INTEGER NOT NULL,
       date TEXT NOT NULL,
       price REAL DEFAULT 0,
       min_stay INTEGER DEFAULT 1,
       available INTEGER DEFAULT 1,
-      fetched_at TEXT DEFAULT (datetime('now')),
+      fetched_at TEXT DEFAULT NOW(),
       UNIQUE(property_id, date),
       FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS reviews (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       property_id INTEGER NOT NULL,
       booking_id INTEGER,
       platform TEXT DEFAULT '',
@@ -113,7 +111,7 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS expenses (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       property_id INTEGER NOT NULL,
       category TEXT NOT NULL,
       amount REAL NOT NULL,
@@ -122,18 +120,18 @@ function runMigrations() {
       receipt_path TEXT DEFAULT '',
       recurring INTEGER DEFAULT 0,
       recurring_frequency TEXT DEFAULT '',
-      created_at TEXT DEFAULT (datetime('now')),
+      created_at TEXT DEFAULT NOW(),
       FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS expense_categories (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       name TEXT UNIQUE NOT NULL,
       is_default INTEGER DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS property_costs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       property_id INTEGER NOT NULL,
       category_id INTEGER NOT NULL,
       monthly_amount REAL DEFAULT 0,
@@ -144,7 +142,7 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS competitors (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       property_id INTEGER NOT NULL,
       name TEXT NOT NULL,
       platform TEXT DEFAULT '',
@@ -160,14 +158,14 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS csv_keyword_mappings (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       keyword TEXT NOT NULL,
       category_id INTEGER NOT NULL,
       FOREIGN KEY (category_id) REFERENCES expense_categories(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS cleaner_payments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       cleaner_id INTEGER NOT NULL,
       month TEXT NOT NULL,
       amount REAL NOT NULL,
@@ -178,7 +176,7 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS maintenance_issues (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       property_id INTEGER NOT NULL,
       title TEXT NOT NULL,
       description TEXT,
@@ -193,7 +191,7 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       email TEXT UNIQUE NOT NULL,
       password_hash TEXT,
       name TEXT NOT NULL,
@@ -201,8 +199,8 @@ function runMigrations() {
       google_id TEXT UNIQUE,
       avatar_url TEXT DEFAULT '',
       active INTEGER NOT NULL DEFAULT 1,
-      created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
+      created_at TEXT DEFAULT NOW(),
+      updated_at TEXT DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS user_property_access (
@@ -214,19 +212,19 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       sender_id INTEGER NOT NULL,
       recipient_id INTEGER,
       subject TEXT DEFAULT '',
       body TEXT NOT NULL,
       read INTEGER DEFAULT 0,
-      created_at TEXT DEFAULT (datetime('now')),
+      created_at TEXT DEFAULT NOW(),
       FOREIGN KEY (sender_id) REFERENCES users(id),
       FOREIGN KEY (recipient_id) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS inventory_checklists (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       property_id INTEGER NOT NULL,
       item_name TEXT NOT NULL,
       category TEXT DEFAULT 'General',
@@ -236,19 +234,19 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS inventory_checks (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       checklist_item_id INTEGER NOT NULL,
       cleaning_job_id INTEGER NOT NULL,
       actual_quantity INTEGER DEFAULT 0,
       status TEXT DEFAULT 'ok' CHECK(status IN ('ok','low','missing','damaged')),
       notes TEXT DEFAULT '',
-      checked_at TEXT DEFAULT (datetime('now')),
+      checked_at TEXT DEFAULT NOW(),
       FOREIGN KEY (checklist_item_id) REFERENCES inventory_checklists(id) ON DELETE CASCADE,
       FOREIGN KEY (cleaning_job_id) REFERENCES cleaning_jobs(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS shopping_list (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       property_id INTEGER,
       item_name TEXT NOT NULL,
       quantity INTEGER DEFAULT 1,
@@ -256,14 +254,14 @@ function runMigrations() {
       added_by INTEGER NOT NULL,
       status TEXT DEFAULT 'needed' CHECK(status IN ('needed','purchased')),
       notes TEXT DEFAULT '',
-      created_at TEXT DEFAULT (datetime('now')),
+      created_at TEXT DEFAULT NOW(),
       purchased_at TEXT,
       FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE,
       FOREIGN KEY (added_by) REFERENCES users(id)
     );
 
     CREATE TABLE IF NOT EXISTS cleaner_notification_prefs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       cleaner_id INTEGER NOT NULL UNIQUE,
       whatsapp_enabled INTEGER DEFAULT 1,
       notify_7_days INTEGER DEFAULT 1,
@@ -273,35 +271,48 @@ function runMigrations() {
     );
 
     CREATE TABLE IF NOT EXISTS ical_tokens (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       cleaner_id INTEGER NOT NULL UNIQUE,
       token TEXT NOT NULL UNIQUE,
-      created_at TEXT DEFAULT (datetime('now')),
+      created_at TEXT DEFAULT NOW(),
       FOREIGN KEY (cleaner_id) REFERENCES cleaners(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
-      updated_at TEXT DEFAULT (datetime('now'))
+      updated_at TEXT DEFAULT NOW()
     );
 
     CREATE TABLE IF NOT EXISTS exchange_rates (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       base_currency TEXT NOT NULL DEFAULT 'EUR',
       target_currency TEXT NOT NULL,
       rate REAL NOT NULL,
       rate_date TEXT NOT NULL,
-      fetched_at TEXT DEFAULT (datetime('now')),
+      fetched_at TEXT DEFAULT NOW(),
       UNIQUE(base_currency, target_currency, rate_date)
     );
   `);
 
   // Seed default settings
-  db.prepare("INSERT OR IGNORE INTO app_settings (key, value) VALUES ('display_currency', 'ZAR')").run();
+  await pool.query(`
+    INSERT INTO app_settings (key, value) VALUES ('display_currency', 'ZAR')
+    ON CONFLICT (key) DO NOTHING
+  `);
 
-  // Add columns to existing bookings table if missing
-  const alterColumns = [
+  // Add columns to existing tables if missing (PG-compatible approach)
+  const alterColumns = async (table, columns) => {
+    for (const [col, type] of columns) {
+      try {
+        await pool.query(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
+      } catch (e) {
+        // Column already exists, ignore (PG error code 42701)
+      }
+    }
+  };
+
+  await alterColumns('bookings', [
     ['created_at', "TEXT DEFAULT ''"],
     ['lead_time_days', 'INTEGER DEFAULT 0'],
     ['length_of_stay', 'INTEGER DEFAULT 1'],
@@ -312,17 +323,9 @@ function runMigrations() {
     ['children', 'INTEGER DEFAULT 0'],
     ['guest_country', "TEXT DEFAULT ''"],
     ['currency', "TEXT DEFAULT 'ZAR'"],
-  ];
-  for (const [col, type] of alterColumns) {
-    try {
-      db.exec(`ALTER TABLE bookings ADD COLUMN ${col} ${type}`);
-    } catch (e) {
-      // Column already exists, ignore
-    }
-  }
+  ]);
 
-  // Add columns to existing properties table if missing
-  const propertyColumns = [
+  await alterColumns('properties', [
     ['airbnb_url', "TEXT DEFAULT ''"],
     ['airbnb_id', "TEXT DEFAULT ''"],
     ['booking_url', "TEXT DEFAULT ''"],
@@ -350,92 +353,79 @@ function runMigrations() {
     ['supply_checklist', "TEXT DEFAULT ''"],
     ['emergency_contact', "TEXT DEFAULT ''"],
     ['base_currency', "TEXT DEFAULT 'ZAR'"],
-  ];
-  for (const [col, type] of propertyColumns) {
-    try {
-      db.exec(`ALTER TABLE properties ADD COLUMN ${col} ${type}`);
-    } catch (e) {
-      // Column already exists, ignore
-    }
-  }
+  ]);
 
-  // Add columns to existing cleaners table if missing
-  const cleanerColumns = [
+  await alterColumns('cleaners', [
     ['hourly_rate', 'REAL DEFAULT 0'],
     ['flat_rate', 'REAL DEFAULT 0'],
     ['rate_type', "TEXT DEFAULT 'hourly'"],
     ['notes', "TEXT DEFAULT ''"],
-  ];
-  for (const [col, type] of cleanerColumns) {
-    try {
-      db.exec(`ALTER TABLE cleaners ADD COLUMN ${col} ${type}`);
-    } catch (e) {
-      // Column already exists, ignore
-    }
-  }
+    ['pin', 'TEXT'],
+  ]);
 
-  // Add columns to existing expenses table if missing
-  const expenseColumns = [
+  await alterColumns('inventory_checklists', [
+    ['item_type', "TEXT DEFAULT 'task'"],
+  ]);
+
+  await alterColumns('users', [
+    ['phone', "TEXT DEFAULT ''"],
+  ]);
+
+  await alterColumns('expenses', [
     ['currency', "TEXT DEFAULT 'ZAR'"],
-  ];
-  for (const [col, type] of expenseColumns) {
-    try {
-      db.exec(`ALTER TABLE expenses ADD COLUMN ${col} ${type}`);
-    } catch (e) {
-      // Column already exists, ignore
-    }
-  }
+  ]);
 
-  // Add columns to existing reviews table if missing
-  const reviewColumns = [
+  await alterColumns('reviews', [
     ['sentiment', "TEXT DEFAULT ''"],
     ['external_id', "TEXT DEFAULT ''"],
     ['language', "TEXT DEFAULT ''"],
-  ];
-  // Note: unique index added below after column creation
-  for (const [col, type] of reviewColumns) {
-    try {
-      db.exec(`ALTER TABLE reviews ADD COLUMN ${col} ${type}`);
-    } catch (e) {
-      // Column already exists, ignore
-    }
-  }
-  // Unique index for review deduplication (external_id per property)
+  ]);
+
+  // Add 'ready' to cleaning_jobs status CHECK constraint (PG)
   try {
-    db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_external ON reviews(property_id, external_id)");
+    await pool.query("ALTER TABLE cleaning_jobs DROP CONSTRAINT IF EXISTS cleaning_jobs_status_check");
+    await pool.query("ALTER TABLE cleaning_jobs ADD CONSTRAINT cleaning_jobs_status_check CHECK(status IN ('pending', 'confirmed', 'completed', 'ready'))");
+  } catch (e) { /* constraint already updated */ }
+
+  // Unique index for review deduplication
+  try {
+    await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_external ON reviews(property_id, external_id)");
   } catch (e) { /* index already exists */ }
 
   // Insert default expense categories if the table is empty
-  const catCount = db.prepare('SELECT COUNT(*) as c FROM expense_categories').get();
-  if (catCount.c === 0) {
+  const catCount = await getOne('SELECT COUNT(*) as c FROM expense_categories');
+  if (parseInt(catCount.c) === 0) {
     const cats = ['Cleaning','Electricity','Water','Supplies','Gardening','Repair & Maintenance','Improvements','Platform Fees','Insurance','Mortgage/Bond','Other'];
-    const ins = db.prepare('INSERT INTO expense_categories (name, is_default) VALUES (?, 1)');
-    for (const c of cats) ins.run(c);
+    for (const c of cats) {
+      await pool.query('INSERT INTO expense_categories (name, is_default) VALUES ($1, 1)', [c]);
+    }
   }
 
   // Bootstrap admin user from env vars
   if (process.env.ADMIN_EMAIL) {
     const bcrypt = require('bcrypt');
-    const userCount = db.prepare('SELECT COUNT(*) as c FROM users').get();
-    if (userCount.c === 0) {
+    const userCount = await getOne('SELECT COUNT(*) as c FROM users');
+    if (parseInt(userCount.c) === 0) {
       const hash = process.env.ADMIN_PASSWORD
         ? bcrypt.hashSync(process.env.ADMIN_PASSWORD, 10)
         : null;
-      db.prepare(
-        'INSERT INTO users (email, password_hash, name, role) VALUES (?, ?, ?, ?)'
-      ).run(process.env.ADMIN_EMAIL, hash, process.env.ADMIN_NAME || 'Admin', 'admin');
+      await pool.query(
+        'INSERT INTO users (email, password_hash, name, role) VALUES ($1, $2, $3, $4)',
+        [process.env.ADMIN_EMAIL, hash, process.env.ADMIN_NAME || 'Admin', 'admin']
+      );
       console.log(`Admin user bootstrapped: ${process.env.ADMIN_EMAIL}`);
     } else {
-      // Ensure env admin exists — update first admin if email changed
-      const envAdmin = db.prepare('SELECT id FROM users WHERE email = ?').get(process.env.ADMIN_EMAIL);
+      const envAdmin = await getOne('SELECT id FROM users WHERE email = $1', [process.env.ADMIN_EMAIL]);
       if (!envAdmin) {
-        const firstAdmin = db.prepare("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1").get();
+        const firstAdmin = await getOne("SELECT id FROM users WHERE role = 'admin' ORDER BY id LIMIT 1");
         if (firstAdmin) {
           const hash = process.env.ADMIN_PASSWORD
             ? bcrypt.hashSync(process.env.ADMIN_PASSWORD, 10)
             : null;
-          db.prepare('UPDATE users SET email = ?, password_hash = ?, name = ?, updated_at = datetime(\'now\') WHERE id = ?')
-            .run(process.env.ADMIN_EMAIL, hash, process.env.ADMIN_NAME || 'Admin', firstAdmin.id);
+          await pool.query(
+            'UPDATE users SET email = $1, password_hash = $2, name = $3, updated_at = NOW() WHERE id = $4',
+            [process.env.ADMIN_EMAIL, hash, process.env.ADMIN_NAME || 'Admin', firstAdmin.id]
+          );
           console.log(`Admin user updated to: ${process.env.ADMIN_EMAIL}`);
         }
       }

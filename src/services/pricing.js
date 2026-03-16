@@ -1,10 +1,9 @@
-const { getDb } = require('../db/database');
+const { getAll } = require('../db/database');
 const smoobu = require('./smoobu');
 
 // Apply dynamic pricing rules for all properties
 async function runPricingEngine() {
-  const db = getDb();
-  const properties = db.prepare('SELECT * FROM properties WHERE base_price > 0').all();
+  const properties = await getAll('SELECT * FROM properties WHERE base_price > 0', []);
 
   const today = new Date();
   const from = today.toISOString().split('T')[0];
@@ -22,24 +21,22 @@ async function runPricingEngine() {
 }
 
 async function applyPricingForProperty(property, from, to) {
-  const db = getDb();
   const basePrice = property.base_price;
 
   // Get existing bookings to identify gaps and blocked dates
-  const bookings = db
-    .prepare(
-      `SELECT * FROM bookings
-       WHERE property_id = ? AND check_out >= ? AND check_in <= ? AND status = 'confirmed'
-       ORDER BY check_in ASC`
-    )
-    .all(property.id, from, to);
+  const bookings = await getAll(
+    `SELECT * FROM bookings
+     WHERE property_id = $1 AND check_out >= $2 AND check_in <= $3 AND status = 'confirmed'
+     ORDER BY check_in ASC`,
+    [property.id, from, to]
+  );
 
-  const blockedDates = db
-    .prepare(
-      'SELECT date FROM blocked_dates WHERE property_id = ? AND date >= ? AND date <= ?'
+  const blockedDates = (
+    await getAll(
+      'SELECT date FROM blocked_dates WHERE property_id = $1 AND date >= $2 AND date <= $3',
+      [property.id, from, to]
     )
-    .all(property.id, from, to)
-    .map((r) => r.date);
+  ).map((r) => r.date);
 
   const bookedDates = new Set();
   for (const b of bookings) {

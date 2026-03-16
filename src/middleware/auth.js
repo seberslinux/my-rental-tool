@@ -1,7 +1,9 @@
-const { getDb } = require('../db/database');
+const { getOne, getAll } = require('../db/database');
 
 function requireAuth(req, res, next) {
   if (req.isAuthenticated && req.isAuthenticated()) return next();
+  // Accept cleaner PIN sessions
+  if (req.session && req.session.cleanerId) return next();
   return res.status(401).json({ error: 'Authentication required' });
 }
 
@@ -15,7 +17,19 @@ function requireRole(...roles) {
   };
 }
 
-function scopeProperties(req, res, next) {
+async function scopeProperties(req, res, next) {
+  // Handle PIN-auth cleaner sessions
+  if (req.session && req.session.cleanerId && !req.user) {
+    try {
+      const rows = await getAll(
+        'SELECT property_id FROM cleaner_properties WHERE cleaner_id = $1',
+        [req.session.cleanerId]
+      );
+      req.accessiblePropertyIds = rows.map(r => r.property_id);
+      return next();
+    } catch (err) { return next(err); }
+  }
+
   if (!req.user) return next();
 
   if (req.user.role === 'admin') {
@@ -23,32 +37,59 @@ function scopeProperties(req, res, next) {
     return next();
   }
 
-  const db = getDb();
-
-  if (req.user.role === 'property_manager') {
-    const rows = db.prepare(
-      'SELECT property_id FROM user_property_access WHERE user_id = ?'
-    ).all(req.user.id);
-    req.accessiblePropertyIds = rows.map(r => r.property_id);
-    return next();
-  }
-
-  if (req.user.role === 'cleaner') {
-    // Match cleaner by email to get their assigned properties
-    const cleaner = db.prepare('SELECT id FROM cleaners WHERE email = ?').get(req.user.email);
-    if (cleaner) {
-      const rows = db.prepare(
-        'SELECT property_id FROM cleaner_properties WHERE cleaner_id = ?'
-      ).all(cleaner.id);
+  try {
+    if (req.user.role === 'property_manager') {
+      const rows = await getAll(
+        'SELECT property_id FROM user_property_access WHERE user_id = $1',
+        [req.user.id]
+      );
       req.accessiblePropertyIds = rows.map(r => r.property_id);
-    } else {
-      req.accessiblePropertyIds = [];
+      return next();
     }
-    return next();
-  }
 
-  req.accessiblePropertyIds = [];
-  next();
+    if (req.user.role === 'cleaner') {
+      // Match cleaner by email to get their assigned properties
+      const cleaner = await getOne('SELECT id FROM cleaners WHERE email = $1', [req.user.email]);
+      if (cleaner) {
+        const rows = await getAll(
+          'SELECT property_id FROM cleaner_properties WHERE cleaner_id = $1',
+          [cleaner.id]
+        );
+        req.accessiblePropertyIds = rows.map(r => r.property_id);
+      } else {
+        req.accessiblePropertyIds = [];
+      }
+      return next();
+    }
+
+    req.accessiblePropertyIds = [];
+    next();
+  } catch (err) {
+    next(err);
+  }
 }
 
-module.exports = { requireAuth, requireRole, scopeProperties };
+/**
+ * Enforce property scoping on a parsed property_id filter.
+ * Call after scopeProperties. Returns the intersection of requested IDs
+ * and the user's accessible IDs (or null if the user has full access and
+ * requested all).
+ */
+function enforcePropertyScope(req, requestedIds) {
+  // requestedIds comes from parsePropertyIds: null means "all requested"
+  // req.accessiblePropertyIds: null means "admin, full access"
+  if (req.accessiblePropertyIds === null) {
+    // Admin — honour whatever was requested
+    return requestedIds;
+  }
+  const allowed = req.accessiblePropertyIds;
+  if (!requestedIds) {
+    // User asked for "all" but is scoped — return their allowed set
+    return allowed.length > 0 ? allowed.map(String) : [];
+  }
+  // Intersect requested with allowed
+  const allowedSet = new Set(allowed.map(String));
+  return requestedIds.filter(id => allowedSet.has(String(id)));
+}
+
+module.exports = { requireAuth, requireRole, scopeProperties, enforcePropertyScope };

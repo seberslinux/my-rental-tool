@@ -1,24 +1,51 @@
-const Database = require('better-sqlite3');
-const path = require('path');
+const { Pool } = require('pg');
 
-const DB_PATH = path.join(__dirname, '..', '..', 'rental.db');
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL?.includes('railway') ? { rejectUnauthorized: false } : false,
+});
 
-let db;
-
-function getDb() {
-  if (!db) {
-    db = new Database(DB_PATH);
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-  }
-  return db;
+async function query(sql, params = []) {
+  const result = await pool.query(sql, params);
+  return { rows: result.rows, rowCount: result.rowCount };
 }
 
-function closeDb() {
-  if (db) {
-    db.close();
-    db = null;
+async function getOne(sql, params = []) {
+  const result = await pool.query(sql, params);
+  return result.rows[0] || null;
+}
+
+async function getAll(sql, params = []) {
+  const result = await pool.query(sql, params);
+  return result.rows;
+}
+
+async function run(sql, params = []) {
+  const result = await pool.query(sql, params);
+  return { rowCount: result.rowCount, rows: result.rows };
+}
+
+async function transaction(callback) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const result = await callback(client);
+    await client.query('COMMIT');
+    return result;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
 }
 
-module.exports = { getDb, closeDb };
+function inParams(arr, startIdx) {
+  return arr.map((_, i) => `$${startIdx + i}`).join(',');
+}
+
+async function closeDb() {
+  await pool.end();
+}
+
+module.exports = { query, getOne, getAll, run, transaction, inParams, closeDb, pool };

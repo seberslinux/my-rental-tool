@@ -1,0 +1,10 @@
+.env
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+.claude/
+design-assets/
+exports/
+smoobu-bookings.json
+rental.db

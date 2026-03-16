@@ -1,15 +1,11 @@
-const { getDb } = require('../db/database');
+const { getAll, getOne, run } = require('../db/database');
 const smoobu = require('./smoobu');
 const whatsapp = require('./whatsapp');
 
 // Run cleaner assignment for a specific property and checkout date
 // booking: { id, smoobu_id, property_id, check_out, check_in_next, num_guests_next, guest_name_next }
 async function assignCleanerForCheckout(booking, nextBooking = null) {
-  const db = getDb();
-
-  const property = db
-    .prepare('SELECT * FROM properties WHERE id = ?')
-    .get(booking.property_id);
+  const property = await getOne('SELECT * FROM properties WHERE id = $1', [booking.property_id]);
   if (!property) {
     console.error(`Property ${booking.property_id} not found`);
     return null;
@@ -43,21 +39,19 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
   const dayOfWeek = date.getDay();
 
   // Find eligible cleaners: assigned to this property
-  const assignedCleaners = db
-    .prepare(
-      `SELECT c.* FROM cleaners c
-       JOIN cleaner_properties cp ON c.id = cp.cleaner_id
-       WHERE cp.property_id = ?`
-    )
-    .all(property.id);
+  const assignedCleaners = await getAll(
+    `SELECT c.* FROM cleaners c
+     JOIN cleaner_properties cp ON c.id = cp.cleaner_id
+     WHERE cp.property_id = $1`,
+    [property.id]
+  );
 
   for (const cleaner of assignedCleaners) {
     // Check for date-specific override
-    const override = db
-      .prepare(
-        'SELECT * FROM cleaner_availability_overrides WHERE cleaner_id = ? AND date = ?'
-      )
-      .get(cleaner.id, checkoutDate);
+    const override = await getOne(
+      'SELECT * FROM cleaner_availability_overrides WHERE cleaner_id = $1 AND date = $2',
+      [cleaner.id, checkoutDate]
+    );
 
     if (override && !override.available) {
       continue; // Cleaner is explicitly unavailable on this date
@@ -65,11 +59,10 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
 
     // If no override marking available, check weekly schedule
     if (!override) {
-      const availability = db
-        .prepare(
-          'SELECT * FROM cleaner_availability WHERE cleaner_id = ? AND day_of_week = ?'
-        )
-        .get(cleaner.id, dayOfWeek);
+      const availability = await getOne(
+        'SELECT * FROM cleaner_availability WHERE cleaner_id = $1 AND day_of_week = $2',
+        [cleaner.id, dayOfWeek]
+      );
 
       if (!availability) {
         continue; // No availability set for this day
@@ -84,12 +77,11 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
     }
 
     // Check if cleaner already has a job at the same time
-    const existingJob = db
-      .prepare(
-        `SELECT * FROM cleaning_jobs
-         WHERE cleaner_id = ? AND cleaning_date = ? AND status != 'completed'`
-      )
-      .get(cleaner.id, checkoutDate);
+    const existingJob = await getOne(
+      `SELECT * FROM cleaning_jobs
+       WHERE cleaner_id = $1 AND cleaning_date = $2 AND status != 'completed'`,
+      [cleaner.id, checkoutDate]
+    );
 
     if (existingJob) {
       continue; // Already booked
@@ -105,19 +97,20 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
     const actualEndTime = formatTime(actualEndMinutes);
 
     // Assign this cleaner
-    const result = db
-      .prepare(
-        `INSERT INTO cleaning_jobs (property_id, cleaner_id, booking_id, cleaning_date, start_time, end_time, status)
-         VALUES (?, ?, ?, ?, ?, ?, 'pending')`
-      )
-      .run(
+    const result = await run(
+      `INSERT INTO cleaning_jobs (property_id, cleaner_id, booking_id, cleaning_date, start_time, end_time, status)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending') RETURNING id`,
+      [
         property.id,
         cleaner.id,
         booking.id,
         checkoutDate,
         checkoutTime,
-        actualEndTime
-      );
+        actualEndTime,
+      ]
+    );
+
+    const jobId = result.rows[0].id;
 
     // Send WhatsApp notification
     try {
@@ -135,9 +128,7 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
         nextGuestInfo;
 
       await whatsapp.sendMessage(cleaner.phone, message);
-      db.prepare('UPDATE cleaning_jobs SET notified = 1 WHERE id = ?').run(
-        result.lastInsertRowid
-      );
+      await run('UPDATE cleaning_jobs SET notified = 1 WHERE id = $1', [jobId]);
     } catch (err) {
       console.error(`Failed to notify cleaner ${cleaner.name}:`, err.message);
     }
@@ -145,7 +136,7 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
     console.log(
       `Assigned cleaner ${cleaner.name} to ${property.name} on ${checkoutDate}`
     );
-    return result.lastInsertRowid;
+    return jobId;
   }
 
   // No cleaner available — block dates in Smoobu
@@ -162,9 +153,10 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
       'No cleaner available'
     );
 
-    db.prepare(
-      'INSERT INTO blocked_dates (property_id, date, reason) VALUES (?, ?, ?)'
-    ).run(property.id, checkoutDate, 'No cleaner available');
+    await run(
+      'INSERT INTO blocked_dates (property_id, date, reason) VALUES ($1, $2, $3)',
+      [property.id, checkoutDate, 'No cleaner available']
+    );
   } catch (err) {
     console.error(`Failed to block dates in Smoobu:`, err.message);
   }
@@ -174,34 +166,30 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
 
 // Run assignment for all upcoming checkouts
 async function runAssignmentForAllCheckouts() {
-  const db = getDb();
-
   const today = new Date().toISOString().split('T')[0];
   const futureDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
     .toISOString()
     .split('T')[0];
 
   // Get all bookings with upcoming checkouts that don't have a cleaning job yet
-  const bookings = db
-    .prepare(
-      `SELECT b.* FROM bookings b
-       WHERE b.check_out >= ? AND b.check_out <= ? AND b.status = 'confirmed'
-       AND NOT EXISTS (
-         SELECT 1 FROM cleaning_jobs cj WHERE cj.booking_id = b.id
-       )
-       ORDER BY b.check_out ASC`
-    )
-    .all(today, futureDate);
+  const bookings = await getAll(
+    `SELECT b.* FROM bookings b
+     WHERE b.check_out >= $1 AND b.check_out <= $2 AND b.status = 'confirmed'
+     AND NOT EXISTS (
+       SELECT 1 FROM cleaning_jobs cj WHERE cj.booking_id = b.id
+     )
+     ORDER BY b.check_out ASC`,
+    [today, futureDate]
+  );
 
   for (const booking of bookings) {
     // Find the next booking for the same property after this checkout
-    const nextBooking = db
-      .prepare(
-        `SELECT * FROM bookings
-         WHERE property_id = ? AND check_in >= ? AND status = 'confirmed'
-         ORDER BY check_in ASC LIMIT 1`
-      )
-      .get(booking.property_id, booking.check_out);
+    const nextBooking = await getOne(
+      `SELECT * FROM bookings
+       WHERE property_id = $1 AND check_in >= $2 AND status = 'confirmed'
+       ORDER BY check_in ASC LIMIT 1`,
+      [booking.property_id, booking.check_out]
+    );
 
     await assignCleanerForCheckout(booking, nextBooking);
   }
@@ -209,20 +197,17 @@ async function runAssignmentForAllCheckouts() {
 
 // Unassign a cleaner from a job and notify them
 async function unassignCleanerFromBooking(bookingId) {
-  const db = getDb();
-
-  const jobs = db
-    .prepare(
-      `SELECT cj.*, c.phone, c.name as cleaner_name, p.name as property_name
-       FROM cleaning_jobs cj
-       JOIN cleaners c ON cj.cleaner_id = c.id
-       JOIN properties p ON cj.property_id = p.id
-       WHERE cj.booking_id = ? AND cj.status != 'completed'`
-    )
-    .all(bookingId);
+  const jobs = await getAll(
+    `SELECT cj.*, c.phone, c.name as cleaner_name, p.name as property_name
+     FROM cleaning_jobs cj
+     JOIN cleaners c ON cj.cleaner_id = c.id
+     JOIN properties p ON cj.property_id = p.id
+     WHERE cj.booking_id = $1 AND cj.status != 'completed'`,
+    [bookingId]
+  );
 
   for (const job of jobs) {
-    db.prepare('DELETE FROM cleaning_jobs WHERE id = ?').run(job.id);
+    await run('DELETE FROM cleaning_jobs WHERE id = $1', [job.id]);
 
     try {
       const message =
@@ -244,17 +229,15 @@ async function unassignCleanerFromBooking(bookingId) {
 async function reassignCleanerForBooking(bookingId) {
   await unassignCleanerFromBooking(bookingId);
 
-  const db = getDb();
-  const booking = db.prepare('SELECT * FROM bookings WHERE id = ?').get(bookingId);
+  const booking = await getOne('SELECT * FROM bookings WHERE id = $1', [bookingId]);
   if (!booking) return;
 
-  const nextBooking = db
-    .prepare(
-      `SELECT * FROM bookings
-       WHERE property_id = ? AND check_in >= ? AND status = 'confirmed' AND id != ?
-       ORDER BY check_in ASC LIMIT 1`
-    )
-    .get(booking.property_id, booking.check_out, booking.id);
+  const nextBooking = await getOne(
+    `SELECT * FROM bookings
+     WHERE property_id = $1 AND check_in >= $2 AND status = 'confirmed' AND id != $3
+     ORDER BY check_in ASC LIMIT 1`,
+    [booking.property_id, booking.check_out, booking.id]
+  );
 
   await assignCleanerForCheckout(booking, nextBooking);
 }

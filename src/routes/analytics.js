@@ -1,9 +1,13 @@
 const express = require('express');
 const router = express.Router();
-const { getDb } = require('../db/database');
+const { getAll, getOne, run, transaction } = require('../db/database');
 const smoobu = require('../services/smoobu');
 const { detectCurrency } = require('../services/currency-detect');
 const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
+const { scopeProperties, enforcePropertyScope } = require('../middleware/auth');
+
+// Apply property scoping to all analytics routes
+router.use(scopeProperties);
 
 // Helper: parse property_id param (supports comma-separated IDs or 'all')
 function parsePropertyIds(raw) {
@@ -11,9 +15,14 @@ function parsePropertyIds(raw) {
   return raw.split(',').map(s => s.trim()).filter(Boolean);
 }
 
+// Scoped version: intersect requested IDs with user's allowed IDs
+function scopedPropertyIds(req) {
+  return enforcePropertyScope(req, parsePropertyIds(req.query.property_id));
+}
+
 function addPropertyFilter(propIds, column, params) {
   if (!propIds) return '';
-  const placeholders = propIds.map(() => '?').join(',');
+  const placeholders = propIds.map((_, i) => `$${params.length + i + 1}`).join(',');
   propIds.forEach(id => params.push(id));
   return ` AND ${column} IN (${placeholders})`;
 }
@@ -21,8 +30,7 @@ function addPropertyFilter(propIds, column, params) {
 // Sync rates from Smoobu for analytics (GET only, no writes to Smoobu)
 router.post('/sync-rates', async (req, res) => {
   try {
-    const db = getDb();
-    const properties = db.prepare('SELECT * FROM properties').all();
+    const properties = await getAll('SELECT * FROM properties');
     const today = new Date().toISOString().split('T')[0];
     const sixtyDaysOut = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
       .toISOString()
@@ -30,33 +38,30 @@ router.post('/sync-rates', async (req, res) => {
 
     let totalSynced = 0;
 
-    const upsert = db.prepare(`
-      INSERT INTO daily_rates (property_id, date, price, min_stay, available)
-      VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(property_id, date) DO UPDATE SET
-        price = excluded.price,
-        min_stay = excluded.min_stay,
-        available = excluded.available,
-        fetched_at = datetime('now')
-    `);
-
     for (const p of properties) {
       try {
         const ratesData = await smoobu.getRates(p.smoobu_id, today, sixtyDaysOut);
         // Smoobu returns rates keyed by apartment ID
         const apartmentRates = ratesData?.data?.[p.smoobu_id] || ratesData?.[p.smoobu_id] || {};
 
-        const transaction = db.transaction((rates) => {
-          for (const [date, info] of Object.entries(rates)) {
+        await transaction(async (client) => {
+          for (const [date, info] of Object.entries(apartmentRates)) {
             const price = info?.price || info?.daily_price || 0;
             const minStay = info?.min_length_of_stay || info?.minLengthOfStay || 1;
             const available = info?.available !== undefined ? (info.available ? 1 : 0) : 1;
-            upsert.run(p.id, date, price, minStay, available);
+            await client.query(
+              `INSERT INTO daily_rates (property_id, date, price, min_stay, available)
+               VALUES ($1, $2, $3, $4, $5)
+               ON CONFLICT(property_id, date) DO UPDATE SET
+                 price = EXCLUDED.price,
+                 min_stay = EXCLUDED.min_stay,
+                 available = EXCLUDED.available,
+                 fetched_at = NOW()`,
+              [p.id, date, price, minStay, available]
+            );
             totalSynced++;
           }
         });
-
-        transaction(apartmentRates);
       } catch (err) {
         console.error(`Rate sync failed for ${p.name}:`, err.message);
       }
@@ -108,7 +113,6 @@ function countryFromPhone(phone) {
 // Sync historical bookings (wider range for analytics)
 router.post('/sync-history', async (req, res) => {
   try {
-    const db = getDb();
     const twoYearsAgo = new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000)
       .toISOString()
       .split('T')[0];
@@ -120,25 +124,11 @@ router.post('/sync-history', async (req, res) => {
 
     // Build property base_currency map for fallback
     const propCurrencyMap = {};
-    const propsForCurrency = db.prepare('SELECT smoobu_id, base_currency FROM properties').all();
+    const propsForCurrency = await getAll('SELECT smoobu_id, base_currency FROM properties');
     for (const p of propsForCurrency) propCurrencyMap[p.smoobu_id] = p.base_currency || 'ZAR';
 
-    const upsert = db.prepare(`
-      INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, commission, language, children, guest_country, currency)
-      VALUES (?, (SELECT id FROM properties WHERE smoobu_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(smoobu_id) DO UPDATE SET
-        guest_name = excluded.guest_name, check_in = excluded.check_in,
-        check_out = excluded.check_out, platform = excluded.platform,
-        total_price = excluded.total_price, status = excluded.status,
-        num_guests = excluded.num_guests, created_at = excluded.created_at,
-        lead_time_days = excluded.lead_time_days, length_of_stay = excluded.length_of_stay,
-        price_per_night = excluded.price_per_night, commission = excluded.commission,
-        language = excluded.language, children = excluded.children,
-        guest_country = excluded.guest_country, currency = excluded.currency
-    `);
-
-    const transaction = db.transaction((bookings) => {
-      for (const b of bookings) {
+    await transaction(async (client) => {
+      for (const b of allBookings) {
         const platform = b['channel']?.name || b.channel || '';
         const checkIn = b.arrival || b.arrivalDate;
         const checkOut = b.departure || b.departureDate;
@@ -157,20 +147,32 @@ router.post('/sync-history', async (req, res) => {
         const aptId = b['apartment']?.id || b.apartmentId;
         const currency = detectCurrency(b) || propCurrencyMap[aptId] || 'ZAR';
 
-        upsert.run(
-          b.id,
-          aptId,
-          b['guest-name'] || b.guestName || '',
-          checkIn, checkOut, platform, price,
-          b.type === 'cancellation' ? 'cancelled' : 'confirmed',
-          b['adults'] || b.adults || 1,
-          createdAt, leadTime, los, ppn,
-          commission, language, children, guestCountry, currency
+        await client.query(
+          `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, commission, language, children, guest_country, currency)
+           VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+           ON CONFLICT(smoobu_id) DO UPDATE SET
+             guest_name = EXCLUDED.guest_name, check_in = EXCLUDED.check_in,
+             check_out = EXCLUDED.check_out, platform = EXCLUDED.platform,
+             total_price = EXCLUDED.total_price, status = EXCLUDED.status,
+             num_guests = EXCLUDED.num_guests, created_at = EXCLUDED.created_at,
+             lead_time_days = EXCLUDED.lead_time_days, length_of_stay = EXCLUDED.length_of_stay,
+             price_per_night = EXCLUDED.price_per_night, commission = EXCLUDED.commission,
+             language = EXCLUDED.language, children = EXCLUDED.children,
+             guest_country = EXCLUDED.guest_country, currency = EXCLUDED.currency`,
+          [
+            b.id,
+            aptId,
+            b['guest-name'] || b.guestName || '',
+            checkIn, checkOut, platform, price,
+            b.type === 'cancellation' ? 'cancelled' : 'confirmed',
+            b['adults'] || b.adults || 1,
+            createdAt, leadTime, los, ppn,
+            commission, language, children, guestCountry, currency
+          ]
         );
       }
     });
 
-    transaction(allBookings);
     res.json({ synced: allBookings.length });
   } catch (err) {
     console.error('History sync failed:', err.message);
@@ -180,13 +182,21 @@ router.post('/sync-history', async (req, res) => {
 
 // Get full analytics data
 router.get('/data', async (req, res) => {
-  const db = getDb();
-  const properties = db.prepare('SELECT * FROM properties').all();
+  const propIds = scopedPropertyIds(req);
   const today = new Date();
   const todayStr = today.toISOString().split('T')[0];
 
-  const { property_id, from: rawFrom, to: rawTo } = req.query;
-  const propIds = parsePropertyIds(property_id);
+  const { from: rawFrom, to: rawTo } = req.query;
+
+  // Load only accessible properties
+  let properties;
+  if (propIds) {
+    const propParams = [];
+    const propFilter = addPropertyFilter(propIds, 'id', propParams);
+    properties = await getAll(`SELECT * FROM properties WHERE 1=1${propFilter}`, propParams);
+  } else {
+    properties = await getAll('SELECT * FROM properties');
+  }
 
   // Round date filters to full months so charts always show complete months
   const from = rawFrom ? rawFrom.substring(0, 7) + '-01' : null;
@@ -197,24 +207,23 @@ router.get('/data', async (req, res) => {
   const bookingParams = [];
   bookingFilters += addPropertyFilter(propIds, 'b.property_id', bookingParams);
   if (from) {
-    bookingFilters += ' AND b.check_in >= ?';
+    bookingFilters += ` AND b.check_in >= $${bookingParams.length + 1}`;
     bookingParams.push(from);
   }
   if (to) {
-    bookingFilters += ' AND b.check_in <= ?';
+    bookingFilters += ` AND b.check_in <= $${bookingParams.length + 1}`;
     bookingParams.push(to);
   }
 
   // All confirmed bookings (excluding calendar blocks)
   const BLOCKED_FILTER = ` AND b.platform NOT IN ('Blocked channel', 'Blocked channel auto')`;
-  const allBookings = db
-    .prepare(
-      `SELECT b.*, p.name as property_name, p.base_price as property_base_price, p.base_currency as property_base_currency, p.vat_rate as property_vat_rate, p.bank_charge_airbnb, p.bank_charge_booking, p.bank_charge_vrbo FROM bookings b
-       JOIN properties p ON b.property_id = p.id
-       WHERE b.status = 'confirmed'${BLOCKED_FILTER}${bookingFilters}
-       ORDER BY b.check_in ASC`
-    )
-    .all(...bookingParams);
+  const allBookings = await getAll(
+    `SELECT b.*, p.name as property_name, p.base_price as property_base_price, p.base_currency as property_base_currency, p.vat_rate as property_vat_rate, p.bank_charge_airbnb, p.bank_charge_booking, p.bank_charge_vrbo FROM bookings b
+     JOIN properties p ON b.property_id = p.id
+     WHERE b.status = 'confirmed'${BLOCKED_FILTER}${bookingFilters}
+     ORDER BY b.check_in ASC`,
+    bookingParams
+  );
 
   // Impute revenue from base_price when total_price is 0 (any platform, not just VRBO)
   for (const b of allBookings) {
@@ -228,7 +237,7 @@ router.get('/data', async (req, res) => {
   }
 
   // Convert all booking amounts to display currency
-  const displayCurrency = getDisplayCurrency();
+  const displayCurrency = await getDisplayCurrency();
   await bulkConvert(allBookings, displayCurrency);
 
   // --- Revenue by month ---
@@ -328,18 +337,17 @@ router.get('/data', async (req, res) => {
   const occParams = [];
   occFilters += addPropertyFilter(propIds, 'b.property_id', occParams);
   // Include bookings that overlap with the date range (check_out > from AND check_in <= to)
-  occFilters += ' AND b.check_out > ?';
+  occFilters += ` AND b.check_out > $${occParams.length + 1}`;
   occParams.push(occFrom);
-  occFilters += ' AND b.check_in <= ?';
+  occFilters += ` AND b.check_in <= $${occParams.length + 1}`;
   occParams.push(occTo);
 
-  const occBookings = db
-    .prepare(
-      `SELECT b.check_in, b.check_out, b.property_id FROM bookings b
-       WHERE b.status = 'confirmed'${BLOCKED_FILTER}${occFilters}
-       ORDER BY b.check_in ASC`
-    )
-    .all(...occParams);
+  const occBookings = await getAll(
+    `SELECT b.check_in, b.check_out, b.property_id FROM bookings b
+     WHERE b.status = 'confirmed'${BLOCKED_FILTER}${occFilters}
+     ORDER BY b.check_in ASC`,
+    occParams
+  );
 
   // Clamp night counting to the requested date range
   const occRangeStart = new Date(occFrom);
@@ -446,16 +454,17 @@ router.get('/data', async (req, res) => {
   const cancelParams = [];
   cancelFilters += addPropertyFilter(propIds, 'property_id', cancelParams);
   if (from) {
-    cancelFilters += ' AND check_in >= ?';
+    cancelFilters += ` AND check_in >= $${cancelParams.length + 1}`;
     cancelParams.push(from);
   }
   if (to) {
-    cancelFilters += ' AND check_in <= ?';
+    cancelFilters += ` AND check_in <= $${cancelParams.length + 1}`;
     cancelParams.push(to);
   }
-  const allBookingsIncCancelled = db
-    .prepare(`SELECT status, platform FROM bookings WHERE platform NOT IN ('Blocked channel', 'Blocked channel auto')${cancelFilters}`)
-    .all(...cancelParams);
+  const allBookingsIncCancelled = await getAll(
+    `SELECT status, platform FROM bookings WHERE platform NOT IN ('Blocked channel', 'Blocked channel auto')${cancelFilters}`,
+    cancelParams
+  );
   const totalBookings = allBookingsIncCancelled.length;
   const cancelled = allBookingsIncCancelled.filter((b) => b.status === 'cancelled').length;
   const cancellationRate = totalBookings > 0 ? Math.round((cancelled / totalBookings) * 100) : 0;
@@ -472,25 +481,19 @@ router.get('/data', async (req, res) => {
   }
 
   // --- Price trends (daily_rates table) ---
-  const priceTrends = db
-    .prepare(
-      `SELECT dr.date, dr.price, dr.available, p.name as property_name, p.id as property_id
-       FROM daily_rates dr
-       JOIN properties p ON dr.property_id = p.id
-       ORDER BY dr.date ASC`
-    )
-    .all();
+  const priceTrends = await getAll(
+    `SELECT dr.date, dr.price, dr.available, p.name as property_name, p.id as property_id
+     FROM daily_rates dr
+     JOIN properties p ON dr.property_id = p.id
+     ORDER BY dr.date ASC`
+  );
 
   // --- RevPAR by month (Revenue Per Available Room-night) ---
-  // Use filtered properties count, not all properties
-  const filteredProperties = propIds
-    ? properties.filter(p => propIds.includes(String(p.id)))
-    : properties;
   const revparByMonth = {};
   for (const entry of revenueTimeline) {
     const [y, m] = entry.month.split('-').map(Number);
     const daysInMonth = new Date(y, m, 0).getDate();
-    const totalAvailableNights = daysInMonth * filteredProperties.length;
+    const totalAvailableNights = daysInMonth * properties.length;
     revparByMonth[entry.month] = {
       month: entry.month,
       revpar: totalAvailableNights > 0 ? Math.round(entry.total / totalAvailableNights) : 0,
@@ -524,21 +527,20 @@ router.get('/data', async (req, res) => {
   const reviewParams = [];
   reviewFilters += addPropertyFilter(propIds, 'r.property_id', reviewParams);
   if (from) {
-    reviewFilters += ' AND r.review_date >= ?';
+    reviewFilters += ` AND r.review_date >= $${reviewParams.length + 1}`;
     reviewParams.push(from);
   }
   if (to) {
-    reviewFilters += ' AND r.review_date <= ?';
+    reviewFilters += ` AND r.review_date <= $${reviewParams.length + 1}`;
     reviewParams.push(to);
   }
-  const reviews = db
-    .prepare(
-      `SELECT r.*, p.name as property_name FROM reviews r
-       JOIN properties p ON r.property_id = p.id
-       WHERE 1=1${reviewFilters}
-       ORDER BY r.review_date DESC`
-    )
-    .all(...reviewParams);
+  const reviews = await getAll(
+    `SELECT r.*, p.name as property_name FROM reviews r
+     JOIN properties p ON r.property_id = p.id
+     WHERE 1=1${reviewFilters}
+     ORDER BY r.review_date DESC`,
+    reviewParams
+  );
 
   const reviewsByProperty = {};
   for (const r of reviews) {
@@ -599,19 +601,18 @@ router.get('/data', async (req, res) => {
     let priorFilters = '';
     const priorParams = [];
     priorFilters += addPropertyFilter(propIds, 'b.property_id', priorParams);
-    priorFilters += ' AND b.check_in >= ?';
+    priorFilters += ` AND b.check_in >= $${priorParams.length + 1}`;
     priorParams.push(priorFromStr);
-    priorFilters += ' AND b.check_in <= ?';
+    priorFilters += ` AND b.check_in <= $${priorParams.length + 1}`;
     priorParams.push(priorToStr);
 
-    const priorBookings = db
-      .prepare(
-        `SELECT b.*, p.name as property_name, p.base_price as property_base_price, p.base_currency as property_base_currency FROM bookings b
-         JOIN properties p ON b.property_id = p.id
-         WHERE b.status = 'confirmed'${BLOCKED_FILTER}${priorFilters}
-         ORDER BY b.check_in ASC`
-      )
-      .all(...priorParams);
+    const priorBookings = await getAll(
+      `SELECT b.*, p.name as property_name, p.base_price as property_base_price, p.base_currency as property_base_currency FROM bookings b
+       JOIN properties p ON b.property_id = p.id
+       WHERE b.status = 'confirmed'${BLOCKED_FILTER}${priorFilters}
+       ORDER BY b.check_in ASC`,
+      priorParams
+    );
 
     // Impute for prior period too (all platforms with R0)
     for (const b of priorBookings) {
@@ -645,17 +646,16 @@ router.get('/data', async (req, res) => {
     let priorOccFilters = '';
     const priorOccParams = [];
     priorOccFilters += addPropertyFilter(propIds, 'b.property_id', priorOccParams);
-    priorOccFilters += ' AND b.check_in >= ?';
+    priorOccFilters += ` AND b.check_in >= $${priorOccParams.length + 1}`;
     priorOccParams.push(priorFromStr);
-    priorOccFilters += ' AND b.check_in <= ?';
+    priorOccFilters += ` AND b.check_in <= $${priorOccParams.length + 1}`;
     priorOccParams.push(priorToStr);
 
-    const priorOccBookings = db
-      .prepare(
-        `SELECT b.check_in, b.check_out, b.property_id, b.length_of_stay FROM bookings b
-         WHERE b.status = 'confirmed'${BLOCKED_FILTER}${priorOccFilters}`
-      )
-      .all(...priorOccParams);
+    const priorOccBookings = await getAll(
+      `SELECT b.check_in, b.check_out, b.property_id, b.length_of_stay FROM bookings b
+       WHERE b.status = 'confirmed'${BLOCKED_FILTER}${priorOccFilters}`,
+      priorOccParams
+    );
 
     let priorTotalOccNights = 0;
     let priorTotalDays = 0;
@@ -722,20 +722,16 @@ router.get('/data', async (req, res) => {
 });
 
 // --- Reviews CRUD (manual entry since Smoobu has no reviews API) ---
-router.get('/reviews', (req, res) => {
-  const db = getDb();
-  const reviews = db
-    .prepare(
-      `SELECT r.*, p.name as property_name FROM reviews r
-       JOIN properties p ON r.property_id = p.id
-       ORDER BY r.review_date DESC`
-    )
-    .all();
+router.get('/reviews', async (req, res) => {
+  const reviews = await getAll(
+    `SELECT r.*, p.name as property_name FROM reviews r
+     JOIN properties p ON r.property_id = p.id
+     ORDER BY r.review_date DESC`
+  );
   res.json(reviews);
 });
 
-router.post('/reviews', (req, res) => {
-  const db = getDb();
+router.post('/reviews', async (req, res) => {
   const { property_id, booking_id, platform, guest_name, rating, comment, review_date, response } = req.body;
 
   if (!property_id || !review_date) {
@@ -744,19 +740,17 @@ router.post('/reviews', (req, res) => {
 
   const sentiment = analyzeSentiment(comment);
 
-  const result = db
-    .prepare(
-      `INSERT INTO reviews (property_id, booking_id, platform, guest_name, rating, comment, review_date, response, sentiment)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(property_id, booking_id || null, platform || '', guest_name || '', rating || null, comment || '', review_date, response || '', sentiment);
+  const result = await run(
+    `INSERT INTO reviews (property_id, booking_id, platform, guest_name, rating, comment, review_date, response, sentiment)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+    [property_id, booking_id || null, platform || '', guest_name || '', rating || null, comment || '', review_date, response || '', sentiment]
+  );
 
-  res.status(201).json({ id: result.lastInsertRowid, sentiment });
+  res.status(201).json({ id: result.rows[0].id, sentiment });
 });
 
-router.delete('/reviews/:id', (req, res) => {
-  const db = getDb();
-  db.prepare('DELETE FROM reviews WHERE id = ?').run(req.params.id);
+router.delete('/reviews/:id', async (req, res) => {
+  await run('DELETE FROM reviews WHERE id = $1', [req.params.id]);
   res.json({ deleted: true });
 });
 
@@ -764,14 +758,14 @@ router.delete('/reviews/:id', (req, res) => {
 router.post('/reviews/sync', async (req, res) => {
   try {
     const { syncReviewsForProperty } = require('../services/apify-reviews');
-    const db = getDb();
     const { property_id } = req.body;
 
     let properties;
     if (property_id) {
-      properties = [db.prepare('SELECT * FROM properties WHERE id = ?').get(property_id)].filter(Boolean);
+      const prop = await getOne('SELECT * FROM properties WHERE id = $1', [property_id]);
+      properties = prop ? [prop] : [];
     } else {
-      properties = db.prepare('SELECT * FROM properties').all();
+      properties = await getAll('SELECT * FROM properties');
     }
 
     if (!properties.length) return res.status(404).json({ error: 'No properties found' });
@@ -798,33 +792,38 @@ router.post('/reviews/sync', async (req, res) => {
 });
 
 // --- Seasonality endpoint ---
-router.get('/seasonality', (req, res) => {
+router.get('/seasonality', async (req, res) => {
   try {
-    const db = getDb();
-    const { property_id, from, to } = req.query;
-    const propIds = parsePropertyIds(property_id);
-    const properties = db.prepare('SELECT * FROM properties').all();
+    const { from, to } = req.query;
+    const propIds = scopedPropertyIds(req);
+    let properties;
+    if (propIds) {
+      const pp = [];
+      const pf = addPropertyFilter(propIds, 'id', pp);
+      properties = await getAll(`SELECT * FROM properties WHERE 1=1${pf}`, pp);
+    } else {
+      properties = await getAll('SELECT * FROM properties');
+    }
 
     let filters = '';
     const params = [];
     filters += addPropertyFilter(propIds, 'b.property_id', params);
     if (from) {
-      filters += ' AND b.check_in >= ?';
+      filters += ` AND b.check_in >= $${params.length + 1}`;
       params.push(from);
     }
     if (to) {
-      filters += ' AND b.check_in <= ?';
+      filters += ` AND b.check_in <= $${params.length + 1}`;
       params.push(to);
     }
 
-    const bookings = db
-      .prepare(
-        `SELECT b.*, p.name as property_name, p.base_price as property_base_price FROM bookings b
-         JOIN properties p ON b.property_id = p.id
-         WHERE b.status = 'confirmed' AND b.platform NOT IN ('Blocked channel', 'Blocked channel auto')${filters}
-         ORDER BY b.check_in ASC`
-      )
-      .all(...params);
+    const bookings = await getAll(
+      `SELECT b.*, p.name as property_name, p.base_price as property_base_price FROM bookings b
+       JOIN properties p ON b.property_id = p.id
+       WHERE b.status = 'confirmed' AND b.platform NOT IN ('Blocked channel', 'Blocked channel auto')${filters}
+       ORDER BY b.check_in ASC`,
+      params
+    );
 
     // Impute VRBO revenue from base_price when total_price is 0
     for (const b of bookings) {
@@ -973,69 +972,76 @@ router.get('/seasonality', (req, res) => {
 });
 
 // --- Competitors CRUD ---
-router.get('/competitors', (req, res) => {
-  const db = getDb();
-  const { property_id } = req.query;
-  const propIds = parsePropertyIds(property_id);
+router.get('/competitors', async (req, res) => {
+  const propIds = scopedPropertyIds(req);
   let sql = `SELECT c.*, p.name as property_name FROM competitors c JOIN properties p ON c.property_id = p.id`;
   const params = [];
   if (propIds) {
-    const placeholders = propIds.map(() => '?').join(',');
+    const placeholders = propIds.map((_, i) => `$${params.length + i + 1}`).join(',');
     sql += ` WHERE c.property_id IN (${placeholders})`;
     propIds.forEach(id => params.push(id));
   }
   sql += ' ORDER BY c.id DESC';
-  const competitors = db.prepare(sql).all(...params);
+  const competitors = await getAll(sql, params);
   res.json(competitors);
 });
 
-router.post('/competitors', (req, res) => {
-  const db = getDb();
+router.post('/competitors', async (req, res) => {
   const { property_id, name, platform, listing_url, listing_id, bedrooms, location, avg_nightly_rate, estimated_occupancy, review_score } = req.body;
   if (!property_id || !name) {
     return res.status(400).json({ error: 'property_id and name are required' });
   }
-  const result = db.prepare(
+  const result = await run(
     `INSERT INTO competitors (property_id, name, platform, listing_url, listing_id, bedrooms, location, avg_nightly_rate, estimated_occupancy, review_score, last_updated)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
-  ).run(property_id, name, platform || '', listing_url || '', listing_id || '', bedrooms || 0, location || '', avg_nightly_rate || 0, estimated_occupancy || 0, review_score || 0);
-  res.status(201).json({ id: result.lastInsertRowid });
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW()) RETURNING id`,
+    [property_id, name, platform || '', listing_url || '', listing_id || '', bedrooms || 0, location || '', avg_nightly_rate || 0, estimated_occupancy || 0, review_score || 0]
+  );
+  res.status(201).json({ id: result.rows[0].id });
 });
 
-router.put('/competitors/:id', (req, res) => {
-  const db = getDb();
+router.put('/competitors/:id', async (req, res) => {
   const { name, platform, listing_url, listing_id, bedrooms, location, avg_nightly_rate, estimated_occupancy, review_score, property_id } = req.body;
-  db.prepare(
-    `UPDATE competitors SET name = ?, platform = ?, listing_url = ?, listing_id = ?, bedrooms = ?, location = ?, avg_nightly_rate = ?, estimated_occupancy = ?, review_score = ?, property_id = COALESCE(?, property_id), last_updated = datetime('now')
-     WHERE id = ?`
-  ).run(name, platform || '', listing_url || '', listing_id || '', bedrooms || 0, location || '', avg_nightly_rate || 0, estimated_occupancy || 0, review_score || 0, property_id || null, req.params.id);
+  await run(
+    `UPDATE competitors SET name = $1, platform = $2, listing_url = $3, listing_id = $4, bedrooms = $5, location = $6, avg_nightly_rate = $7, estimated_occupancy = $8, review_score = $9, property_id = COALESCE($10, property_id), last_updated = NOW()
+     WHERE id = $11`,
+    [name, platform || '', listing_url || '', listing_id || '', bedrooms || 0, location || '', avg_nightly_rate || 0, estimated_occupancy || 0, review_score || 0, property_id || null, req.params.id]
+  );
   res.json({ updated: true });
 });
 
-router.delete('/competitors/:id', (req, res) => {
-  const db = getDb();
-  db.prepare('DELETE FROM competitors WHERE id = ?').run(req.params.id);
+router.delete('/competitors/:id', async (req, res) => {
+  await run('DELETE FROM competitors WHERE id = $1', [req.params.id]);
   res.json({ deleted: true });
 });
 
 // --- Market Position ---
-router.get('/market-position', (req, res) => {
-  const db = getDb();
-  const properties = db.prepare('SELECT * FROM properties').all();
+router.get('/market-position', async (req, res) => {
+  const mpPropIds = scopedPropertyIds(req);
+  let properties;
+  if (mpPropIds) {
+    const pp = [];
+    const pf = addPropertyFilter(mpPropIds, 'id', pp);
+    properties = await getAll(`SELECT * FROM properties WHERE 1=1${pf}`, pp);
+  } else {
+    properties = await getAll('SELECT * FROM properties');
+  }
   const result = [];
 
   for (const p of properties) {
     // My ADR - from confirmed bookings
-    const myStats = db.prepare(
-      `SELECT AVG(price_per_night) as avg_adr FROM bookings WHERE property_id = ? AND status = 'confirmed' AND price_per_night > 0`
-    ).get(p.id);
-    const myReview = db.prepare(
-      `SELECT AVG(rating) as avg_rating FROM reviews WHERE property_id = ? AND rating IS NOT NULL`
-    ).get(p.id);
+    const myStats = await getOne(
+      `SELECT AVG(price_per_night) as avg_adr FROM bookings WHERE property_id = $1 AND status = 'confirmed' AND price_per_night > 0`,
+      [p.id]
+    );
+    const myReview = await getOne(
+      `SELECT AVG(rating) as avg_rating FROM reviews WHERE property_id = $1 AND rating IS NOT NULL`,
+      [p.id]
+    );
 
-    const competitors = db.prepare(
-      `SELECT avg_nightly_rate, review_score FROM competitors WHERE property_id = ?`
-    ).all(p.id);
+    const competitors = await getAll(
+      `SELECT avg_nightly_rate, review_score FROM competitors WHERE property_id = $1`,
+      [p.id]
+    );
 
     const myAdr = myStats?.avg_adr ? Math.round(myStats.avg_adr) : 0;
     const myReviewScore = myReview?.avg_rating ? Math.round(myReview.avg_rating * 10) / 10 : 0;

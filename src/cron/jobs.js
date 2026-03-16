@@ -2,7 +2,7 @@ const cron = require('node-cron');
 const { runPricingEngine } = require('../services/pricing');
 const { sendCheckinMessages, sendCheckoutMessages } = require('../services/messaging');
 const { runAssignmentForAllCheckouts } = require('../services/cleaner-assignment');
-const { getDb } = require('../db/database');
+const { getAll, getOne, run } = require('../db/database');
 const whatsapp = require('../services/whatsapp');
 
 // Daily at 6:00 AM SAST (UTC+2) = 4:00 AM UTC — run pricing engine
@@ -49,25 +49,23 @@ cron.schedule('0 3 * * *', async () => {
 // Every 30 minutes — send cleaning job reminders (2 hours before start)
 cron.schedule('*/30 * * * *', async () => {
   try {
-    const db = getDb();
     const now = new Date();
     const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
     const today = now.toISOString().split('T')[0];
 
-    const jobs = db
-      .prepare(
-        `SELECT cj.*, c.name as cleaner_name, c.phone as cleaner_phone, c.id as cid,
-                p.name as property_name, p.address as property_address
-         FROM cleaning_jobs cj
-         JOIN cleaners c ON cj.cleaner_id = c.id
-         JOIN properties p ON cj.property_id = p.id
-         WHERE cj.cleaning_date = ? AND cj.reminder_sent = 0 AND cj.status != 'completed'`
-      )
-      .all(today);
+    const jobs = await getAll(
+      `SELECT cj.*, c.name as cleaner_name, c.phone as cleaner_phone, c.id as cid,
+              p.name as property_name, p.address as property_address
+       FROM cleaning_jobs cj
+       JOIN cleaners c ON cj.cleaner_id = c.id
+       JOIN properties p ON cj.property_id = p.id
+       WHERE cj.cleaning_date = $1 AND cj.reminder_sent = 0 AND cj.status != 'completed'`,
+      [today]
+    );
 
     for (const job of jobs) {
       // Check notification prefs
-      const prefs = db.prepare('SELECT * FROM cleaner_notification_prefs WHERE cleaner_id = ?').get(job.cid);
+      const prefs = await getOne('SELECT * FROM cleaner_notification_prefs WHERE cleaner_id = $1', [job.cid]);
       if (prefs && (!prefs.whatsapp_enabled || !prefs.notify_2_hours)) continue;
 
       const [h, m] = job.start_time.split(':').map(Number);
@@ -75,13 +73,12 @@ cron.schedule('*/30 * * * *', async () => {
       jobStart.setHours(h, m);
 
       if (jobStart <= twoHoursFromNow && jobStart > now) {
-        const nextBooking = db
-          .prepare(
-            `SELECT * FROM bookings
-             WHERE property_id = ? AND check_in = ? AND status = 'confirmed'
-             ORDER BY check_in ASC LIMIT 1`
-          )
-          .get(job.property_id, today);
+        const nextBooking = await getOne(
+          `SELECT * FROM bookings
+           WHERE property_id = $1 AND check_in = $2 AND status = 'confirmed'
+           ORDER BY check_in ASC LIMIT 1`,
+          [job.property_id, today]
+        );
 
         const guestInfo = nextBooking
           ? `Next guest: ${nextBooking.guest_name || 'Guest'} checking in at 15:00 (${nextBooking.num_guests || '?'} guests)`
@@ -96,7 +93,7 @@ cron.schedule('*/30 * * * *', async () => {
 
         try {
           await whatsapp.sendMessage(job.cleaner_phone, message);
-          db.prepare('UPDATE cleaning_jobs SET reminder_sent = 1 WHERE id = ?').run(job.id);
+          await run('UPDATE cleaning_jobs SET reminder_sent = 1 WHERE id = $1', [job.id]);
         } catch (err) {
           console.error(`Failed to send reminder to ${job.cleaner_name}:`, err.message);
         }
@@ -110,13 +107,12 @@ cron.schedule('*/30 * * * *', async () => {
 // Daily at 8:00 AM SAST = 6:00 AM UTC — send 1-day and 7-day advance WhatsApp notifications
 cron.schedule('0 6 * * *', async () => {
   try {
-    const db = getDb();
     const now = new Date();
     const tomorrow = new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     const in7Days = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
     const sendAdvanceNotice = async (targetDate, label, prefField) => {
-      const jobs = db.prepare(
+      const jobs = await getAll(
         `SELECT cj.*, c.name as cleaner_name, c.phone as cleaner_phone, c.id as cid,
                 p.name as property_name, p.address as property_address,
                 b.guest_name, b.num_guests, b.special_requirements
@@ -124,11 +120,12 @@ cron.schedule('0 6 * * *', async () => {
          JOIN cleaners c ON cj.cleaner_id = c.id
          JOIN properties p ON cj.property_id = p.id
          LEFT JOIN bookings b ON cj.booking_id = b.id
-         WHERE cj.cleaning_date = ? AND cj.status != 'completed'`
-      ).all(targetDate);
+         WHERE cj.cleaning_date = $1 AND cj.status != 'completed'`,
+        [targetDate]
+      );
 
       for (const job of jobs) {
-        const prefs = db.prepare('SELECT * FROM cleaner_notification_prefs WHERE cleaner_id = ?').get(job.cid);
+        const prefs = await getOne('SELECT * FROM cleaner_notification_prefs WHERE cleaner_id = $1', [job.cid]);
         if (prefs && (!prefs.whatsapp_enabled || !prefs[prefField])) continue;
 
         const guestInfo = job.guest_name

@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getDb } = require('../db/database');
+const { getAll, getOne, run } = require('../db/database');
 const {
   assignCleanerForCheckout,
   unassignCleanerFromBooking,
@@ -21,14 +21,11 @@ router.post('/', async (req, res) => {
       return res.status(200).json({ received: true, action: 'no data' });
     }
 
-    const db = getDb();
     const smoobuId = bookingData.id || bookingData.reservationId;
     const apartmentId = bookingData['apartment']?.id || bookingData.apartmentId;
 
     // Find local property
-    const property = db
-      .prepare('SELECT * FROM properties WHERE smoobu_id = ?')
-      .get(apartmentId);
+    const property = await getOne('SELECT * FROM properties WHERE smoobu_id = $1', [apartmentId]);
 
     if (!property) {
       console.log(`Webhook: Property not found for apartment ${apartmentId}`);
@@ -37,71 +34,73 @@ router.post('/', async (req, res) => {
 
     if (action === 'newReservation' || action === 'new') {
       // Upsert booking
-      db.prepare(
+      await run(
         `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'confirmed', ?)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed', $8)
          ON CONFLICT(smoobu_id) DO UPDATE SET
-           guest_name = excluded.guest_name, check_in = excluded.check_in,
-           check_out = excluded.check_out, platform = excluded.platform,
-           total_price = excluded.total_price, status = 'confirmed',
-           num_guests = excluded.num_guests`
-      ).run(
-        smoobuId,
-        property.id,
-        bookingData['guest-name'] || bookingData.guestName || '',
-        bookingData.arrival || bookingData.arrivalDate,
-        bookingData.departure || bookingData.departureDate,
-        bookingData['channel']?.name || bookingData.channel || '',
-        bookingData.price || 0,
-        bookingData.adults || 1
+           guest_name = EXCLUDED.guest_name, check_in = EXCLUDED.check_in,
+           check_out = EXCLUDED.check_out, platform = EXCLUDED.platform,
+           total_price = EXCLUDED.total_price, status = 'confirmed',
+           num_guests = EXCLUDED.num_guests`,
+        [
+          smoobuId,
+          property.id,
+          bookingData['guest-name'] || bookingData.guestName || '',
+          bookingData.arrival || bookingData.arrivalDate,
+          bookingData.departure || bookingData.departureDate,
+          bookingData['channel']?.name || bookingData.channel || '',
+          bookingData.price || 0,
+          bookingData.adults || 1
+        ]
       );
 
-      const booking = db.prepare('SELECT * FROM bookings WHERE smoobu_id = ?').get(smoobuId);
+      const booking = await getOne('SELECT * FROM bookings WHERE smoobu_id = $1', [smoobuId]);
 
       // Find next booking for this property
-      const nextBooking = db
-        .prepare(
-          `SELECT * FROM bookings
-           WHERE property_id = ? AND check_in >= ? AND status = 'confirmed' AND id != ?
-           ORDER BY check_in ASC LIMIT 1`
-        )
-        .get(property.id, booking.check_out, booking.id);
+      const nextBooking = await getOne(
+        `SELECT * FROM bookings
+         WHERE property_id = $1 AND check_in >= $2 AND status = 'confirmed' AND id != $3
+         ORDER BY check_in ASC LIMIT 1`,
+        [property.id, booking.check_out, booking.id]
+      );
 
       await assignCleanerForCheckout(booking, nextBooking);
 
     } else if (action === 'cancelReservation' || action === 'cancel') {
-      const booking = db.prepare('SELECT * FROM bookings WHERE smoobu_id = ?').get(smoobuId);
+      const booking = await getOne('SELECT * FROM bookings WHERE smoobu_id = $1', [smoobuId]);
 
       if (booking) {
-        db.prepare("UPDATE bookings SET status = 'cancelled' WHERE id = ?").run(booking.id);
+        await run("UPDATE bookings SET status = 'cancelled' WHERE id = $1", [booking.id]);
         await unassignCleanerFromBooking(booking.id);
 
         // Unblock any dates that were blocked due to this booking's checkout
-        const blockedDates = db
-          .prepare('SELECT * FROM blocked_dates WHERE property_id = ? AND date = ?')
-          .all(property.id, booking.check_out);
+        const blockedDates = await getAll(
+          'SELECT * FROM blocked_dates WHERE property_id = $1 AND date = $2',
+          [property.id, booking.check_out]
+        );
 
         for (const blocked of blockedDates) {
-          db.prepare('DELETE FROM blocked_dates WHERE id = ?').run(blocked.id);
+          await run('DELETE FROM blocked_dates WHERE id = $1', [blocked.id]);
         }
       }
 
     } else if (action === 'modifyReservation' || action === 'modify') {
       // Update booking data
-      db.prepare(
+      await run(
         `UPDATE bookings SET
-           guest_name = ?, check_in = ?, check_out = ?, total_price = ?, num_guests = ?
-         WHERE smoobu_id = ?`
-      ).run(
-        bookingData['guest-name'] || bookingData.guestName || '',
-        bookingData.arrival || bookingData.arrivalDate,
-        bookingData.departure || bookingData.departureDate,
-        bookingData.price || 0,
-        bookingData.adults || 1,
-        smoobuId
+           guest_name = $1, check_in = $2, check_out = $3, total_price = $4, num_guests = $5
+         WHERE smoobu_id = $6`,
+        [
+          bookingData['guest-name'] || bookingData.guestName || '',
+          bookingData.arrival || bookingData.arrivalDate,
+          bookingData.departure || bookingData.departureDate,
+          bookingData.price || 0,
+          bookingData.adults || 1,
+          smoobuId
+        ]
       );
 
-      const booking = db.prepare('SELECT * FROM bookings WHERE smoobu_id = ?').get(smoobuId);
+      const booking = await getOne('SELECT * FROM bookings WHERE smoobu_id = $1', [smoobuId]);
       if (booking) {
         await reassignCleanerForBooking(booking.id);
       }

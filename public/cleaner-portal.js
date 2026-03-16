@@ -22,8 +22,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   const user = await checkAuth();
   if (!user) return;
 
+  const isPinAuth = user.authType === 'pin';
+
   document.getElementById('portalUser').innerHTML =
     `<span>${escHtml(user.name)}</span><button class="btn-logout" onclick="doLogout()">Logout</button>`;
+
+  // Hide Messages & Shopping tabs for PIN-auth cleaners
+  if (isPinAuth) {
+    document.querySelectorAll('.staff-only-tab').forEach(el => el.style.display = 'none');
+  }
 
   // Tab switching
   document.querySelectorAll('.portal-tabs button').forEach(btn => {
@@ -32,7 +39,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   await loadProfile();
   loadJobs();
-  loadMessages();
+  if (!isPinAuth) loadMessages();
 });
 
 function switchTab(tab) {
@@ -42,7 +49,7 @@ function switchTab(tab) {
   if (tab === 'messages') loadMessages();
   if (tab === 'availability') renderAvailability();
   if (tab === 'maintenance') loadMaintenance();
-  if (tab === 'inventory') initInventory();
+  if (tab === 'checklist') initInventory();
   if (tab === 'shopping') loadShopping();
   if (tab === 'settings') loadSettings();
 }
@@ -177,9 +184,10 @@ function renderJobList() {
           ${j.guest_name ? `<div style="font-size:0.8rem;margin-top:0.25rem;">Guest: ${escHtml(j.guest_name)} (${j.num_guests || '?'} guests)</div>` : ''}
           ${j.special_requirements ? `<div class="special-req">Special: ${escHtml(j.special_requirements)}</div>` : ''}
         </div>
-        <div style="display:flex;gap:4px;">
+        <div style="display:flex;gap:4px;flex-wrap:wrap;">
           ${j.status === 'pending' ? `<button class="btn btn-primary btn-sm" onclick="updateJobStatus(${j.id}, 'confirmed')">Confirm</button>` : ''}
-          ${j.status !== 'completed' ? `<button class="btn btn-secondary btn-sm" onclick="updateJobStatus(${j.id}, 'completed')">Complete</button>` : ''}
+          ${j.status !== 'completed' && j.status !== 'ready' ? `<button class="btn btn-secondary btn-sm" onclick="updateJobStatus(${j.id}, 'completed')">Complete</button>` : ''}
+          ${j.status === 'confirmed' || j.status === 'completed' ? `<button class="btn btn-sm" style="background:#8b5cf6;color:#fff;border:none;" onclick="openJobChecklist(${j.id})">Checklist</button>` : ''}
         </div>
       </div>
     </div>
@@ -392,12 +400,12 @@ async function reportIssue(e) {
   loadMaintenance();
 }
 
-/* ───── Inventory ───── */
+/* ───── Checklist / Inventory ───── */
 
 let inventoryItems = [];
+let activeJobId = null;
 
 async function initInventory() {
-  // Populate job dropdown for selected property
   await loadInventory();
 }
 
@@ -412,7 +420,7 @@ async function loadInventory() {
     .filter(j => String(j.property_id) === String(propId));
   const jobSel = document.getElementById('invJob');
   jobSel.innerHTML = '<option value="">Select job...</option>' +
-    jobs.map(j => `<option value="${j.id}">${j.cleaning_date} - ${escHtml(j.property_name)}</option>`).join('');
+    jobs.map(j => `<option value="${j.id}">${j.cleaning_date} - ${escHtml(j.property_name)} (${j.status})</option>`).join('');
 
   renderInventory();
 }
@@ -422,6 +430,7 @@ function renderInventory() {
   if (inventoryItems.length === 0) {
     container.innerHTML = '<p style="color:#999;">No checklist items set up for this property. Ask your admin to add items.</p>';
     document.getElementById('btnSubmitInv').disabled = true;
+    document.getElementById('btnReady').disabled = true;
     return;
   }
 
@@ -432,56 +441,138 @@ function renderInventory() {
       currentCat = item.category;
       html += `<div style="font-weight:600;margin-top:0.75rem;margin-bottom:0.25rem;color:#1a1a2e;">${escHtml(currentCat)}</div>`;
     }
-    html += `
-      <div class="checklist-row" data-item-id="${item.id}">
-        <div style="flex:2;">${escHtml(item.item_name)} <span style="color:#999;font-size:0.75rem;">(expect: ${item.expected_quantity})</span></div>
-        <div style="flex:1;">
-          <input type="number" class="inv-qty" value="${item.expected_quantity}" min="0" style="width:60px;font-size:0.85rem;">
-        </div>
-        <div style="flex:1;">
-          <select class="inv-status" style="font-size:0.8rem;">
-            <option value="ok">OK</option>
-            <option value="low">Low</option>
-            <option value="missing">Missing</option>
-            <option value="damaged">Damaged</option>
-          </select>
-        </div>
-        <div style="flex:1;">
-          <input type="text" class="inv-notes" placeholder="Notes" style="font-size:0.8rem;">
-        </div>
-      </div>`;
+    const isTask = (item.item_type || 'task') === 'task';
+    if (isTask) {
+      html += `
+        <div class="checklist-row" data-item-id="${item.id}">
+          <label style="flex:3;display:flex;align-items:center;gap:0.5rem;cursor:pointer;">
+            <input type="checkbox" class="inv-task-check"> ${escHtml(item.item_name)}
+          </label>
+          <div style="flex:1;">
+            <input type="text" class="inv-notes" placeholder="Notes" style="font-size:0.8rem;">
+          </div>
+        </div>`;
+    } else {
+      html += `
+        <div class="checklist-row" data-item-id="${item.id}">
+          <div style="flex:2;">${escHtml(item.item_name)} <span style="color:#999;font-size:0.75rem;">(expect: ${item.expected_quantity})</span></div>
+          <div style="flex:1;">
+            <input type="number" class="inv-qty" value="${item.expected_quantity}" min="0" style="width:60px;font-size:0.85rem;">
+          </div>
+          <div style="flex:1;">
+            <select class="inv-status" style="font-size:0.8rem;">
+              <option value="ok">OK</option>
+              <option value="low">Low</option>
+              <option value="missing">Missing</option>
+              <option value="damaged">Damaged</option>
+            </select>
+          </div>
+          <div style="flex:1;">
+            <input type="text" class="inv-notes" placeholder="Notes" style="font-size:0.8rem;">
+          </div>
+        </div>`;
+    }
   }
   container.innerHTML = html;
   document.getElementById('btnSubmitInv').disabled = false;
 }
 
-async function loadExistingChecks() {
+async function loadJobChecklist() {
   const jobId = document.getElementById('invJob').value;
   if (!jobId) return;
-  const checks = await api(`/api/cleaner-portal/inventory/checks/${jobId}`) || [];
-  if (checks.length === 0) return;
+  activeJobId = jobId;
 
-  // Pre-fill form with existing checks
+  // Use the merged checklist endpoint
+  const merged = await api(`/api/cleaner-portal/jobs/${jobId}/checklist`) || [];
+  if (merged.length === 0) {
+    // Fall back to loading existing checks for backward compat
+    const checks = await api(`/api/cleaner-portal/inventory/checks/${jobId}`) || [];
+    prefillChecks(checks);
+    return;
+  }
+
+  // Pre-fill form with existing checks from merged data
+  for (const item of merged) {
+    if (!item.check) continue;
+    const row = document.querySelector(`.checklist-row[data-item-id="${item.id}"]`);
+    if (!row) continue;
+    const taskCheck = row.querySelector('.inv-task-check');
+    if (taskCheck) {
+      taskCheck.checked = item.check.status === 'ok';
+    } else {
+      const qtyInput = row.querySelector('.inv-qty');
+      if (qtyInput) qtyInput.value = item.check.actual_quantity;
+      const statusSel = row.querySelector('.inv-status');
+      if (statusSel) statusSel.value = item.check.status;
+    }
+    const notesInput = row.querySelector('.inv-notes');
+    if (notesInput) notesInput.value = item.check.notes || '';
+  }
+
+  // Enable ready button
+  document.getElementById('btnReady').disabled = false;
+}
+
+function prefillChecks(checks) {
   for (const check of checks) {
     const row = document.querySelector(`.checklist-row[data-item-id="${check.checklist_item_id}"]`);
     if (!row) continue;
-    row.querySelector('.inv-qty').value = check.actual_quantity;
-    row.querySelector('.inv-status').value = check.status;
-    row.querySelector('.inv-notes').value = check.notes || '';
+    const taskCheck = row.querySelector('.inv-task-check');
+    if (taskCheck) {
+      taskCheck.checked = check.status === 'ok';
+    } else {
+      const qtyInput = row.querySelector('.inv-qty');
+      if (qtyInput) qtyInput.value = check.actual_quantity;
+      const statusSel = row.querySelector('.inv-status');
+      if (statusSel) statusSel.value = check.status;
+    }
+    const notesInput = row.querySelector('.inv-notes');
+    if (notesInput) notesInput.value = check.notes || '';
   }
+}
+
+// Open checklist tab from job card
+function openJobChecklist(jobId) {
+  // Find the job to set property dropdown
+  const job = myJobs.find(j => j.id === jobId);
+  if (!job) return;
+
+  switchTab('checklist');
+
+  // Set property and job selectors
+  const propSel = document.getElementById('invProperty');
+  if (propSel) propSel.value = String(job.property_id);
+
+  loadInventory().then(() => {
+    const jobSel = document.getElementById('invJob');
+    if (jobSel) jobSel.value = String(jobId);
+    loadJobChecklist();
+  });
 }
 
 async function submitInventoryCheck() {
   const jobId = document.getElementById('invJob').value;
   if (!jobId) { alert('Please select a cleaning job'); return; }
+  activeJobId = jobId;
 
   const rows = document.querySelectorAll('.checklist-row');
-  const items = Array.from(rows).map(row => ({
-    checklist_item_id: parseInt(row.dataset.itemId),
-    actual_quantity: parseInt(row.querySelector('.inv-qty').value) || 0,
-    status: row.querySelector('.inv-status').value,
-    notes: row.querySelector('.inv-notes').value.trim(),
-  }));
+  const items = Array.from(rows).map(row => {
+    const taskCheck = row.querySelector('.inv-task-check');
+    if (taskCheck) {
+      return {
+        checklist_item_id: parseInt(row.dataset.itemId),
+        actual_quantity: taskCheck.checked ? 1 : 0,
+        status: taskCheck.checked ? 'ok' : 'missing',
+        notes: (row.querySelector('.inv-notes')?.value || '').trim(),
+      };
+    }
+    return {
+      checklist_item_id: parseInt(row.dataset.itemId),
+      actual_quantity: parseInt(row.querySelector('.inv-qty')?.value) || 0,
+      status: row.querySelector('.inv-status')?.value || 'ok',
+      notes: (row.querySelector('.inv-notes')?.value || '').trim(),
+    };
+  });
 
   const result = await api('/api/cleaner-portal/inventory/check', {
     method: 'POST',
@@ -489,6 +580,25 @@ async function submitInventoryCheck() {
   });
   if (result && result.error) { alert(result.error); return; }
   showToast(`Checklist saved (${items.length} items)`);
+  document.getElementById('btnReady').disabled = false;
+}
+
+async function markReadyForCheckin() {
+  const jobId = document.getElementById('invJob').value || activeJobId;
+  if (!jobId) { alert('Please select a cleaning job first'); return; }
+
+  // Save checklist first
+  await submitInventoryCheck();
+
+  if (!confirm('Mark this property as ready for check-in? This will notify the admin and property manager.')) return;
+
+  const result = await api(`/api/cleaner-portal/jobs/${jobId}/ready`, { method: 'POST' });
+  if (result && result.error) {
+    alert(result.error);
+    return;
+  }
+  showToast('Marked as Ready for Check-in! Notifications sent.');
+  loadJobs();
 }
 
 /* ───── Shopping List ───── */

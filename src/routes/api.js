@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getDb } = require('../db/database');
+const { getAll, getOne, run, transaction, inParams } = require('../db/database');
 const smoobu = require('../services/smoobu');
 const { requireRole, scopeProperties } = require('../middleware/auth');
 const { detectCurrency } = require('../services/currency-detect');
@@ -10,21 +10,18 @@ const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates'
 router.post('/sync/properties', requireRole('admin'), async (req, res) => {
   try {
     const apartments = await smoobu.getProperties();
-    const db = getDb();
 
-    const upsert = db.prepare(`
-      INSERT INTO properties (smoobu_id, name)
-      VALUES (?, ?)
-      ON CONFLICT(smoobu_id) DO UPDATE SET name = excluded.name
-    `);
-
-    const transaction = db.transaction((apartments) => {
+    await transaction(async (client) => {
       for (const apt of apartments) {
-        upsert.run(apt.id, apt.name);
+        await client.query(
+          `INSERT INTO properties (smoobu_id, name)
+           VALUES ($1, $2)
+           ON CONFLICT(smoobu_id) DO UPDATE SET name = excluded.name`,
+          [apt.id, apt.name]
+        );
       }
     });
 
-    transaction(apartments);
     res.json({ synced: apartments.length, properties: apartments });
   } catch (err) {
     console.error('Property sync failed:', err.message);
@@ -35,7 +32,6 @@ router.post('/sync/properties', requireRole('admin'), async (req, res) => {
 // Sync bookings from Smoobu into local DB
 router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
   try {
-    const db = getDb();
     const today = new Date();
     const from = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000)
       .toISOString()
@@ -58,29 +54,11 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
 
     // Build property base_currency map for fallback
     const propCurrencyMap = {};
-    const props = db.prepare('SELECT smoobu_id, base_currency FROM properties').all();
+    const props = await getAll('SELECT smoobu_id, base_currency FROM properties');
     for (const p of props) propCurrencyMap[p.smoobu_id] = p.base_currency || 'ZAR';
 
-    const upsert = db.prepare(`
-      INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, currency)
-      VALUES (?, (SELECT id FROM properties WHERE smoobu_id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(smoobu_id) DO UPDATE SET
-        guest_name = excluded.guest_name,
-        check_in = excluded.check_in,
-        check_out = excluded.check_out,
-        platform = excluded.platform,
-        total_price = excluded.total_price,
-        status = excluded.status,
-        num_guests = excluded.num_guests,
-        created_at = excluded.created_at,
-        lead_time_days = excluded.lead_time_days,
-        length_of_stay = excluded.length_of_stay,
-        price_per_night = excluded.price_per_night,
-        currency = excluded.currency
-    `);
-
-    const transaction = db.transaction((bookings) => {
-      for (const b of bookings) {
+    await transaction(async (client) => {
+      for (const b of allBookings) {
         const platform = b['channel']?.name || b.channel || '';
         const checkIn = b.arrival || b.arrivalDate;
         const checkOut = b.departure || b.departureDate;
@@ -92,26 +70,41 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
         const aptId = b['apartment']?.id || b.apartmentId;
         const currency = detectCurrency(b) || propCurrencyMap[aptId] || 'ZAR';
 
-        upsert.run(
-          b.id,
-          aptId,
-          b['guest-name'] || b.guestName || '',
-          checkIn,
-          checkOut,
-          platform,
-          price,
-          b.type === 'cancellation' ? 'cancelled' : 'confirmed',
-          b['adults'] || b.adults || 1,
-          createdAt,
-          leadTime,
-          los,
-          ppn,
-          currency
+        await client.query(
+          `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, currency)
+           VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+           ON CONFLICT(smoobu_id) DO UPDATE SET
+             guest_name = excluded.guest_name,
+             check_in = excluded.check_in,
+             check_out = excluded.check_out,
+             platform = excluded.platform,
+             total_price = excluded.total_price,
+             status = excluded.status,
+             num_guests = excluded.num_guests,
+             created_at = excluded.created_at,
+             lead_time_days = excluded.lead_time_days,
+             length_of_stay = excluded.length_of_stay,
+             price_per_night = excluded.price_per_night,
+             currency = excluded.currency`,
+          [
+            b.id,
+            aptId,
+            b['guest-name'] || b.guestName || '',
+            checkIn,
+            checkOut,
+            platform,
+            price,
+            b.type === 'cancellation' ? 'cancelled' : 'confirmed',
+            b['adults'] || b.adults || 1,
+            createdAt,
+            leadTime,
+            los,
+            ppn,
+            currency
+          ]
         );
       }
     });
-
-    transaction(allBookings);
 
     // Run cleaner assignment after syncing bookings
     const { runAssignmentForAllCheckouts } = require('../services/cleaner-assignment');
@@ -126,31 +119,30 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
 
 // Get all bookings from local DB
 router.get('/bookings', scopeProperties, async (req, res) => {
-  const db = getDb();
   let bookings;
   if (req.accessiblePropertyIds === null) {
-    bookings = db.prepare(
+    bookings = await getAll(
       `SELECT b.*, p.name as property_name FROM bookings b
        JOIN properties p ON b.property_id = p.id ORDER BY b.check_in ASC`
-    ).all();
+    );
   } else {
     const ids = req.accessiblePropertyIds;
-    if (ids.length === 0) return res.json({ bookings: [], display_currency: getDisplayCurrency() });
-    const ph = ids.map(() => '?').join(',');
-    bookings = db.prepare(
+    if (ids.length === 0) return res.json({ bookings: [], display_currency: await getDisplayCurrency() });
+    const ph = inParams(ids, 1);
+    bookings = await getAll(
       `SELECT b.*, p.name as property_name FROM bookings b
        JOIN properties p ON b.property_id = p.id
-       WHERE b.property_id IN (${ph}) ORDER BY b.check_in ASC`
-    ).all(...ids);
+       WHERE b.property_id IN (${ph}) ORDER BY b.check_in ASC`,
+      ids
+    );
   }
-  const displayCurrency = getDisplayCurrency();
+  const displayCurrency = await getDisplayCurrency();
   await bulkConvert(bookings, displayCurrency);
   res.json({ bookings, display_currency: displayCurrency });
 });
 
 // Get dashboard stats
 router.get('/dashboard/stats', scopeProperties, async (req, res) => {
-  const db = getDb();
   const today = new Date().toISOString().split('T')[0];
   const in48h = new Date(Date.now() + 48 * 60 * 60 * 1000)
     .toISOString()
@@ -159,37 +151,37 @@ router.get('/dashboard/stats', scopeProperties, async (req, res) => {
   // Upcoming checkouts in next 48 hours
   let checkoutQuery = `SELECT b.*, p.name as property_name FROM bookings b
        JOIN properties p ON b.property_id = p.id
-       WHERE b.check_out >= ? AND b.check_out <= ? AND b.status = 'confirmed'`;
+       WHERE b.check_out >= $1 AND b.check_out <= $2 AND b.status = 'confirmed'`;
   let checkoutParams = [today, in48h];
   if (req.accessiblePropertyIds !== null) {
     if (req.accessiblePropertyIds.length === 0) return res.json({ upcoming_checkouts: [], occupancy: [], gaps: [], pending_cleaning_jobs: [] });
-    const ph = req.accessiblePropertyIds.map(() => '?').join(',');
+    const ph = inParams(req.accessiblePropertyIds, 3);
     checkoutQuery += ` AND b.property_id IN (${ph})`;
     checkoutParams.push(...req.accessiblePropertyIds);
   }
   checkoutQuery += ' ORDER BY b.check_out ASC';
-  const upcomingCheckouts = db.prepare(checkoutQuery).all(...checkoutParams);
+  const upcomingCheckouts = await getAll(checkoutQuery, checkoutParams);
 
   // Occupancy rate per property (next 30 days)
   let properties;
   if (req.accessiblePropertyIds === null) {
-    properties = db.prepare('SELECT * FROM properties').all();
+    properties = await getAll('SELECT * FROM properties');
   } else {
-    const ph = req.accessiblePropertyIds.map(() => '?').join(',');
-    properties = db.prepare(`SELECT * FROM properties WHERE id IN (${ph})`).all(...req.accessiblePropertyIds);
+    const ph = inParams(req.accessiblePropertyIds, 1);
+    properties = await getAll(`SELECT * FROM properties WHERE id IN (${ph})`, req.accessiblePropertyIds);
   }
   const thirtyDaysOut = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
     .toISOString()
     .split('T')[0];
 
-  const occupancy = properties.map((p) => {
-    const bookings = db
-      .prepare(
-        `SELECT * FROM bookings
-         WHERE property_id = ? AND check_out >= ? AND check_in <= ? AND status = 'confirmed'
-         AND platform NOT LIKE 'Blocked%'`
-      )
-      .all(p.id, today, thirtyDaysOut);
+  const occupancy = [];
+  for (const p of properties) {
+    const bookings = await getAll(
+      `SELECT * FROM bookings
+       WHERE property_id = $1 AND check_out >= $2 AND check_in <= $3 AND status = 'confirmed'
+       AND platform NOT LIKE 'Blocked%'`,
+      [p.id, today, thirtyDaysOut]
+    );
 
     let bookedNights = 0;
     for (const b of bookings) {
@@ -198,20 +190,19 @@ router.get('/dashboard/stats', scopeProperties, async (req, res) => {
       bookedNights += Math.max(0, Math.round((end - start) / (24 * 60 * 60 * 1000)));
     }
     const rate = Math.round((bookedNights / 30) * 100);
-    return { property_id: p.id, name: p.name, occupancy_rate: rate, booked_nights: bookedNights };
-  });
+    occupancy.push({ property_id: p.id, name: p.name, occupancy_rate: rate, booked_nights: bookedNights });
+  }
 
   // Gap detection: 1-3 night gaps between bookings
   const gaps = [];
   for (const p of properties) {
-    const pBookings = db
-      .prepare(
-        `SELECT * FROM bookings
-         WHERE property_id = ? AND check_out >= ? AND status = 'confirmed'
-         AND platform NOT LIKE 'Blocked%'
-         ORDER BY check_in ASC`
-      )
-      .all(p.id, today);
+    const pBookings = await getAll(
+      `SELECT * FROM bookings
+       WHERE property_id = $1 AND check_out >= $2 AND status = 'confirmed'
+       AND platform NOT LIKE 'Blocked%'
+       ORDER BY check_in ASC`,
+      [p.id, today]
+    );
 
     for (let i = 0; i < pBookings.length - 1; i++) {
       const gapStart = pBookings[i].check_out;
@@ -231,19 +222,26 @@ router.get('/dashboard/stats', scopeProperties, async (req, res) => {
     }
   }
 
-  // Cleaning jobs
-  const pendingJobs = db
-    .prepare(
-      `SELECT cj.*, p.name as property_name, c.name as cleaner_name
-       FROM cleaning_jobs cj
-       JOIN properties p ON cj.property_id = p.id
-       LEFT JOIN cleaners c ON cj.cleaner_id = c.id
-       WHERE cj.cleaning_date >= ? AND cj.status != 'completed'
-       ORDER BY cj.cleaning_date ASC`
-    )
-    .all(today);
+  // Cleaning jobs (scoped to accessible properties)
+  let jobQuery = `SELECT cj.*, p.name as property_name, c.name as cleaner_name
+     FROM cleaning_jobs cj
+     JOIN properties p ON cj.property_id = p.id
+     LEFT JOIN cleaners c ON cj.cleaner_id = c.id
+     WHERE cj.cleaning_date >= $1 AND cj.status != 'completed'`;
+  const jobParams = [today];
+  if (req.accessiblePropertyIds !== null) {
+    if (req.accessiblePropertyIds.length === 0) {
+      jobQuery += ' AND 1=0';
+    } else {
+      const ph = inParams(req.accessiblePropertyIds, 2);
+      jobQuery += ` AND cj.property_id IN (${ph})`;
+      jobParams.push(...req.accessiblePropertyIds);
+    }
+  }
+  jobQuery += ' ORDER BY cj.cleaning_date ASC';
+  const pendingJobs = await getAll(jobQuery, jobParams);
 
-  const displayCurrency = getDisplayCurrency();
+  const displayCurrency = await getDisplayCurrency();
   await bulkConvert(upcomingCheckouts, displayCurrency);
 
   res.json({

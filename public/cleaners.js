@@ -70,6 +70,7 @@ function getFilteredCleaners() {
 function showAddForm() {
   document.getElementById('addCleanerArea').style.display = 'none';
   document.getElementById('addCleanerForm').style.display = 'block';
+  renderAddAvailGrid();
 }
 function hideAddForm() {
   document.getElementById('addCleanerForm').style.display = 'none';
@@ -123,42 +124,81 @@ function toggleEditRate(value) {
   document.getElementById('editFlatGroup').style.display = value === 'flat' ? '' : 'none';
 }
 
-/* ───── Add cleaner ───── */
+/* ───── Add cleaner (one-step) ───── */
+
+function renderAddAvailGrid() {
+  const grid = document.getElementById('addAvailGrid');
+  if (!grid) return;
+  const days = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  const dows = [1,2,3,4,5,6,0]; // day_of_week values
+  grid.innerHTML = days.map((d, i) => `
+    <label style="display:flex;flex-direction:column;align-items:center;gap:2px;font-size:0.8rem;">
+      <input type="checkbox" name="avail_day_${dows[i]}" value="${dows[i]}"> ${d}
+      <input type="time" name="avail_start_${dows[i]}" value="09:00" style="font-size:0.75rem;width:80px;">
+      <input type="time" name="avail_end_${dows[i]}" value="17:00" style="font-size:0.75rem;width:80px;">
+    </label>
+  `).join('');
+}
 
 async function addCleaner(event) {
   event.preventDefault();
   const form = event.target;
+  const errEl = document.getElementById('addCleanerError');
+  errEl.style.display = 'none';
+
   const rateType = form.rate_type.value;
+  const phone = form.phone.value.replace(/\s+/g, '');
+
+  // Collect availability from inline grid
+  const availability = [];
+  for (const dow of [0,1,2,3,4,5,6]) {
+    const cb = form[`avail_day_${dow}`];
+    if (cb && cb.checked) {
+      availability.push({
+        day_of_week: dow,
+        start_time: form[`avail_start_${dow}`].value || '09:00',
+        end_time: form[`avail_end_${dow}`].value || '17:00',
+      });
+    }
+  }
+
+  // Collect selected property IDs
+  const sel = form.property_ids;
+  const property_ids = sel ? Array.from(sel.selectedOptions).map(o => parseInt(o.value)) : [];
+
   const data = {
     name: form.name.value,
-    phone: form.phone.value,
+    phone,
+    pin: form.pin.value,
     email: form.email.value || '',
     rate_type: rateType,
     hourly_rate: rateType === 'hourly' ? parseFloat(form.hourly_rate.value) || 0 : 0,
     flat_rate: rateType === 'flat' ? parseFloat(form.hourly_rate.value) || 0 : 0,
     notes: form.notes.value,
+    availability,
+    property_ids,
   };
 
   try {
-    const newCleaner = await api('/api/cleaners', { method: 'POST', body: JSON.stringify(data) });
-
-    // Assign selected properties
-    const sel = form.property_ids;
-    if (sel && newCleaner && newCleaner.id) {
-      const selectedIds = Array.from(sel.selectedOptions).map(o => parseInt(o.value));
-      for (const pid of selectedIds) {
-        await api(`/api/cleaners/${newCleaner.id}/properties`, {
-          method: 'POST',
-          body: JSON.stringify({ property_id: pid }),
-        });
-      }
+    const res = await fetch('/api/cleaners', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const result = await res.json();
+    if (!res.ok) {
+      errEl.textContent = result.error || 'Failed to add cleaner';
+      errEl.style.display = 'block';
+      return;
     }
 
     form.reset();
+    renderAddAvailGrid();
     hideAddForm();
     loadData();
   } catch (err) {
-    alert('Failed to add cleaner: ' + err.message);
+    errEl.textContent = 'Failed to add cleaner: ' + err.message;
+    errEl.style.display = 'block';
   }
 }
 
@@ -190,16 +230,29 @@ async function updateCleaner(event) {
   const id = document.getElementById('editCleanerId').value;
   const data = {
     name: form.name.value,
-    phone: form.phone.value,
+    phone: form.phone.value.replace(/\s+/g, ''),
     email: form.email.value,
     rate_type: form.rate_type.value,
     hourly_rate: parseFloat(form.hourly_rate.value) || 0,
     flat_rate: parseFloat(form.flat_rate.value) || 0,
     notes: form.notes.value,
   };
+  // Only send pin if a new one was entered
+  if (form.pin && form.pin.value) {
+    data.pin = form.pin.value;
+  }
 
   try {
-    await api(`/api/cleaners/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+    const res = await fetch(`/api/cleaners/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const result = await res.json();
+    if (!res.ok) {
+      alert(result.error || 'Failed to update cleaner');
+      return;
+    }
     closeEditModal();
     loadData();
   } catch (err) {

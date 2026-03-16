@@ -10,7 +10,7 @@
  */
 
 const axios = require('axios');
-const { getDb } = require('../db/database');
+const { getOne, run } = require('../db/database');
 
 const APIFY_BASE = 'https://api.apify.com/v2';
 
@@ -119,19 +119,8 @@ async function fetchBookingReviews(hotelUrl, maxReviews = 100) {
  * based on the listing URLs configured for the property.
  */
 async function syncReviewsForProperty(propertyId) {
-  const db = getDb();
-  const property = db.prepare('SELECT * FROM properties WHERE id = ?').get(propertyId);
+  const property = await getOne('SELECT * FROM properties WHERE id = $1', [propertyId]);
   if (!property) throw new Error(`Property ${propertyId} not found`);
-
-  const upsert = db.prepare(`
-    INSERT INTO reviews (property_id, platform, guest_name, rating, comment, review_date, response, external_id, language)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT(property_id, external_id) DO UPDATE SET
-      rating = excluded.rating,
-      comment = excluded.comment,
-      response = excluded.response,
-      language = excluded.language
-  `);
 
   let airbnbCount = 0;
   let bookingCount = 0;
@@ -145,7 +134,16 @@ async function syncReviewsForProperty(propertyId) {
         const extId = r.external_id || `airbnb_${r.review_date}_${r.guest_name}`;
         const date = normalizeDate(r.review_date);
         if (!date) continue;
-        upsert.run(propertyId, r.platform, r.guest_name, r.rating, r.comment, date, r.response || '', extId, r.language);
+        await run(
+          `INSERT INTO reviews (property_id, platform, guest_name, rating, comment, review_date, response, external_id, language)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT(property_id, external_id) DO UPDATE SET
+             rating = EXCLUDED.rating,
+             comment = EXCLUDED.comment,
+             response = EXCLUDED.response,
+             language = EXCLUDED.language`,
+          [propertyId, r.platform, r.guest_name, r.rating, r.comment, date, r.response || '', extId, r.language]
+        );
         airbnbCount++;
       }
     } catch (err) {
@@ -164,7 +162,16 @@ async function syncReviewsForProperty(propertyId) {
         if (!date) continue;
         // Booking.com ratings are out of 10, normalize to out of 5
         const rating = r.rating ? Math.round((r.rating / 10) * 5 * 10) / 10 : null;
-        upsert.run(propertyId, r.platform, r.guest_name, rating, r.comment, date, r.response || '', extId, r.language);
+        await run(
+          `INSERT INTO reviews (property_id, platform, guest_name, rating, comment, review_date, response, external_id, language)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT(property_id, external_id) DO UPDATE SET
+             rating = EXCLUDED.rating,
+             comment = EXCLUDED.comment,
+             response = EXCLUDED.response,
+             language = EXCLUDED.language`,
+          [propertyId, r.platform, r.guest_name, rating, r.comment, date, r.response || '', extId, r.language]
+        );
         bookingCount++;
       }
     } catch (err) {
