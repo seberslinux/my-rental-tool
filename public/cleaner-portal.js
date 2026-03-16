@@ -1,4 +1,4 @@
-/* cleaner-portal.js */
+/* cleaner-portal.js — mobile-first cleaner portal */
 
 let myProfile = null;
 let myJobs = [];
@@ -7,7 +7,7 @@ let jobMonth = new Date();
 let jobView = 'calendar';
 
 const DAY_NAMES = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
-const DAY_SHORT = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const DAY_SHORT = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 
 async function api(url, opts = {}) {
   const res = await fetch(url, { headers: { 'Content-Type': 'application/json' }, ...opts });
@@ -15,43 +15,96 @@ async function api(url, opts = {}) {
   return res.json();
 }
 
+/* ───── Inline shared helpers (so portal works standalone) ───── */
+
+function _escHtml(str) {
+  if (typeof escHtml === 'function') return escHtml(str);
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function _showToast(message, type) {
+  if (typeof showToast === 'function') return showToast(message, type);
+  alert(message);
+}
+
+function _doLogout() {
+  if (typeof doLogout === 'function') return doLogout();
+  fetch('/api/auth/logout', { method: 'POST' }).then(() => { window.location.href = '/login.html'; });
+}
+
+// Expose doLogout globally for onclick
+window.doLogout = function() { _doLogout(); };
+
+/* ───── Magic Link Token Auth ───── */
+
+async function tryTokenAuth() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token');
+  if (!token) return false;
+
+  try {
+    const res = await fetch('/api/auth/cleaner-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token })
+    });
+    if (res.ok) {
+      // Remove token from URL for security
+      const url = new URL(window.location);
+      url.searchParams.delete('token');
+      history.replaceState(null, '', url.pathname);
+      return true;
+    } else {
+      // Invalid token — redirect to login
+      window.location.href = '/login.html';
+      return false;
+    }
+  } catch (err) {
+    window.location.href = '/login.html';
+    return false;
+  }
+}
+
 /* ───── Init ───── */
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // Override body display from styles.css flex layout
+  document.body.style.display = 'block';
+
+  // Try magic link auth first
+  const tokenResult = await tryTokenAuth();
+
   // Auth check — shared.js will redirect non-cleaners away
   const user = await checkAuth();
   if (!user) return;
 
-  const isPinAuth = user.authType === 'pin';
+  const isPinAuth = user.authType === 'pin' || user.authType === 'token';
 
-  document.getElementById('portalUser').innerHTML =
-    `<span>${escHtml(user.name)}</span><button class="btn-logout" onclick="doLogout()">Logout</button>`;
+  // Set header
+  const initials = user.name ? user.name.split(' ').map(w => w[0]).join('').toUpperCase().slice(0, 2) : '?';
+  document.getElementById('headerAvatar').textContent = initials;
+  document.getElementById('headerName').textContent = user.name || 'Cleaner Portal';
 
-  // Hide Messages & Shopping tabs for PIN-auth cleaners
-  if (isPinAuth) {
-    document.querySelectorAll('.staff-only-tab').forEach(el => el.style.display = 'none');
-  }
+  // Hide Messages & Shopping for PIN/token-auth cleaners
+  // (these are not shown in bottom nav by default; only staff-auth cleaners see them)
 
-  // Tab switching
-  document.querySelectorAll('.portal-tabs button').forEach(btn => {
+  // Bottom nav tab switching
+  document.querySelectorAll('.bottom-nav button').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
   await loadProfile();
   loadJobs();
-  if (!isPinAuth) loadMessages();
 });
 
 function switchTab(tab) {
-  document.querySelectorAll('.portal-tabs button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  document.querySelectorAll('.bottom-nav button').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
   document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === `panel-${tab}`));
 
-  if (tab === 'messages') loadMessages();
-  if (tab === 'availability') renderAvailability();
   if (tab === 'maintenance') loadMaintenance();
   if (tab === 'checklist') initInventory();
-  if (tab === 'shopping') loadShopping();
-  if (tab === 'settings') loadSettings();
+  if (tab === 'settings') { loadSettings(); renderAvailability(); }
 }
 
 /* ───── Profile ───── */
@@ -59,14 +112,13 @@ function switchTab(tab) {
 async function loadProfile() {
   myProfile = await api('/api/cleaner-portal/me');
   if (!myProfile) return;
-  // Populate property dropdowns
   const selectors = ['maintProperty', 'invProperty', 'shopProperty'];
   for (const id of selectors) {
     const el = document.getElementById(id);
     if (!el) continue;
     const isShop = id === 'shopProperty';
     el.innerHTML = (isShop ? '<option value="">General</option>' : '') +
-      myProfile.properties.map(p => `<option value="${p.id}">${escHtml(p.name)}</option>`).join('');
+      myProfile.properties.map(p => `<option value="${p.id}">${_escHtml(p.name)}</option>`).join('');
   }
 }
 
@@ -74,8 +126,8 @@ async function loadProfile() {
 
 function setJobView(view) {
   jobView = view;
-  document.getElementById('btnCalView').className = `btn btn-sm ${view === 'calendar' ? 'btn-primary' : 'btn-secondary'}`;
-  document.getElementById('btnListView').className = `btn btn-sm ${view === 'list' ? 'btn-primary' : 'btn-secondary'}`;
+  document.getElementById('btnCalView').classList.toggle('active', view === 'calendar');
+  document.getElementById('btnListView').classList.toggle('active', view === 'list');
   document.getElementById('jobCalendarView').style.display = view === 'calendar' ? '' : 'none';
   document.getElementById('jobListView').style.display = view === 'list' ? '' : 'none';
   renderJobs();
@@ -111,14 +163,12 @@ function renderJobCalendar() {
   const daysInMonth = new Date(y, m + 1, 0).getDate();
   const todayStr = new Date().toISOString().split('T')[0];
 
-  // Build job lookup
   const jobsByDate = {};
   for (const j of myJobs) {
     if (!jobsByDate[j.cleaning_date]) jobsByDate[j.cleaning_date] = [];
     jobsByDate[j.cleaning_date].push(j);
   }
 
-  // Build availability lookup
   const weeklyAvail = {};
   if (myProfile) {
     for (const a of (myProfile.availability || [])) weeklyAvail[a.day_of_week] = a;
@@ -143,23 +193,18 @@ function renderJobCalendar() {
     if (jobs.length > 0) {
       classes += ' has-job';
       for (const j of jobs) {
-        const statusCls = j.status;
-        content += `<div class="booking-label" style="margin-top:2px;">
-          <span class="job-status ${statusCls}" style="font-size:0.55rem;padding:1px 4px;">${j.status}</span>
-          <span style="font-size:0.65rem;">${escHtml(j.property_name)}</span>
-        </div>`;
+        content += `<div class="job-dot ${j.status}"></div>`;
       }
     } else if (overrideMap[dateStr] !== undefined) {
       classes += overrideMap[dateStr] ? ' available' : ' unavailable';
     } else if (weeklyAvail[dow]) {
       classes += ' available';
-      content += `<div class="booking-label" style="color:#16a34a;">${weeklyAvail[dow].start_time}-${weeklyAvail[dow].end_time}</div>`;
     } else {
       classes += ' unavailable';
     }
 
     if (isToday) classes += ' today';
-    html += `<div class="${classes}" style="cursor:pointer;" onclick="showJobDetail('${dateStr}')">${content}</div>`;
+    html += `<div class="${classes}" onclick="showJobDetail('${dateStr}')">${content}</div>`;
   }
 
   grid.innerHTML = html;
@@ -168,27 +213,23 @@ function renderJobCalendar() {
 function renderJobList() {
   const container = document.getElementById('jobListView');
   if (myJobs.length === 0) {
-    container.innerHTML = '<p style="color:#999;">No jobs this month.</p>';
+    container.innerHTML = '<div class="empty-state">No jobs this month.</div>';
     return;
   }
   container.innerHTML = myJobs.map(j => `
     <div class="job-card ${j.status}">
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;">
-        <div>
-          <strong>${escHtml(j.property_name)}</strong>
-          <span class="job-status ${j.status}" style="margin-left:0.5rem;">${j.status}</span>
-          <div style="font-size:0.85rem;color:#666;margin-top:0.25rem;">
-            ${j.cleaning_date} &middot; ${j.start_time || '10:00'} - ${j.end_time || '13:00'}
-          </div>
-          ${j.property_address ? `<div style="font-size:0.8rem;color:#888;">${escHtml(j.property_address)}</div>` : ''}
-          ${j.guest_name ? `<div style="font-size:0.8rem;margin-top:0.25rem;">Guest: ${escHtml(j.guest_name)} (${j.num_guests || '?'} guests)</div>` : ''}
-          ${j.special_requirements ? `<div class="special-req">Special: ${escHtml(j.special_requirements)}</div>` : ''}
-        </div>
-        <div style="display:flex;gap:4px;flex-wrap:wrap;">
-          ${j.status === 'pending' ? `<button class="btn btn-primary btn-sm" onclick="updateJobStatus(${j.id}, 'confirmed')">Confirm</button>` : ''}
-          ${j.status !== 'completed' && j.status !== 'ready' ? `<button class="btn btn-secondary btn-sm" onclick="updateJobStatus(${j.id}, 'completed')">Complete</button>` : ''}
-          ${j.status === 'confirmed' || j.status === 'completed' ? `<button class="btn btn-sm" style="background:#8b5cf6;color:#fff;border:none;" onclick="openJobChecklist(${j.id})">Checklist</button>` : ''}
-        </div>
+      <div class="job-header">
+        <span class="job-property">${_escHtml(j.property_name)}</span>
+        <span class="job-status ${j.status}">${j.status}</span>
+      </div>
+      <div class="job-meta">${j.cleaning_date} &middot; ${j.start_time || '10:00'} - ${j.end_time || '13:00'}</div>
+      ${j.property_address ? `<div class="job-address">${_escHtml(j.property_address)}</div>` : ''}
+      ${j.guest_name ? `<div class="job-guest">Guest: ${_escHtml(j.guest_name)} (${j.num_guests || '?'} guests)</div>` : ''}
+      ${j.special_requirements ? `<div class="special-req">Special: ${_escHtml(j.special_requirements)}</div>` : ''}
+      <div class="job-actions">
+        ${j.status === 'pending' ? `<button class="btn btn-primary btn-full" onclick="updateJobStatus(${j.id}, 'confirmed')">Confirm Job</button>` : ''}
+        ${j.status !== 'completed' && j.status !== 'ready' ? `<button class="btn btn-secondary btn-full" onclick="updateJobStatus(${j.id}, 'completed')">Mark Complete</button>` : ''}
+        ${j.status === 'confirmed' || j.status === 'completed' ? `<button class="btn btn-purple btn-full" onclick="openJobChecklist(${j.id})">Open Checklist</button>` : ''}
       </div>
     </div>
   `).join('');
@@ -197,7 +238,6 @@ function renderJobList() {
 function showJobDetail(dateStr) {
   const jobs = myJobs.filter(j => j.cleaning_date === dateStr);
   if (jobs.length === 0) return;
-  // Switch to list view filtered to this date
   setJobView('list');
 }
 
@@ -206,31 +246,31 @@ async function updateJobStatus(jobId, status) {
     method: 'PUT', body: JSON.stringify({ status })
   });
   if (result && result.error) { alert(result.error); return; }
-  showToast(`Job ${status}`);
+  _showToast(`Job ${status}`);
   loadJobs();
 }
 
-/* ───── Availability ───── */
+/* ───── Availability (now under Settings) ───── */
 
 function renderAvailability() {
   if (!myProfile) return;
   const slots = document.getElementById('availSlots');
+  if (!slots) return;
   const availMap = {};
   for (const a of (myProfile.availability || [])) availMap[a.day_of_week] = a;
 
   slots.innerHTML = DAY_NAMES.map((name, i) => {
     const slot = availMap[i];
     return `
-    <div class="form-row" style="align-items:center;margin-bottom:0.5rem;">
-      <div style="width:110px;"><label>
-        <input type="checkbox" name="day_${i}_enabled" ${slot ? 'checked' : ''}> ${name.slice(0, 3)}
-      </label></div>
-      <div class="form-group" style="margin-bottom:0;">
-        <input type="time" name="day_${i}_start" value="${slot ? slot.start_time : '09:00'}" style="width:auto;">
+    <div class="avail-row">
+      <div class="avail-day">
+        <input type="checkbox" name="day_${i}_enabled" id="day_${i}_enabled" ${slot ? 'checked' : ''}>
+        <label for="day_${i}_enabled" style="font-weight:500;font-size:0.9rem;">${name.slice(0, 3)}</label>
       </div>
-      <div style="padding:0 0.3rem;">to</div>
-      <div class="form-group" style="margin-bottom:0;">
-        <input type="time" name="day_${i}_end" value="${slot ? slot.end_time : '17:00'}" style="width:auto;">
+      <div class="avail-times">
+        <input type="time" name="day_${i}_start" value="${slot ? slot.start_time : '09:00'}">
+        <span>to</span>
+        <input type="time" name="day_${i}_end" value="${slot ? slot.end_time : '17:00'}">
       </div>
     </div>`;
   }).join('');
@@ -253,18 +293,19 @@ async function saveMyAvailability(e) {
   }
   await api('/api/cleaner-portal/availability', { method: 'PUT', body: JSON.stringify({ schedule }) });
   await loadProfile();
-  showToast('Schedule saved');
+  _showToast('Schedule saved');
   renderAvailability();
 }
 
 function renderOverrides() {
   const el = document.getElementById('overridesList');
+  if (!el) return;
   if (!myProfile || !myProfile.overrides || myProfile.overrides.length === 0) {
-    el.innerHTML = '<p style="color:#999;font-size:0.85rem;">No date overrides set.</p>';
+    el.innerHTML = '<p class="empty-state" style="padding:0.5rem 0;">No date overrides set.</p>';
     return;
   }
   el.innerHTML = myProfile.overrides.map(o => `
-    <span class="tag" style="background:${o.available ? '#dcfce7' : '#fee2e2'};">
+    <span class="tag" style="background:${o.available ? 'var(--success-bg)' : 'var(--danger-bg)'};">
       ${o.date}: ${o.available ? 'Available' : 'Unavailable'}
       <span class="remove" onclick="deleteOverride(${o.id})">&times;</span>
     </span>
@@ -278,7 +319,7 @@ async function addMyOverride() {
   await api('/api/cleaner-portal/overrides', { method: 'POST', body: JSON.stringify({ date, available }) });
   await loadProfile();
   renderOverrides();
-  showToast('Override added');
+  _showToast('Override added');
 }
 
 async function deleteOverride(id) {
@@ -296,17 +337,18 @@ async function loadMessages() {
   ]);
   allUsers = users || [];
 
-  // Populate recipient dropdown
   const sel = document.getElementById('msgRecipient');
-  sel.innerHTML = '<option value="">Everyone</option>' +
-    allUsers.filter(u => u.id !== currentUser.id).map(u =>
-      `<option value="${u.id}">${escHtml(u.name)} (${u.role})</option>`
-    ).join('');
+  if (sel) {
+    sel.innerHTML = '<option value="">Everyone</option>' +
+      allUsers.filter(u => u.id !== currentUser.id).map(u =>
+        `<option value="${u.id}">${_escHtml(u.name)} (${u.role})</option>`
+      ).join('');
+  }
 
-  // Render messages
   const container = document.getElementById('messagesList');
+  if (!container) return;
   if (!messages || messages.length === 0) {
-    container.innerHTML = '<p style="color:#999;">No messages yet.</p>';
+    container.innerHTML = '<div class="empty-state">No messages yet.</div>';
     return;
   }
 
@@ -314,25 +356,16 @@ async function loadMessages() {
     const isIncoming = m.recipient_id === currentUser.id;
     const isBroadcast = !m.recipient_id;
     const unread = isIncoming && !m.read;
-    const direction = isIncoming ? `From: ${escHtml(m.sender_name)}` :
-      (isBroadcast ? `${escHtml(m.sender_name)} to Everyone` : `To: ${escHtml(m.recipient_name)}`);
+    const direction = isIncoming ? `From: ${_escHtml(m.sender_name)}` :
+      (isBroadcast ? `${_escHtml(m.sender_name)} to Everyone` : `To: ${_escHtml(m.recipient_name)}`);
     const time = new Date(m.created_at + 'Z').toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
     return `
       <div class="msg-item ${unread ? 'unread' : ''}" onclick="markMsgRead(${m.id}, ${isIncoming})">
         <div class="msg-meta">${direction} &middot; ${time}</div>
-        ${m.subject ? `<div style="font-weight:600;margin-top:2px;">${escHtml(m.subject)}</div>` : ''}
-        <div style="font-size:0.85rem;margin-top:2px;">${escHtml(m.body)}</div>
+        ${m.subject ? `<div style="font-weight:600;margin-top:2px;">${_escHtml(m.subject)}</div>` : ''}
+        <div style="font-size:0.85rem;margin-top:2px;">${_escHtml(m.body)}</div>
       </div>`;
   }).join('');
-
-  // Update unread badge
-  const unreadCount = (messages || []).filter(m => m.recipient_id === currentUser.id && !m.read).length;
-  const tabBtn = document.querySelector('[data-tab="messages"]');
-  const existing = tabBtn.querySelector('.unread-badge');
-  if (existing) existing.remove();
-  if (unreadCount > 0) {
-    tabBtn.insertAdjacentHTML('beforeend', `<span class="unread-badge">${unreadCount}</span>`);
-  }
 }
 
 async function markMsgRead(id, isIncoming) {
@@ -353,7 +386,7 @@ async function sendMsg() {
   if (result && result.error) { alert(result.error); return; }
   document.getElementById('msgSubject').value = '';
   document.getElementById('msgBody').value = '';
-  showToast('Message sent');
+  _showToast('Message sent');
   loadMessages();
 }
 
@@ -362,21 +395,22 @@ async function sendMsg() {
 async function loadMaintenance() {
   const issues = await api('/api/cleaner-portal/maintenance') || [];
   const container = document.getElementById('maintList');
+  if (!container) return;
   if (issues.length === 0) {
-    container.innerHTML = '<p style="color:#999;">No issues reported.</p>';
+    container.innerHTML = '<div class="empty-state">No issues reported.</div>';
     return;
   }
   container.innerHTML = issues.map(i => {
-    const priorityColors = { urgent: '#ef4444', high: '#f59e0b', medium: '#2563eb', low: '#6b7280' };
-    const color = priorityColors[i.priority] || '#6b7280';
+    const priorityColors = { urgent: 'var(--danger)', high: 'var(--warning)', medium: 'var(--primary)', low: 'var(--gray-400)' };
+    const color = priorityColors[i.priority] || 'var(--gray-400)';
     return `
-      <div style="border-left:4px solid ${color};padding:0.5rem 0.75rem;margin-bottom:0.5rem;border-radius:0 6px 6px 0;background:#f9fafb;">
-        <div style="display:flex;justify-content:space-between;">
-          <strong>${escHtml(i.title)}</strong>
-          <span style="font-size:0.75rem;color:${color};font-weight:600;text-transform:uppercase;">${i.priority} &middot; ${i.status}</span>
+      <div class="maint-card ${i.priority}">
+        <div class="maint-header">
+          <span class="maint-title">${_escHtml(i.title)}</span>
+          <span class="maint-badge" style="color:${color};">${i.priority} &middot; ${i.status}</span>
         </div>
-        <div style="font-size:0.8rem;color:#666;">${escHtml(i.property_name)} &middot; ${i.reported_date}</div>
-        ${i.description ? `<div style="font-size:0.85rem;margin-top:0.25rem;">${escHtml(i.description)}</div>` : ''}
+        <div class="maint-sub">${_escHtml(i.property_name)} &middot; ${i.reported_date}</div>
+        ${i.description ? `<div class="maint-desc">${_escHtml(i.description)}</div>` : ''}
       </div>`;
   }).join('');
 }
@@ -396,7 +430,7 @@ async function reportIssue(e) {
   if (result && result.error) { alert(result.error); return; }
   document.getElementById('maintTitle').value = '';
   document.getElementById('maintDesc').value = '';
-  showToast('Issue reported');
+  _showToast('Issue reported');
   loadMaintenance();
 }
 
@@ -411,16 +445,15 @@ async function initInventory() {
 
 async function loadInventory() {
   const propId = document.getElementById('invProperty').value;
-  if (!propId) { document.getElementById('inventoryList').innerHTML = '<p style="color:#999;">Select a property.</p>'; return; }
+  if (!propId) { document.getElementById('inventoryList').innerHTML = '<div class="empty-state">Select a property.</div>'; return; }
 
   inventoryItems = await api(`/api/cleaner-portal/inventory/${propId}`) || [];
 
-  // Load jobs for this property
   const jobs = (myJobs.length > 0 ? myJobs : await api('/api/cleaner-portal/jobs') || [])
     .filter(j => String(j.property_id) === String(propId));
   const jobSel = document.getElementById('invJob');
   jobSel.innerHTML = '<option value="">Select job...</option>' +
-    jobs.map(j => `<option value="${j.id}">${j.cleaning_date} - ${escHtml(j.property_name)} (${j.status})</option>`).join('');
+    jobs.map(j => `<option value="${j.id}">${j.cleaning_date} - ${_escHtml(j.property_name)} (${j.status})</option>`).join('');
 
   renderInventory();
 }
@@ -428,7 +461,7 @@ async function loadInventory() {
 function renderInventory() {
   const container = document.getElementById('inventoryList');
   if (inventoryItems.length === 0) {
-    container.innerHTML = '<p style="color:#999;">No checklist items set up for this property. Ask your admin to add items.</p>';
+    container.innerHTML = '<div class="empty-state">No checklist items set up for this property. Ask your admin to add items.</div>';
     document.getElementById('btnSubmitInv').disabled = true;
     document.getElementById('btnReady').disabled = true;
     return;
@@ -439,36 +472,30 @@ function renderInventory() {
   for (const item of inventoryItems) {
     if (item.category !== currentCat) {
       currentCat = item.category;
-      html += `<div style="font-weight:600;margin-top:0.75rem;margin-bottom:0.25rem;color:#1a1a2e;">${escHtml(currentCat)}</div>`;
+      html += `<div class="checklist-category">${_escHtml(currentCat)}</div>`;
     }
     const isTask = (item.item_type || 'task') === 'task';
     if (isTask) {
       html += `
         <div class="checklist-row" data-item-id="${item.id}">
-          <label style="flex:3;display:flex;align-items:center;gap:0.5rem;cursor:pointer;">
-            <input type="checkbox" class="inv-task-check"> ${escHtml(item.item_name)}
-          </label>
-          <div style="flex:1;">
-            <input type="text" class="inv-notes" placeholder="Notes" style="font-size:0.8rem;">
-          </div>
+          <input type="checkbox" class="inv-task-check" id="task_${item.id}">
+          <label for="task_${item.id}">${_escHtml(item.item_name)}</label>
         </div>`;
     } else {
       html += `
-        <div class="checklist-row" data-item-id="${item.id}">
-          <div style="flex:2;">${escHtml(item.item_name)} <span style="color:#999;font-size:0.75rem;">(expect: ${item.expected_quantity})</span></div>
-          <div style="flex:1;">
-            <input type="number" class="inv-qty" value="${item.expected_quantity}" min="0" style="width:60px;font-size:0.85rem;">
-          </div>
-          <div style="flex:1;">
-            <select class="inv-status" style="font-size:0.8rem;">
+        <div class="inv-item-row" data-item-id="${item.id}">
+          <div class="inv-item-name">${_escHtml(item.item_name)} <span class="expected">(expect: ${item.expected_quantity})</span></div>
+          <div class="inv-item-fields">
+            <input type="number" class="inv-qty" value="${item.expected_quantity}" min="0" placeholder="Qty">
+            <select class="inv-status">
               <option value="ok">OK</option>
               <option value="low">Low</option>
               <option value="missing">Missing</option>
               <option value="damaged">Damaged</option>
             </select>
           </div>
-          <div style="flex:1;">
-            <input type="text" class="inv-notes" placeholder="Notes" style="font-size:0.8rem;">
+          <div style="margin-top:0.35rem;">
+            <input type="text" class="inv-notes" placeholder="Notes (optional)">
           </div>
         </div>`;
     }
@@ -482,19 +509,16 @@ async function loadJobChecklist() {
   if (!jobId) return;
   activeJobId = jobId;
 
-  // Use the merged checklist endpoint
   const merged = await api(`/api/cleaner-portal/jobs/${jobId}/checklist`) || [];
   if (merged.length === 0) {
-    // Fall back to loading existing checks for backward compat
     const checks = await api(`/api/cleaner-portal/inventory/checks/${jobId}`) || [];
     prefillChecks(checks);
     return;
   }
 
-  // Pre-fill form with existing checks from merged data
   for (const item of merged) {
     if (!item.check) continue;
-    const row = document.querySelector(`.checklist-row[data-item-id="${item.id}"]`);
+    const row = document.querySelector(`.checklist-row[data-item-id="${item.id}"], .inv-item-row[data-item-id="${item.id}"]`);
     if (!row) continue;
     const taskCheck = row.querySelector('.inv-task-check');
     if (taskCheck) {
@@ -509,13 +533,12 @@ async function loadJobChecklist() {
     if (notesInput) notesInput.value = item.check.notes || '';
   }
 
-  // Enable ready button
   document.getElementById('btnReady').disabled = false;
 }
 
 function prefillChecks(checks) {
   for (const check of checks) {
-    const row = document.querySelector(`.checklist-row[data-item-id="${check.checklist_item_id}"]`);
+    const row = document.querySelector(`.checklist-row[data-item-id="${check.checklist_item_id}"], .inv-item-row[data-item-id="${check.checklist_item_id}"]`);
     if (!row) continue;
     const taskCheck = row.querySelector('.inv-task-check');
     if (taskCheck) {
@@ -531,15 +554,12 @@ function prefillChecks(checks) {
   }
 }
 
-// Open checklist tab from job card
 function openJobChecklist(jobId) {
-  // Find the job to set property dropdown
   const job = myJobs.find(j => j.id === jobId);
   if (!job) return;
 
   switchTab('checklist');
 
-  // Set property and job selectors
   const propSel = document.getElementById('invProperty');
   if (propSel) propSel.value = String(job.property_id);
 
@@ -555,23 +575,29 @@ async function submitInventoryCheck() {
   if (!jobId) { alert('Please select a cleaning job'); return; }
   activeJobId = jobId;
 
-  const rows = document.querySelectorAll('.checklist-row');
-  const items = Array.from(rows).map(row => {
+  const checklistRows = document.querySelectorAll('.checklist-row[data-item-id]');
+  const invRows = document.querySelectorAll('.inv-item-row[data-item-id]');
+  const items = [];
+
+  checklistRows.forEach(row => {
     const taskCheck = row.querySelector('.inv-task-check');
     if (taskCheck) {
-      return {
+      items.push({
         checklist_item_id: parseInt(row.dataset.itemId),
         actual_quantity: taskCheck.checked ? 1 : 0,
         status: taskCheck.checked ? 'ok' : 'missing',
         notes: (row.querySelector('.inv-notes')?.value || '').trim(),
-      };
+      });
     }
-    return {
+  });
+
+  invRows.forEach(row => {
+    items.push({
       checklist_item_id: parseInt(row.dataset.itemId),
       actual_quantity: parseInt(row.querySelector('.inv-qty')?.value) || 0,
       status: row.querySelector('.inv-status')?.value || 'ok',
       notes: (row.querySelector('.inv-notes')?.value || '').trim(),
-    };
+    });
   });
 
   const result = await api('/api/cleaner-portal/inventory/check', {
@@ -579,7 +605,7 @@ async function submitInventoryCheck() {
     body: JSON.stringify({ cleaning_job_id: parseInt(jobId), items })
   });
   if (result && result.error) { alert(result.error); return; }
-  showToast(`Checklist saved (${items.length} items)`);
+  _showToast(`Checklist saved (${items.length} items)`);
   document.getElementById('btnReady').disabled = false;
 }
 
@@ -587,7 +613,6 @@ async function markReadyForCheckin() {
   const jobId = document.getElementById('invJob').value || activeJobId;
   if (!jobId) { alert('Please select a cleaning job first'); return; }
 
-  // Save checklist first
   await submitInventoryCheck();
 
   if (!confirm('Mark this property as ready for check-in? This will notify the admin and property manager.')) return;
@@ -597,7 +622,7 @@ async function markReadyForCheckin() {
     alert(result.error);
     return;
   }
-  showToast('Marked as Ready for Check-in! Notifications sent.');
+  _showToast('Marked as Ready for Check-in! Notifications sent.');
   loadJobs();
 }
 
@@ -606,8 +631,9 @@ async function markReadyForCheckin() {
 async function loadShopping() {
   const items = await api('/api/cleaner-portal/shopping-list') || [];
   const container = document.getElementById('shopList');
+  if (!container) return;
   if (items.length === 0) {
-    container.innerHTML = '<p style="color:#999;">Shopping list is empty.</p>';
+    container.innerHTML = '<div class="empty-state">Shopping list is empty.</div>';
     return;
   }
 
@@ -616,30 +642,30 @@ async function loadShopping() {
 
   let html = '';
   if (needed.length > 0) {
-    html += '<h4 style="margin-bottom:0.5rem;">Needed</h4>';
+    html += '<h4 style="margin-bottom:0.5rem;font-size:0.9rem;">Needed</h4>';
     html += needed.map(i => `
       <div class="shop-item">
-        <div>
-          <strong>${escHtml(i.item_name)}</strong> x${i.quantity}
-          ${i.property_name ? `<span style="font-size:0.75rem;color:#666;"> - ${escHtml(i.property_name)}</span>` : ''}
-          ${i.notes ? `<div style="font-size:0.75rem;color:#888;">${escHtml(i.notes)}</div>` : ''}
-          <div style="font-size:0.7rem;color:#999;">Added by ${escHtml(i.added_by_name)}</div>
+        <div class="shop-info">
+          <strong>${_escHtml(i.item_name)}</strong> x${i.quantity}
+          ${i.property_name ? `<span style="font-size:0.75rem;color:var(--gray-500);"> - ${_escHtml(i.property_name)}</span>` : ''}
+          ${i.notes ? `<div style="font-size:0.75rem;color:var(--gray-400);">${_escHtml(i.notes)}</div>` : ''}
+          <div style="font-size:0.7rem;color:var(--gray-400);">Added by ${_escHtml(i.added_by_name)}</div>
         </div>
-        <div style="display:flex;gap:4px;">
-          <button class="btn btn-primary btn-sm" onclick="markPurchased(${i.id})">Purchased</button>
+        <div style="display:flex;flex-direction:column;gap:4px;">
+          <button class="btn btn-primary btn-sm" onclick="markPurchased(${i.id})">Bought</button>
           <button class="btn btn-danger btn-sm" onclick="deleteShopItem(${i.id})">Remove</button>
         </div>
       </div>`).join('');
   }
   if (purchased.length > 0) {
-    html += '<h4 style="margin-top:1rem;margin-bottom:0.5rem;color:#666;">Purchased</h4>';
+    html += '<h4 style="margin-top:1rem;margin-bottom:0.5rem;font-size:0.9rem;color:var(--gray-500);">Purchased</h4>';
     html += purchased.map(i => `
       <div class="shop-item purchased">
-        <div>
-          <strong>${escHtml(i.item_name)}</strong> x${i.quantity}
-          ${i.property_name ? `<span style="font-size:0.75rem;color:#666;"> - ${escHtml(i.property_name)}</span>` : ''}
+        <div class="shop-info">
+          <strong>${_escHtml(i.item_name)}</strong> x${i.quantity}
+          ${i.property_name ? `<span style="font-size:0.75rem;color:var(--gray-500);"> - ${_escHtml(i.property_name)}</span>` : ''}
         </div>
-        <button class="btn btn-danger btn-sm" onclick="deleteShopItem(${i.id})" style="font-size:0.7rem;">Remove</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteShopItem(${i.id})">Remove</button>
       </div>`).join('');
   }
   container.innerHTML = html;
@@ -658,7 +684,7 @@ async function addShopItem(e) {
   if (result && result.error) { alert(result.error); return; }
   document.getElementById('shopItem').value = '';
   document.getElementById('shopQty').value = '1';
-  showToast('Item added');
+  _showToast('Item added');
   loadShopping();
 }
 
@@ -682,7 +708,6 @@ async function loadSettings() {
   document.getElementById('pref1Day').checked = !!prefs.notify_1_day;
   document.getElementById('pref2Hours').checked = !!prefs.notify_2_hours;
 
-  // iCal
   const ical = await api('/api/cleaner-portal/ical/token');
   renderIcal(ical);
 }
@@ -697,19 +722,20 @@ async function savePrefs() {
       notify_2_hours: document.getElementById('pref2Hours').checked,
     })
   });
-  showToast('Preferences saved');
+  _showToast('Preferences saved');
 }
 
 async function generateIcal() {
   const result = await api('/api/cleaner-portal/ical/generate', { method: 'POST' });
   renderIcal(result);
-  showToast('Calendar link generated');
+  _showToast('Calendar link generated');
 }
 
 function renderIcal(data) {
   const section = document.getElementById('icalSection');
+  if (!section) return;
   if (!data || !data.url) {
-    section.innerHTML = '<button class="btn btn-primary" onclick="generateIcal()">Generate Calendar Link</button>';
+    section.innerHTML = '<button class="btn btn-primary btn-full" onclick="generateIcal()">Generate Calendar Link</button>';
     return;
   }
   const webcalUrl = data.url.replace(/^https?:/, 'webcal:');
@@ -717,19 +743,19 @@ function renderIcal(data) {
     <div style="margin-bottom:0.75rem;">
       <label style="font-size:0.85rem;font-weight:600;">Calendar URL:</label>
       <div style="display:flex;gap:4px;margin-top:4px;">
-        <input type="text" id="icalUrl" value="${escHtml(data.url)}" readonly style="flex:1;font-size:0.8rem;">
+        <input type="text" id="icalUrl" value="${_escHtml(data.url)}" readonly style="flex:1;font-size:0.8rem;padding:0.5rem;border:1px solid var(--gray-300);border-radius:6px;min-height:40px;">
         <button class="btn btn-secondary btn-sm" onclick="copyIcal()">Copy</button>
       </div>
     </div>
-    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
-      <a href="${webcalUrl}" class="btn btn-primary btn-sm">Add to Calendar App</a>
-      <button class="btn btn-secondary btn-sm" onclick="generateIcal()">Regenerate</button>
+    <div style="display:flex;flex-direction:column;gap:0.5rem;">
+      <a href="${webcalUrl}" class="btn btn-primary btn-full" style="text-decoration:none;text-align:center;">Add to Calendar App</a>
+      <button class="btn btn-secondary btn-full" onclick="generateIcal()">Regenerate</button>
     </div>
-    <p style="font-size:0.75rem;color:#999;margin-top:0.5rem;">Use the URL above in Google Calendar (Add by URL) or click "Add to Calendar App" for Apple/Outlook.</p>
+    <p style="font-size:0.75rem;color:var(--gray-400);margin-top:0.5rem;">Use the URL above in Google Calendar (Add by URL) or click "Add to Calendar App" for Apple/Outlook.</p>
   `;
 }
 
 function copyIcal() {
   const input = document.getElementById('icalUrl');
-  navigator.clipboard.writeText(input.value).then(() => showToast('Copied to clipboard'));
+  navigator.clipboard.writeText(input.value).then(() => _showToast('Copied to clipboard'));
 }

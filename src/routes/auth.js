@@ -36,6 +36,25 @@ router.post('/cleaner-login', async (req, res) => {
   });
 });
 
+// Magic-link token login (for WhatsApp links)
+router.post('/cleaner-token', async (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ error: 'Token is required' });
+
+  const row = await getOne('SELECT * FROM ical_tokens WHERE token = $1', [token]);
+  if (!row) return res.status(401).json({ error: 'Invalid or expired token' });
+
+  const cleaner = await getOne('SELECT * FROM cleaners WHERE id = $1', [row.cleaner_id]);
+  if (!cleaner) return res.status(401).json({ error: 'Cleaner not found' });
+
+  req.session.cleanerId = cleaner.id;
+  req.session.cleanerName = cleaner.name;
+  req.session.cleanerPhone = cleaner.phone;
+  req.session.save(() => {
+    res.json({ id: cleaner.id, name: cleaner.name, phone: cleaner.phone, role: 'cleaner', authType: 'token' });
+  });
+});
+
 // Google SSO
 router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 

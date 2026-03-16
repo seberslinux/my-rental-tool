@@ -2,188 +2,956 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <title>Cleaner Portal</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/styles.css">
   <style>
-    .portal-nav { display:flex; align-items:center; gap:1rem; padding:0.75rem 1.5rem; background:#1a1a2e; color:#fff; flex-wrap:wrap; }
-    .portal-nav .logo { font-weight:700; font-size:1.1rem; margin-right:auto; white-space:nowrap; }
-    .portal-tabs { display:flex; gap:2px; overflow-x:auto; -webkit-overflow-scrolling:touch; }
-    .portal-tabs button { background:transparent; color:#ffffffaa; border:none; padding:0.5rem 0.75rem; font-size:0.8rem; cursor:pointer; border-radius:6px 6px 0 0; white-space:nowrap; font-family:inherit; }
-    .portal-tabs button.active { background:#ffffff20; color:#fff; font-weight:600; }
-    .portal-tabs button:hover { background:#ffffff15; color:#fff; }
-    .portal-user { display:flex; align-items:center; gap:0.5rem; font-size:0.85rem; white-space:nowrap; }
-    .portal-user .btn-logout { background:#ffffff20; color:#fff; border:none; padding:0.3rem 0.6rem; border-radius:4px; cursor:pointer; font-size:0.75rem; }
-    .tab-panel { display:none; padding:1.5rem; max-width:1100px; margin:0 auto; }
-    .tab-panel.active { display:block; }
-    .job-card { border:1px solid #e5e7eb; border-radius:8px; padding:1rem; margin-bottom:0.75rem; position:relative; }
-    .job-card.pending { border-left:4px solid #f59e0b; }
-    .job-card.confirmed { border-left:4px solid #2563eb; }
-    .job-card.completed { border-left:4px solid #16a34a; }
-    .job-card.ready { border-left:4px solid #8b5cf6; }
-    .job-status { display:inline-block; font-size:0.7rem; padding:2px 8px; border-radius:10px; font-weight:600; text-transform:uppercase; }
-    .job-status.pending { background:#fef3c7; color:#92400e; }
-    .job-status.confirmed { background:#dbeafe; color:#1e40af; }
-    .job-status.completed { background:#dcfce7; color:#166534; }
-    .job-status.ready { background:#ede9fe; color:#6d28d9; }
-    .special-req { background:#fef3c7; border-radius:6px; padding:0.4rem 0.6rem; font-size:0.8rem; margin-top:0.5rem; color:#92400e; }
-    .msg-item { border:1px solid #e5e7eb; border-radius:6px; padding:0.75rem; margin-bottom:0.5rem; cursor:pointer; }
-    .msg-item.unread { background:#eff6ff; border-color:#93c5fd; font-weight:600; }
-    .msg-meta { font-size:0.75rem; color:#666; }
-    .checklist-row { display:flex; align-items:center; gap:0.75rem; padding:0.5rem 0; border-bottom:1px solid #f0f0f0; }
-    .checklist-row:last-child { border-bottom:none; }
-    .shop-item { display:flex; justify-content:space-between; align-items:center; padding:0.5rem 0; border-bottom:1px solid #f0f0f0; }
-    .shop-item.purchased { opacity:0.5; text-decoration:line-through; }
-    .view-toggle { display:flex; gap:4px; margin-bottom:1rem; }
-    .view-toggle button { font-size:0.8rem; }
-    .unread-badge { background:#ef4444; color:#fff; font-size:0.65rem; padding:1px 5px; border-radius:10px; margin-left:4px; }
-    @media (max-width:600px) {
-      .portal-nav { padding:0.5rem 0.75rem; }
-      .portal-tabs button { padding:0.4rem 0.5rem; font-size:0.7rem; }
-      .tab-panel { padding:1rem 0.75rem; }
+    /* ═══════════════════════════════════════
+       COLOR TOKENS (from design system)
+       ═══════════════════════════════════════ */
+    :root {
+      --primary: #2563EB;
+      --primary-light: #3B82F6;
+      --primary-dark: #1D4ED8;
+      --primary-50: #EFF6FF;
+      --success: #10B981;
+      --success-bg: #ECFDF5;
+      --warning: #F59E0B;
+      --warning-bg: #FFFBEB;
+      --danger: #EF4444;
+      --danger-bg: #FEF2F2;
+      --purple: #8B5CF6;
+      --purple-bg: #F5F3FF;
+      --gray-50: #F8FAFC;
+      --gray-100: #F1F5F9;
+      --gray-200: #E2E8F0;
+      --gray-300: #CBD5E1;
+      --gray-400: #94A3B8;
+      --gray-500: #64748B;
+      --gray-600: #475569;
+      --gray-700: #334155;
+      --gray-800: #1E293B;
+      --gray-900: #0F172A;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+      --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.07), 0 2px 4px -1px rgba(0,0,0,0.04);
+      --radius: 12px;
+      --radius-sm: 8px;
+      --bottom-nav-height: 56px;
+    }
+
+    /* ═══════════════════════════════════════
+       RESET & BASE (mobile-first)
+       ═══════════════════════════════════════ */
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html { font-size: 16px; -webkit-text-size-adjust: 100%; }
+
+    body {
+      font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--gray-50);
+      color: var(--gray-800);
+      display: block !important;
+      min-height: 100vh;
+      min-height: 100dvh;
+      overflow-x: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ═══════════════════════════════════════
+       TOP HEADER (sticky)
+       ═══════════════════════════════════════ */
+    .portal-header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: var(--gray-900);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 1rem;
+      padding-top: max(0.75rem, env(safe-area-inset-top));
+      min-height: 52px;
+    }
+
+    .portal-header .header-left {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 600;
+      font-size: 1rem;
+      min-width: 0;
+    }
+
+    .portal-header .header-left .avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--primary);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .portal-header .header-left .name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .portal-header .btn-logout {
+      background: rgba(255,255,255,0.15);
+      color: #fff;
+      border: none;
+      padding: 0.4rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      cursor: pointer;
+      white-space: nowrap;
+      min-height: 36px;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .portal-header .btn-logout:active { background: rgba(255,255,255,0.25); }
+
+    /* ═══════════════════════════════════════
+       BOTTOM NAVIGATION BAR
+       ═══════════════════════════════════════ */
+    .bottom-nav {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 100;
+      background: #fff;
+      border-top: 1px solid var(--gray-200);
+      display: flex;
+      height: var(--bottom-nav-height);
+      padding-bottom: env(safe-area-inset-bottom);
+      box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
+    }
+
+    .bottom-nav button {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      background: none;
+      border: none;
+      color: var(--gray-400);
+      font-size: 0.65rem;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+      padding: 0.25rem 0;
+      position: relative;
+      -webkit-tap-highlight-color: transparent;
+      transition: color 0.15s;
+    }
+
+    .bottom-nav button svg {
+      width: 22px;
+      height: 22px;
+      stroke-width: 1.75;
+    }
+
+    .bottom-nav button.active {
+      color: var(--primary);
+    }
+
+    .bottom-nav button.active::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 20%;
+      right: 20%;
+      height: 2px;
+      background: var(--primary);
+      border-radius: 0 0 2px 2px;
+    }
+
+    /* ═══════════════════════════════════════
+       PAGE CONTENT
+       ═══════════════════════════════════════ */
+    .tab-panel {
+      display: none;
+      padding: 1rem;
+      padding-bottom: calc(var(--bottom-nav-height) + 1.5rem + env(safe-area-inset-bottom));
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    .tab-panel.active { display: block; }
+
+    .tab-panel h2 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      margin-bottom: 1rem;
+      color: var(--gray-900);
+    }
+
+    /* ═══════════════════════════════════════
+       CARDS
+       ═══════════════════════════════════════ */
+    .card {
+      background: #fff;
+      border-radius: var(--radius);
+      padding: 1rem;
+      margin-bottom: 0.75rem;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--gray-100);
+    }
+
+    .card h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 0.75rem;
+      color: var(--gray-800);
+    }
+
+    /* ═══════════════════════════════════════
+       BUTTONS
+       ═══════════════════════════════════════ */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-family: inherit;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, opacity 0.15s;
+      -webkit-tap-highlight-color: transparent;
+      min-height: 44px;
+      padding: 0.6rem 1rem;
+      font-size: 0.9rem;
+    }
+
+    .btn:active { opacity: 0.85; }
+
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:active { background: var(--primary-dark); }
+
+    .btn-secondary { background: var(--gray-100); color: var(--gray-700); }
+
+    .btn-success { background: var(--success); color: #fff; }
+
+    .btn-danger { background: var(--danger); color: #fff; }
+
+    .btn-purple { background: var(--purple); color: #fff; }
+
+    .btn-full { width: 100%; }
+
+    .btn-sm {
+      min-height: 36px;
+      padding: 0.4rem 0.75rem;
+      font-size: 0.8rem;
+    }
+
+    /* ═══════════════════════════════════════
+       FORMS
+       ═══════════════════════════════════════ */
+    .form-group {
+      margin-bottom: 0.75rem;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 0.85rem;
+      font-weight: 600;
+      margin-bottom: 0.3rem;
+      color: var(--gray-700);
+    }
+
+    .form-group input,
+    .form-group select,
+    .form-group textarea {
+      width: 100%;
+      padding: 0.65rem 0.75rem;
+      border: 1px solid var(--gray-300);
+      border-radius: var(--radius-sm);
+      font-size: 1rem;
+      font-family: inherit;
+      background: #fff;
+      color: var(--gray-800);
+      min-height: 44px;
+      -webkit-appearance: none;
+    }
+
+    .form-group input:focus,
+    .form-group select:focus,
+    .form-group textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37,99,235,0.1);
+    }
+
+    .form-group textarea {
+      min-height: 80px;
+      resize: vertical;
+    }
+
+    .form-row {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    /* ═══════════════════════════════════════
+       JOB CARDS
+       ═══════════════════════════════════════ */
+    .job-card {
+      background: #fff;
+      border-radius: var(--radius);
+      padding: 1rem;
+      margin-bottom: 0.75rem;
+      box-shadow: var(--shadow-sm);
+      border: 1px solid var(--gray-100);
+      border-left: 4px solid var(--gray-300);
+    }
+
+    .job-card.pending { border-left-color: var(--warning); }
+    .job-card.confirmed { border-left-color: var(--primary); }
+    .job-card.completed { border-left-color: var(--success); }
+    .job-card.ready { border-left-color: var(--purple); }
+
+    .job-card .job-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 0.5rem;
+    }
+
+    .job-card .job-property {
+      font-weight: 700;
+      font-size: 1rem;
+      color: var(--gray-900);
+    }
+
+    .job-status {
+      display: inline-block;
+      font-size: 0.7rem;
+      padding: 3px 8px;
+      border-radius: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      white-space: nowrap;
+    }
+
+    .job-status.pending { background: var(--warning-bg); color: #92400e; }
+    .job-status.confirmed { background: var(--primary-50); color: var(--primary-dark); }
+    .job-status.completed { background: var(--success-bg); color: #065f46; }
+    .job-status.ready { background: var(--purple-bg); color: #6d28d9; }
+
+    .job-card .job-meta {
+      font-size: 0.85rem;
+      color: var(--gray-500);
+      margin-bottom: 0.25rem;
+    }
+
+    .job-card .job-address {
+      font-size: 0.8rem;
+      color: var(--gray-400);
+    }
+
+    .job-card .job-guest {
+      font-size: 0.8rem;
+      color: var(--gray-600);
+      margin-top: 0.25rem;
+    }
+
+    .special-req {
+      background: var(--warning-bg);
+      border-radius: var(--radius-sm);
+      padding: 0.5rem 0.75rem;
+      font-size: 0.85rem;
+      margin-top: 0.5rem;
+      color: #92400e;
+    }
+
+    .job-card .job-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+
+    /* ═══════════════════════════════════════
+       VIEW TOGGLE
+       ═══════════════════════════════════════ */
+    .view-toggle {
+      display: flex;
+      gap: 4px;
+      margin-bottom: 0.75rem;
+      background: var(--gray-100);
+      border-radius: var(--radius-sm);
+      padding: 3px;
+    }
+
+    .view-toggle button {
+      flex: 1;
+      min-height: 36px;
+      border: none;
+      border-radius: 6px;
+      font-family: inherit;
+      font-weight: 600;
+      font-size: 0.85rem;
+      cursor: pointer;
+      background: transparent;
+      color: var(--gray-500);
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .view-toggle button.active {
+      background: #fff;
+      color: var(--primary);
+      box-shadow: var(--shadow-sm);
+    }
+
+    /* ═══════════════════════════════════════
+       MONTH NAV
+       ═══════════════════════════════════════ */
+    .month-nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 0.75rem;
+    }
+
+    .month-nav h3 {
+      font-size: 1rem;
+      font-weight: 600;
+      text-align: center;
+      flex: 1;
+    }
+
+    .month-nav button {
+      width: 40px;
+      height: 40px;
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius-sm);
+      background: #fff;
+      font-size: 1.1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .month-nav button:active { background: var(--gray-100); }
+
+    /* ═══════════════════════════════════════
+       CALENDAR GRID (mobile-optimized)
+       ═══════════════════════════════════════ */
+    .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 1px;
+      background: var(--gray-200);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      border: 1px solid var(--gray-200);
+    }
+
+    .calendar-grid .day-header {
+      background: var(--gray-100);
+      text-align: center;
+      font-size: 0.65rem;
+      font-weight: 600;
+      color: var(--gray-500);
+      padding: 0.4rem 0;
+      text-transform: uppercase;
+    }
+
+    .calendar-grid .day {
+      background: #fff;
+      min-height: 44px;
+      padding: 2px;
+      position: relative;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .calendar-grid .day:active { background: var(--gray-50); }
+
+    .calendar-grid .day .date-num {
+      font-size: 0.75rem;
+      font-weight: 500;
+      color: var(--gray-700);
+      text-align: center;
+      margin-bottom: 1px;
+    }
+
+    .calendar-grid .day.today .date-num {
+      background: var(--primary);
+      color: #fff;
+      border-radius: 50%;
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 1px;
+      font-size: 0.7rem;
+    }
+
+    .calendar-grid .day.has-job {
+      background: var(--primary-50);
+    }
+
+    .calendar-grid .day.available {
+      background: var(--success-bg);
+    }
+
+    .calendar-grid .day.unavailable {
+      background: var(--danger-bg);
+    }
+
+    .calendar-grid .booking-label {
+      font-size: 0.5rem;
+      line-height: 1.2;
+      text-align: center;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .calendar-grid .day .job-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      margin: 2px auto 0;
+    }
+
+    .calendar-grid .day .job-dot.pending { background: var(--warning); }
+    .calendar-grid .day .job-dot.confirmed { background: var(--primary); }
+    .calendar-grid .day .job-dot.completed { background: var(--success); }
+    .calendar-grid .day .job-dot.ready { background: var(--purple); }
+
+    /* ═══════════════════════════════════════
+       CHECKLIST
+       ═══════════════════════════════════════ */
+    .checklist-category {
+      font-weight: 600;
+      font-size: 0.9rem;
+      margin-top: 1rem;
+      margin-bottom: 0.5rem;
+      color: var(--gray-900);
+      padding-bottom: 0.25rem;
+      border-bottom: 1px solid var(--gray-200);
+    }
+
+    .checklist-category:first-child { margin-top: 0; }
+
+    .checklist-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid var(--gray-100);
+      min-height: 48px;
+    }
+
+    .checklist-row:last-child { border-bottom: none; }
+
+    .checklist-row input[type="checkbox"] {
+      width: 24px;
+      height: 24px;
+      flex-shrink: 0;
+      accent-color: var(--primary);
+      cursor: pointer;
+    }
+
+    .checklist-row label {
+      flex: 1;
+      font-size: 0.9rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      min-height: 44px;
+    }
+
+    .checklist-row .inv-notes {
+      width: 100%;
+      padding: 0.4rem 0.5rem;
+      border: 1px solid var(--gray-200);
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      min-height: 36px;
+    }
+
+    .checklist-row .inv-qty,
+    .checklist-row .inv-status {
+      padding: 0.4rem;
+      border: 1px solid var(--gray-200);
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      min-height: 36px;
+      width: 100%;
+    }
+
+    .inv-item-row {
+      padding: 0.75rem 0;
+      border-bottom: 1px solid var(--gray-100);
+    }
+
+    .inv-item-row .inv-item-name {
+      font-size: 0.9rem;
+      font-weight: 500;
+      margin-bottom: 0.4rem;
+    }
+
+    .inv-item-row .inv-item-name .expected {
+      color: var(--gray-400);
+      font-size: 0.75rem;
+      font-weight: 400;
+    }
+
+    .inv-item-row .inv-item-fields {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.5rem;
+    }
+
+    .inv-item-row .inv-item-fields.with-notes {
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    /* ═══════════════════════════════════════
+       MAINTENANCE ISSUES
+       ═══════════════════════════════════════ */
+    .maint-card {
+      border-left: 4px solid var(--gray-300);
+      padding: 0.75rem;
+      margin-bottom: 0.5rem;
+      border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+      background: #fff;
+    }
+
+    .maint-card.urgent { border-left-color: var(--danger); }
+    .maint-card.high { border-left-color: var(--warning); }
+    .maint-card.medium { border-left-color: var(--primary); }
+    .maint-card.low { border-left-color: var(--gray-400); }
+
+    .maint-card .maint-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 0.5rem;
+    }
+
+    .maint-card .maint-title { font-weight: 600; font-size: 0.9rem; }
+
+    .maint-card .maint-badge {
+      font-size: 0.65rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+
+    .maint-card .maint-sub {
+      font-size: 0.8rem;
+      color: var(--gray-500);
+      margin-top: 0.2rem;
+    }
+
+    .maint-card .maint-desc {
+      font-size: 0.85rem;
+      color: var(--gray-600);
+      margin-top: 0.3rem;
+    }
+
+    /* ═══════════════════════════════════════
+       SETTINGS
+       ═══════════════════════════════════════ */
+    .setting-row {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.6rem 0;
+      border-bottom: 1px solid var(--gray-100);
+      min-height: 48px;
+    }
+
+    .setting-row:last-child { border-bottom: none; }
+
+    .setting-row input[type="checkbox"] {
+      width: 22px;
+      height: 22px;
+      flex-shrink: 0;
+      accent-color: var(--primary);
+      cursor: pointer;
+    }
+
+    .setting-row label {
+      flex: 1;
+      font-size: 0.9rem;
+      cursor: pointer;
+    }
+
+    /* ═══════════════════════════════════════
+       MESSAGES
+       ═══════════════════════════════════════ */
+    .msg-item {
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius-sm);
+      padding: 0.75rem;
+      margin-bottom: 0.5rem;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .msg-item:active { background: var(--gray-50); }
+
+    .msg-item.unread {
+      background: var(--primary-50);
+      border-color: var(--primary-light);
+    }
+
+    .msg-meta { font-size: 0.75rem; color: var(--gray-500); }
+
+    /* ═══════════════════════════════════════
+       SHOPPING
+       ═══════════════════════════════════════ */
+    .shop-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem 0;
+      border-bottom: 1px solid var(--gray-100);
+      gap: 0.75rem;
+    }
+
+    .shop-item:last-child { border-bottom: none; }
+
+    .shop-item.purchased {
+      opacity: 0.5;
+    }
+
+    .shop-item .shop-info { flex: 1; min-width: 0; }
+
+    /* ═══════════════════════════════════════
+       AVAILABILITY
+       ═══════════════════════════════════════ */
+    .avail-row {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--gray-100);
+      min-height: 48px;
+      flex-wrap: wrap;
+    }
+
+    .avail-row .avail-day {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      min-width: 90px;
+    }
+
+    .avail-row .avail-day input[type="checkbox"] {
+      width: 22px;
+      height: 22px;
+      accent-color: var(--primary);
+    }
+
+    .avail-row .avail-times {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      flex: 1;
+    }
+
+    .avail-row .avail-times input[type="time"] {
+      padding: 0.3rem;
+      border: 1px solid var(--gray-200);
+      border-radius: 6px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      min-height: 36px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .avail-row .avail-times span {
+      color: var(--gray-400);
+      font-size: 0.8rem;
+    }
+
+    /* ═══════════════════════════════════════
+       OVERRIDE TAGS
+       ═══════════════════════════════════════ */
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.3rem 0.6rem;
+      border-radius: 20px;
+      font-size: 0.8rem;
+      font-weight: 500;
+      margin: 0.2rem;
+    }
+
+    .tag .remove {
+      cursor: pointer;
+      font-size: 1rem;
+      line-height: 1;
+      opacity: 0.7;
+    }
+
+    .tag .remove:hover { opacity: 1; }
+
+    /* ═══════════════════════════════════════
+       UNREAD BADGE
+       ═══════════════════════════════════════ */
+    .unread-badge {
+      background: var(--danger);
+      color: #fff;
+      font-size: 0.6rem;
+      padding: 1px 5px;
+      border-radius: 10px;
+      position: absolute;
+      top: 4px;
+      right: 50%;
+      transform: translateX(12px);
+    }
+
+    /* ═══════════════════════════════════════
+       EMPTY STATE
+       ═══════════════════════════════════════ */
+    .empty-state {
+      text-align: center;
+      padding: 2rem 1rem;
+      color: var(--gray-400);
+      font-size: 0.9rem;
+    }
+
+    /* ═══════════════════════════════════════
+       TOAST
+       ═══════════════════════════════════════ */
+    #toastContainer {
+      position: fixed;
+      top: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 9999;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      width: 90%;
+      max-width: 350px;
+    }
+
+    /* ═══════════════════════════════════════
+       TABLET / DESKTOP ENHANCEMENTS
+       ═══════════════════════════════════════ */
+    @media (min-width: 768px) {
+      .tab-panel {
+        padding: 1.5rem;
+        max-width: 700px;
+      }
+
+      .bottom-nav {
+        height: 60px;
+      }
+
+      .bottom-nav button {
+        font-size: 0.75rem;
+        gap: 3px;
+      }
+
+      .bottom-nav button svg {
+        width: 24px;
+        height: 24px;
+      }
+
+      .job-card .job-actions {
+        flex-direction: row;
+      }
+
+      .job-card .job-actions .btn {
+        flex: 1;
+      }
+
+      .form-row {
+        flex-direction: row;
+        gap: 0.75rem;
+      }
+
+      .form-row .form-group {
+        flex: 1;
+      }
+
+      .inv-item-row .inv-item-fields {
+        grid-template-columns: 1fr 1fr 1fr;
+      }
+
+      .calendar-grid .day {
+        min-height: 70px;
+        padding: 4px;
+      }
+
+      .calendar-grid .day .date-num {
+        font-size: 0.85rem;
+      }
+
+      .calendar-grid .booking-label {
+        font-size: 0.65rem;
+      }
     }
   </style>
 </head>
 <body>
-  <nav class="portal-nav">
-    <span class="logo">Rental Manager</span>
-    <div class="portal-tabs" id="portalTabs">
-      <button data-tab="jobs" class="active">Jobs</button>
-      <button data-tab="availability">Availability</button>
-      <button data-tab="messages" class="staff-only-tab">Messages</button>
-      <button data-tab="maintenance">Maintenance</button>
-      <button data-tab="checklist">Checklist</button>
-      <button data-tab="shopping" class="staff-only-tab">Shopping</button>
-      <button data-tab="settings">Settings</button>
+  <!-- Top Header -->
+  <header class="portal-header">
+    <div class="header-left">
+      <div class="avatar" id="headerAvatar"></div>
+      <span class="name" id="headerName">Cleaner Portal</span>
     </div>
-    <div class="portal-user" id="portalUser"></div>
-  </nav>
+    <button class="btn-logout" onclick="doLogout()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      Logout
+    </button>
+  </header>
 
   <!-- Jobs Tab -->
   <div class="tab-panel active" id="panel-jobs">
-    <h2>My Cleaning Jobs</h2>
+    <h2>My Jobs</h2>
     <div class="view-toggle">
-      <button class="btn btn-primary btn-sm" id="btnCalView" onclick="setJobView('calendar')">Calendar</button>
-      <button class="btn btn-secondary btn-sm" id="btnListView" onclick="setJobView('list')">List</button>
+      <button class="active" id="btnCalView" onclick="setJobView('calendar')">Calendar</button>
+      <button id="btnListView" onclick="setJobView('list')">List</button>
     </div>
-    <div class="month-nav" style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem;">
-      <button class="btn btn-secondary btn-sm" onclick="changeJobMonth(-1)">&larr;</button>
-      <h3 id="jobMonthLabel" style="min-width:150px;text-align:center;"></h3>
-      <button class="btn btn-secondary btn-sm" onclick="changeJobMonth(1)">&rarr;</button>
+    <div class="month-nav">
+      <button onclick="changeJobMonth(-1)">&larr;</button>
+      <h3 id="jobMonthLabel"></h3>
+      <button onclick="changeJobMonth(1)">&rarr;</button>
     </div>
     <div id="jobCalendarView" class="calendar-grid"></div>
     <div id="jobListView" style="display:none;"></div>
   </div>
 
-  <!-- Availability Tab -->
-  <div class="tab-panel" id="panel-availability">
-    <h2>My Availability</h2>
-    <div class="card">
-      <h3>Weekly Schedule</h3>
-      <form id="availForm" onsubmit="saveMyAvailability(event)">
-        <div id="availSlots"></div>
-        <button type="submit" class="btn btn-primary" style="margin-top:1rem;">Save Schedule</button>
-      </form>
-    </div>
-    <div class="card" style="margin-top:1rem;">
-      <h3>Date Overrides</h3>
-      <div class="form-row" style="align-items:flex-end;">
-        <div class="form-group">
-          <label>Date</label>
-          <input type="date" id="overrideDate">
-        </div>
-        <div class="form-group">
-          <label>Status</label>
-          <select id="overrideStatus">
-            <option value="1">Available</option>
-            <option value="0">Unavailable</option>
-          </select>
-        </div>
-        <div class="form-group">
-          <button type="button" class="btn btn-primary" onclick="addMyOverride()">Add Override</button>
-        </div>
-      </div>
-      <div id="overridesList" style="margin-top:0.5rem;"></div>
-    </div>
-  </div>
-
-  <!-- Messages Tab -->
-  <div class="tab-panel" id="panel-messages">
-    <h2>Messages</h2>
-    <div class="card">
-      <h3>Send Message</h3>
-      <div class="form-row" style="align-items:flex-end;">
-        <div class="form-group" style="flex:1;">
-          <label>To</label>
-          <select id="msgRecipient"><option value="">Everyone</option></select>
-        </div>
-        <div class="form-group" style="flex:1;">
-          <label>Subject</label>
-          <input type="text" id="msgSubject" placeholder="Optional">
-        </div>
-      </div>
-      <div class="form-group">
-        <textarea id="msgBody" rows="3" placeholder="Type your message..." style="width:100%;"></textarea>
-      </div>
-      <button class="btn btn-primary" onclick="sendMsg()">Send</button>
-    </div>
-    <div class="card" style="margin-top:1rem;">
-      <h3>Inbox</h3>
-      <div id="messagesList"></div>
-    </div>
-  </div>
-
-  <!-- Maintenance Tab -->
-  <div class="tab-panel" id="panel-maintenance">
-    <h2>Maintenance Issues</h2>
-    <div class="card">
-      <h3>Report an Issue</h3>
-      <form onsubmit="reportIssue(event)">
-        <div class="form-row">
-          <div class="form-group" style="flex:1;">
-            <label>Property</label>
-            <select id="maintProperty" required></select>
-          </div>
-          <div class="form-group" style="flex:1;">
-            <label>Priority</label>
-            <select id="maintPriority">
-              <option value="low">Low</option>
-              <option value="medium" selected>Medium</option>
-              <option value="high">High</option>
-              <option value="urgent">Urgent</option>
-            </select>
-          </div>
-        </div>
-        <div class="form-group">
-          <label>Title</label>
-          <input type="text" id="maintTitle" required placeholder="Brief description">
-        </div>
-        <div class="form-group">
-          <label>Details</label>
-          <textarea id="maintDesc" rows="2" placeholder="Optional details"></textarea>
-        </div>
-        <div class="form-group">
-          <label>Category</label>
-          <select id="maintCategory">
-            <option>General</option><option>Plumbing</option><option>Electrical</option>
-            <option>Appliance</option><option>Furniture</option><option>Cleaning</option>
-            <option>Safety</option><option>Pest Control</option><option>Other</option>
-          </select>
-        </div>
-        <button type="submit" class="btn btn-primary">Report Issue</button>
-      </form>
-    </div>
-    <div class="card" style="margin-top:1rem;">
-      <h3>Open Issues</h3>
-      <div id="maintList"></div>
-    </div>
-  </div>
-
   <!-- Checklist Tab -->
   <div class="tab-panel" id="panel-checklist">
-    <h2>Pre-Check-in Checklist</h2>
-    <div class="form-row" style="align-items:flex-end;margin-bottom:1rem;">
+    <h2>Checklist</h2>
+    <div class="card">
       <div class="form-group">
         <label>Property</label>
         <select id="invProperty" onchange="loadInventory()"></select>
@@ -195,40 +963,56 @@
     </div>
     <div class="card">
       <div id="inventoryList"></div>
-      <div style="display:flex;gap:0.5rem;margin-top:1rem;">
-        <button class="btn btn-primary" onclick="submitInventoryCheck()" id="btnSubmitInv" disabled>Save Checklist</button>
-        <button class="btn btn-sm" onclick="markReadyForCheckin()" id="btnReady" disabled style="background:#16a34a;color:#fff;border:none;padding:0.5rem 1rem;border-radius:6px;font-weight:600;cursor:pointer;">Ready for Check-in</button>
+      <div style="display:flex;flex-direction:column;gap:0.5rem;margin-top:1rem;">
+        <button class="btn btn-primary btn-full" onclick="submitInventoryCheck()" id="btnSubmitInv" disabled>Save Checklist</button>
+        <button class="btn btn-success btn-full" onclick="markReadyForCheckin()" id="btnReady" disabled>Ready for Check-in</button>
       </div>
     </div>
   </div>
 
-  <!-- Shopping Tab -->
-  <div class="tab-panel" id="panel-shopping">
-    <h2>Shopping List</h2>
+  <!-- Maintenance Tab -->
+  <div class="tab-panel" id="panel-maintenance">
+    <h2>Maintenance</h2>
     <div class="card">
-      <h3>Add Item</h3>
-      <form onsubmit="addShopItem(event)">
-        <div class="form-row" style="align-items:flex-end;">
-          <div class="form-group" style="flex:2;">
-            <label>Item</label>
-            <input type="text" id="shopItem" required placeholder="e.g. Dish soap">
-          </div>
-          <div class="form-group" style="flex:1;">
-            <label>Qty</label>
-            <input type="number" id="shopQty" value="1" min="1">
-          </div>
-          <div class="form-group" style="flex:1;">
-            <label>Property</label>
-            <select id="shopProperty"><option value="">General</option></select>
+      <h3>Report an Issue</h3>
+      <form onsubmit="reportIssue(event)">
+        <div class="form-group">
+          <label>Property</label>
+          <select id="maintProperty" required></select>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Priority</label>
+            <select id="maintPriority">
+              <option value="low">Low</option>
+              <option value="medium" selected>Medium</option>
+              <option value="high">High</option>
+              <option value="urgent">Urgent</option>
+            </select>
           </div>
           <div class="form-group">
-            <button type="submit" class="btn btn-primary">Add</button>
+            <label>Category</label>
+            <select id="maintCategory">
+              <option>General</option><option>Plumbing</option><option>Electrical</option>
+              <option>Appliance</option><option>Furniture</option><option>Cleaning</option>
+              <option>Safety</option><option>Pest Control</option><option>Other</option>
+            </select>
           </div>
         </div>
+        <div class="form-group">
+          <label>Title</label>
+          <input type="text" id="maintTitle" required placeholder="Brief description">
+        </div>
+        <div class="form-group">
+          <label>Details</label>
+          <textarea id="maintDesc" rows="2" placeholder="Optional details"></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary btn-full">Report Issue</button>
       </form>
     </div>
-    <div class="card" style="margin-top:1rem;">
-      <div id="shopList"></div>
+    <div class="card" style="margin-top:0.5rem;">
+      <h3>Open Issues</h3>
+      <div id="maintList"></div>
     </div>
   </div>
 
@@ -237,28 +1021,129 @@
     <h2>Settings</h2>
     <div class="card">
       <h3>WhatsApp Notifications</h3>
-      <p style="font-size:0.85rem;color:#666;margin-bottom:1rem;">Control when you receive WhatsApp messages about your cleaning jobs.</p>
-      <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
-        <input type="checkbox" id="prefEnabled" onchange="savePrefs()"> Enable WhatsApp notifications
-      </label>
-      <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
-        <input type="checkbox" id="pref7Days" onchange="savePrefs()"> 7 days before
-      </label>
-      <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
-        <input type="checkbox" id="pref1Day" onchange="savePrefs()"> 1 day before
-      </label>
-      <label style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
-        <input type="checkbox" id="pref2Hours" onchange="savePrefs()"> 2 hours before
-      </label>
-    </div>
-    <div class="card" style="margin-top:1rem;">
-      <h3>Calendar Subscription</h3>
-      <p style="font-size:0.85rem;color:#666;margin-bottom:0.75rem;">Subscribe to your cleaning calendar in Google Calendar, Apple Calendar, or Outlook.</p>
-      <div id="icalSection">
-        <button class="btn btn-primary" onclick="generateIcal()">Generate Calendar Link</button>
+      <p style="font-size:0.85rem;color:var(--gray-500);margin-bottom:0.75rem;">Control when you receive WhatsApp messages about your cleaning jobs.</p>
+      <div class="setting-row">
+        <input type="checkbox" id="prefEnabled" onchange="savePrefs()">
+        <label for="prefEnabled">Enable WhatsApp notifications</label>
+      </div>
+      <div class="setting-row">
+        <input type="checkbox" id="pref7Days" onchange="savePrefs()">
+        <label for="pref7Days">7 days before</label>
+      </div>
+      <div class="setting-row">
+        <input type="checkbox" id="pref1Day" onchange="savePrefs()">
+        <label for="pref1Day">1 day before</label>
+      </div>
+      <div class="setting-row">
+        <input type="checkbox" id="pref2Hours" onchange="savePrefs()">
+        <label for="pref2Hours">2 hours before</label>
       </div>
     </div>
+    <div class="card">
+      <h3>Calendar Subscription</h3>
+      <p style="font-size:0.85rem;color:var(--gray-500);margin-bottom:0.75rem;">Subscribe to your cleaning calendar in Google Calendar, Apple Calendar, or Outlook.</p>
+      <div id="icalSection">
+        <button class="btn btn-primary btn-full" onclick="generateIcal()">Generate Calendar Link</button>
+      </div>
+    </div>
+
+    <!-- Availability section moved into Settings -->
+    <div class="card">
+      <h3>Weekly Availability</h3>
+      <form id="availForm" onsubmit="saveMyAvailability(event)">
+        <div id="availSlots"></div>
+        <button type="submit" class="btn btn-primary btn-full" style="margin-top:0.75rem;">Save Schedule</button>
+      </form>
+    </div>
+    <div class="card">
+      <h3>Date Overrides</h3>
+      <div class="form-group">
+        <label>Date</label>
+        <input type="date" id="overrideDate">
+      </div>
+      <div class="form-group">
+        <label>Status</label>
+        <select id="overrideStatus">
+          <option value="1">Available</option>
+          <option value="0">Unavailable</option>
+        </select>
+      </div>
+      <button type="button" class="btn btn-primary btn-full" onclick="addMyOverride()">Add Override</button>
+      <div id="overridesList" style="margin-top:0.75rem;"></div>
+    </div>
   </div>
+
+  <!-- Messages Tab (staff only, hidden by default) -->
+  <div class="tab-panel" id="panel-messages">
+    <h2>Messages</h2>
+    <div class="card">
+      <h3>Send Message</h3>
+      <div class="form-group">
+        <label>To</label>
+        <select id="msgRecipient"><option value="">Everyone</option></select>
+      </div>
+      <div class="form-group">
+        <label>Subject</label>
+        <input type="text" id="msgSubject" placeholder="Optional">
+      </div>
+      <div class="form-group">
+        <textarea id="msgBody" rows="3" placeholder="Type your message..."></textarea>
+      </div>
+      <button class="btn btn-primary btn-full" onclick="sendMsg()">Send</button>
+    </div>
+    <div class="card" style="margin-top:0.5rem;">
+      <h3>Inbox</h3>
+      <div id="messagesList"></div>
+    </div>
+  </div>
+
+  <!-- Shopping Tab (staff only, hidden by default) -->
+  <div class="tab-panel" id="panel-shopping">
+    <h2>Shopping List</h2>
+    <div class="card">
+      <h3>Add Item</h3>
+      <form onsubmit="addShopItem(event)">
+        <div class="form-group">
+          <label>Item</label>
+          <input type="text" id="shopItem" required placeholder="e.g. Dish soap">
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Qty</label>
+            <input type="number" id="shopQty" value="1" min="1">
+          </div>
+          <div class="form-group">
+            <label>Property</label>
+            <select id="shopProperty"><option value="">General</option></select>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary btn-full">Add Item</button>
+      </form>
+    </div>
+    <div class="card" style="margin-top:0.5rem;">
+      <div id="shopList"></div>
+    </div>
+  </div>
+
+  <!-- Bottom Navigation -->
+  <nav class="bottom-nav" id="bottomNav">
+    <button data-tab="jobs" class="active">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      Jobs
+    </button>
+    <button data-tab="checklist">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+      Checklist
+    </button>
+    <button data-tab="maintenance">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>
+      Repairs
+    </button>
+    <button data-tab="settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      Settings
+    </button>
+  </nav>
 
   <script src="/shared.js"></script>
   <script src="/cleaner-portal.js"></script>
