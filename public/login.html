@@ -6,6 +6,8 @@
   <title>Login - Rental Manager v2</title>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#1E293B">
   <style>
     body { display: flex; align-items: center; justify-content: center; min-height: 100vh; min-height: 100dvh; padding: 1rem; }
     .login-card { background: #fff; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,0.1); padding: 2rem; width: 100%; max-width: 400px; }
@@ -84,6 +86,7 @@
       </form>
     </div>
   </div>
+  <script>if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');</script>
   <script src="login.js"></script>
 </body>
 </html>
