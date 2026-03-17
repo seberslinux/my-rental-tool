@@ -62,7 +62,7 @@ function injectSidebar() {
     ]},
   ];
 
-  // Add Users link for admins
+  // Add admin-only items
   if (isAdmin) {
     navItems[2].items.push({
       href: '/user-management.html', label: 'Users',
@@ -146,12 +146,12 @@ function injectSidebar() {
     // Determine page title from the old h1 or known paths
     const pageTitle = _getPageTitle(path);
 
-    // Build topbar
+    // Build topbar — property selector next to title, no toolbar
     const topbar = document.createElement('div');
     topbar.className = 'topbar';
     topbar.innerHTML = `
-      <div class="topbar-left"><h1>${escHtml(pageTitle)}</h1></div>
-      <div class="topbar-right"><div id="globalPropertySelect" class="prop-multi-container"></div><div id="pageToolbar"></div></div>
+      <div class="topbar-left"><h1>${escHtml(pageTitle)}</h1><div id="globalPropertySelect" class="prop-multi-container"></div></div>
+      <div class="topbar-right"><div id="pageToolbar"></div></div>
     `;
 
     main.appendChild(topbar);
@@ -554,6 +554,12 @@ async function _initPropertySelector() {
   } catch (err) {
     console.error('shared.js: could not load properties', err);
     _allProperties = [];
+  }
+
+  // Hide selector if only 1 property
+  if (_allProperties.length <= 1) {
+    wrapper.style.display = 'none';
+    return;
   }
 
   _buildMultiSelect(wrapper);

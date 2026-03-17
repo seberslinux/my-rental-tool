@@ -867,24 +867,25 @@ window.addEventListener('propertyChanged', async () => {
   renderCalendar();
 });
 
-function injectDashboardToolbar() {
-  const toolbar = document.getElementById('pageToolbar');
-  if (!toolbar) return;
-  const btnStyle = 'padding:5px 10px;font-size:12px;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;';
+function renderSyncSection() {
+  const container = document.getElementById('syncSection');
+  if (!container) return;
   const isAdmin = currentUser && currentUser.role === 'admin';
-  toolbar.innerHTML = `
-    ${isAdmin ? `<button class="btn btn-secondary" style="${btnStyle}" onclick="syncAll()">
-      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
-      Sync
-    </button>` : ''}
-    <span id="syncStatus" style="font-size:11px;color:var(--gray-500);"></span>
-  `;
+  if (!isAdmin) { container.style.display = 'none'; return; }
+  container.innerHTML = `
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+      <button class="btn btn-secondary btn-sm" onclick="syncAll()">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+        Sync All
+      </button>
+      <span id="syncStatus" style="font-size:12px;color:var(--gray-500);"></span>
+    </div>`;
 }
 
 // Initial load (with auth check)
 (async () => {
   const user = await checkAuth();
   if (!user) return;
-  injectDashboardToolbar();
+  renderSyncSection();
   loadAll();
 })();
