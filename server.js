@@ -60,8 +60,8 @@ async function start() {
     process.exit(0);
   });
 
-  app.listen(PORT, () => {
-    console.log(`Rental management tool running on http://localhost:${PORT}`);
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Rental management tool running on port ${PORT}`);
   });
 }
 
