@@ -1,4 +1,4 @@
-/* dashboard.js – Enhanced dashboard */
+/* dashboard.js – Mobile-first dashboard */
 
 let bookings = [];
 let stats = {};
@@ -83,11 +83,8 @@ async function loadAll() {
     const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
     const monthEnd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
 
-    // Set default bookings month filter to current month
     if (!bookingsMonthFilter) {
       bookingsMonthFilter = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      const monthInput = document.getElementById('bookingsMonth');
-      if (monthInput) monthInput.value = bookingsMonthFilter;
     }
 
     const fetches = [
@@ -97,7 +94,6 @@ async function loadAll() {
       api('/api/cleaners').catch(() => []),
     ];
 
-    // Finances PnL — may not be available yet
     const propParam = getPropertyIdsParam();
     let pnlPromise;
     try {
@@ -116,23 +112,19 @@ async function loadAll() {
     pnlData = pnlResult;
 
     renderKpis(pnlData);
-    renderStats(propertiesData);
-    renderCheckouts();
-    renderCheckins();
+    renderCurrentGuests();
+    renderNextUp();
     renderAlerts();
-    renderGaps();
-    renderBookings();
-    renderJobs();
+    renderCleaningJobs();
     populatePropertyFilter(propertiesData);
     renderCalendar();
     populateJumpMonth();
-    renderPipeline();
   } catch (err) {
     console.error('Load failed:', err);
   }
 }
 
-/* ───── KPI row ───── */
+/* ───── KPI row (Revenue + Pipeline) ───── */
 
 function renderKpis(pnl) {
   const grid = document.getElementById('kpiRow');
@@ -140,7 +132,6 @@ function renderKpis(pnl) {
 
   const summary = (pnl && pnl.summary) ? pnl.summary : {};
   const revenueThisMonth = summary.total_revenue || 0;
-  const profitThisMonth = summary.net_profit || 0;
   const totalCosts = summary.total_costs || 0;
 
   // Pipeline: future confirmed bookings revenue
@@ -149,183 +140,142 @@ function renderKpis(pnl) {
     .filter((b) => b.status === 'confirmed' && b.check_in > today);
   const pipelineRevenue = futureBookings.reduce((sum, b) => sum + (b.converted_total_price || b.total_price || 0), 0);
 
-  const profitNote = totalCosts === 0 ? ' *' : '';
-
   grid.innerHTML = `
-    <div class="metric-card">
-      <div class="metric-header">
-        <div class="metric-label">Revenue This Month</div>
-        <div class="metric-icon blue">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
-        </div>
-      </div>
-      <div class="metric-value">${fmtMoney(revenueThisMonth)}</div>
-      <span class="metric-change neutral">This month</span>
+    <div class="dash-card">
+      <div class="dash-card-header">Revenue This Month</div>
+      <div class="dash-card-value">${fmtMoney(revenueThisMonth)}</div>
     </div>
-    <div class="metric-card">
-      <div class="metric-header">
-        <div class="metric-label">Profit This Month</div>
-        <div class="metric-icon green">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M16 8h-4a2 2 0 100 4h2a2 2 0 110 4H8"/></svg>
-        </div>
-      </div>
-      <div class="metric-value">${fmtMoney(profitThisMonth)}${profitNote}</div>
-      <span class="metric-change ${totalCosts === 0 ? 'neutral' : (profitThisMonth >= 0 ? 'up' : 'down')}">${totalCosts === 0 ? 'Estimate only' : (profitThisMonth >= 0 ? 'Positive' : 'Negative')}</span>
-    </div>
-    <div class="metric-card">
-      <div class="metric-header">
-        <div class="metric-label">Revenue Pipeline</div>
-        <div class="metric-icon amber">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-        </div>
-      </div>
-      <div class="metric-value">${fmtMoney(pipelineRevenue)}</div>
-      <span class="metric-change up">${futureBookings.length} upcoming bookings</span>
+    <div class="dash-card">
+      <div class="dash-card-header">Pipeline</div>
+      <div class="dash-card-value">${fmtMoney(pipelineRevenue)}</div>
+      <div class="dash-card-sub">${futureBookings.length} booking${futureBookings.length !== 1 ? 's' : ''}</div>
     </div>`;
 
   // No costs banner
-  let banner = document.getElementById('noCostsBanner');
+  const banner = document.getElementById('noCostsBanner');
   if (banner) {
     if (totalCosts === 0 && revenueThisMonth > 0) {
-      banner.innerHTML = '<div class="alert-banner warning"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>No costs configured — profit figures are estimates only. <a href="/finances.html#cost-settings">Add fixed costs in Cost Settings &rarr;</a></div>';
+      banner.innerHTML = '<div class="alert-banner warning" style="margin-bottom:12px;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>No costs configured — profit figures are estimates only. <a href="/finances.html#cost-settings">Add fixed costs &rarr;</a></div>';
     } else {
       banner.innerHTML = '';
     }
   }
 }
 
-/* ───── Stats grid (occupancy per property) ───── */
+/* ───── Currently Staying ───── */
 
-function renderStats(propertiesList) {
-  const grid = document.getElementById('statsGrid');
-  if (!grid) return;
-
-  if (!stats.occupancy) {
-    grid.innerHTML = '<div class="loading">No data yet. Sync properties and bookings first.</div>';
-    return;
-  }
-
-  const filtered = filterByProperty(stats.occupancy, 'property_id');
-  if (filtered.length === 0) {
-    grid.innerHTML = '<div class="loading">No occupancy data for selected property.</div>';
-    return;
-  }
-
-  // Calculate ADR and RevPAR
-  const today = new Date().toISOString().split('T')[0];
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  const recent30 = filterByProperty(bookings, 'property_id')
-    .filter((b) => b.status === 'confirmed' && b.check_in >= thirtyDaysAgo && b.check_in <= today);
-  const totalPrice30 = recent30.reduce((sum, b) => sum + (b.converted_total_price || b.total_price || 0), 0);
-  const totalNights30 = recent30.reduce((sum, b) => {
-    const ci = new Date(b.check_in);
-    const co = new Date(b.check_out);
-    return sum + Math.max(1, Math.round((co - ci) / (24 * 60 * 60 * 1000)));
-  }, 0);
-  const adr = totalNights30 > 0 ? totalPrice30 / totalNights30 : 0;
-  const avgOcc = filtered.length > 0 ? Math.round(filtered.reduce((s, o) => s + o.occupancy_rate, 0) / filtered.length) : 0;
-  const revpar = adr * (avgOcc / 100);
-
-  let html = filtered.map((o) => {
-    const fillClass = o.occupancy_rate > 70 ? 'green' : o.occupancy_rate > 40 ? 'amber' : 'red';
-    return `
-    <div class="occupancy-card">
-      <div class="label">${escHtml(o.name)} — Occupancy (30d)</div>
-      <div class="value-row">
-        <span class="value">${o.occupancy_rate}%</span>
-        <span class="sub">${o.booked_nights} / 30 nights</span>
-      </div>
-      <div class="progress-bar"><div class="fill ${fillClass}" style="width:${o.occupancy_rate}%"></div></div>
-    </div>`;
-  }).join('');
-
-  // Portfolio average card
-  html += `
-    <div class="occupancy-card">
-      <div class="label">Portfolio Avg (30d)</div>
-      <div class="value-row">
-        <span class="value">${avgOcc}%</span>
-        <span class="sub">ADR ${fmtMoney(adr)} · RevPAR ${fmtMoney(revpar)}</span>
-      </div>
-      <div class="progress-bar"><div class="fill ${avgOcc > 70 ? 'green' : avgOcc > 40 ? 'amber' : 'red'}" style="width:${avgOcc}%"></div></div>
-    </div>`;
-
-  grid.innerHTML = html;
-}
-
-/* ───── Upcoming check-outs ───── */
-
-function renderCheckouts() {
-  const tbody = document.getElementById('checkoutTable');
-  if (!tbody) return;
-  const countEl = document.getElementById('checkoutCount');
-  const checkouts = filterByProperty(stats.upcoming_checkouts || [], 'property_id');
-  const jobs = stats.pending_cleaning_jobs || [];
-
-  if (countEl) countEl.textContent = checkouts.length;
-
-  if (checkouts.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7">No upcoming check-outs in the next 48 hours.</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = checkouts.map((b) => {
-    const job = jobs.find((j) => j.property_id === b.property_id && j.cleaning_date === b.check_out);
-    const cleanerCell = job ? escHtml(job.cleaner_name) : '\u2014';
-    const statusCell = job
-      ? '<span class="status-dot assigned">Assigned</span>'
-      : '<span class="status-dot unassigned">Unassigned</span>';
-    const actionCell = job
-      ? '<a class="action-link" href="#">Details</a>'
-      : `<a class="action-link" href="#" onclick="openAssignModal(${b.id || 0}, ${b.property_id}, '${b.check_out}'); return false;">Assign &rarr;</a>`;
-    return `
-    <tr>
-      <td><strong>${escHtml(b.property_name)}</strong></td>
-      <td>${escHtml(b.guest_name) || '-'}</td>
-      <td>${b.check_out}</td>
-      <td>${platformBadge(b.platform)}</td>
-      <td>${cleanerCell}</td>
-      <td>${statusCell}</td>
-      <td>${actionCell}</td>
-    </tr>`;
-  }).join('');
-}
-
-/* ───── Upcoming check-ins ───── */
-
-function renderCheckins() {
-  const tbody = document.getElementById('checkinTable');
-  if (!tbody) return;
+function renderCurrentGuests() {
+  const container = document.getElementById('currentGuestsList');
+  if (!container) return;
 
   const today = new Date().toISOString().split('T')[0];
-  const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const filteredProps = filterByProperty(properties, 'id');
 
-  const checkins = filterByProperty(bookings, 'property_id')
-    .filter((b) => b.status === 'confirmed' && b.check_in >= today && b.check_in <= tomorrow);
-
-  if (checkins.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5">No upcoming check-ins in the next 48 hours.</td></tr>';
+  if (filteredProps.length === 0) {
+    container.innerHTML = '<div class="dash-empty">No properties found. Sync properties first.</div>';
     return;
   }
 
-  tbody.innerHTML = checkins
-    .map((b) => {
-      const ci = new Date(b.check_in);
-      const co = new Date(b.check_out);
-      const nights = Math.max(1, Math.round((co - ci) / (24 * 60 * 60 * 1000)));
-      return `
-      <tr style="background:#00aa0008">
-        <td>${escHtml(b.property_name)}</td>
-        <td>${escHtml(b.guest_name) || '-'}</td>
-        <td>${b.check_in}</td>
-        <td>${platformBadge(b.platform)}</td>
-        <td>${nights}</td>
-      </tr>`;
-    })
-    .join('');
+  const cards = filteredProps.map((prop) => {
+    // Find a current booking for this property
+    const current = bookings.find((b) =>
+      String(b.property_id) === String(prop.id) &&
+      b.status === 'confirmed' &&
+      b.check_in <= today &&
+      b.check_out > today
+    );
+
+    if (current) {
+      const guestCount = current.adults || current.guests || '';
+      const guestCountLabel = guestCount ? `${guestCount} guest${guestCount > 1 ? 's' : ''}` : '';
+      return `<div class="dash-guest-card">
+        <div class="prop-name">${escHtml(prop.name)}</div>
+        <div class="guest-name">${escHtml(current.guest_name || 'Guest')}</div>
+        <div class="guest-dates">${current.check_in} &rarr; ${current.check_out}</div>
+        ${guestCountLabel ? `<div class="guest-count">${guestCountLabel}</div>` : ''}
+      </div>`;
+    } else {
+      return `<div class="dash-guest-card vacant">
+        <div class="prop-name">${escHtml(prop.name)}</div>
+        <div class="guest-name">Vacant</div>
+      </div>`;
+    }
+  });
+
+  container.innerHTML = `<div class="dash-guests-grid">${cards.join('')}</div>`;
 }
 
-/* ───── Needs Attention alerts ───── */
+/* ───── Next Up (next check-in + next check-out) ───── */
+
+function timeUntil(dateStr) {
+  const now = new Date();
+  const target = new Date(dateStr + 'T12:00:00');
+  const diffMs = target - now;
+  if (diffMs < 0) return 'today';
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+  if (diffHours < 1) return 'soon';
+  if (diffHours < 24) return `in ${diffHours}h`;
+  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  if (diffDays === 1) return 'tomorrow';
+  return `in ${diffDays} days`;
+}
+
+function renderNextUp() {
+  const container = document.getElementById('nextUpList');
+  if (!container) return;
+
+  const today = new Date().toISOString().split('T')[0];
+  const filtered = filterByProperty(bookings, 'property_id')
+    .filter((b) => b.status === 'confirmed');
+
+  // Next check-in: earliest check_in >= today
+  const futureCheckins = filtered
+    .filter((b) => b.check_in >= today)
+    .sort((a, b) => a.check_in.localeCompare(b.check_in));
+  const nextCheckin = futureCheckins.length > 0 ? futureCheckins[0] : null;
+
+  // Next check-out: earliest check_out >= today
+  const futureCheckouts = filtered
+    .filter((b) => b.check_out >= today)
+    .sort((a, b) => a.check_out.localeCompare(b.check_out));
+  const nextCheckout = futureCheckouts.length > 0 ? futureCheckouts[0] : null;
+
+  if (!nextCheckin && !nextCheckout) {
+    container.innerHTML = '<div class="dash-empty">No upcoming check-ins or check-outs.</div>';
+    return;
+  }
+
+  let html = '<div class="dash-nextup-grid">';
+
+  if (nextCheckin) {
+    html += `<div class="dash-nextup-card">
+      <div class="nextup-left">
+        <div class="nextup-type checkin">Check-in</div>
+        <div class="nextup-prop">${escHtml(nextCheckin.property_name)}</div>
+        <div class="nextup-guest">${escHtml(nextCheckin.guest_name || 'Guest')}</div>
+        <div class="nextup-date">${nextCheckin.check_in}</div>
+      </div>
+      <div class="nextup-eta">${timeUntil(nextCheckin.check_in)}</div>
+    </div>`;
+  }
+
+  if (nextCheckout) {
+    html += `<div class="dash-nextup-card">
+      <div class="nextup-left">
+        <div class="nextup-type checkout">Check-out</div>
+        <div class="nextup-prop">${escHtml(nextCheckout.property_name)}</div>
+        <div class="nextup-guest">${escHtml(nextCheckout.guest_name || 'Guest')}</div>
+        <div class="nextup-date">${nextCheckout.check_out}</div>
+      </div>
+      <div class="nextup-eta">${timeUntil(nextCheckout.check_out)}</div>
+    </div>`;
+  }
+
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+/* ───── Needs Attention alerts (card-based) ───── */
 
 function renderAlerts() {
   const container = document.getElementById('alertsList');
@@ -336,14 +286,12 @@ function renderAlerts() {
   const in7days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const jobs = stats.pending_cleaning_jobs || [];
 
-  // 1. Unassigned cleaners: bookings with check_out in next 7 days, no matching cleaning job
+  // 1. Unassigned cleaners
   const upcomingCheckouts = filterByProperty(bookings, 'property_id')
     .filter((b) => b.status === 'confirmed' && b.check_out >= today && b.check_out <= in7days);
   for (const b of upcomingCheckouts) {
     const hasJob = jobs.some((j) => {
-      const jDate = j.cleaning_date;
-      const coDate = b.check_out;
-      return String(j.property_id) === String(b.property_id) && jDate === coDate;
+      return String(j.property_id) === String(b.property_id) && j.cleaning_date === b.check_out;
     });
     if (!hasJob) {
       alerts.push({
@@ -355,13 +303,13 @@ function renderAlerts() {
     }
   }
 
-  // 2. Short gaps: count gaps of 1-3 nights this month
+  // 2. Short gaps
   const gaps = filterByProperty(stats.gaps || [], 'property_id');
   const shortGapCount = gaps.length;
   if (shortGapCount > 0) {
     alerts.push({
       level: 'amber',
-      text: shortGapCount + ' short gap' + (shortGapCount > 1 ? 's' : '') + ' (1-3 nights) this month — consider last-minute pricing',
+      text: shortGapCount + ' short gap' + (shortGapCount > 1 ? 's' : '') + ' (1-3 nights) this month',
       link: '/properties.html#pricing',
       linkText: 'Update pricing'
     });
@@ -391,7 +339,7 @@ function renderAlerts() {
   }
 
   if (alerts.length === 0) {
-    container.innerHTML = '<p style="color:var(--gray-400);font-size:14px;">No alerts at this time.</p>';
+    container.innerHTML = '<div class="dash-empty">No alerts at this time.</div>';
     if (countEl) countEl.textContent = '0';
     return;
   }
@@ -400,11 +348,80 @@ function renderAlerts() {
 
   container.innerHTML = alerts.map((a) => {
     const levelClass = a.level === 'red' ? 'urgent' : (a.level === 'amber' ? 'warning' : 'info');
-    return `<div class="attention-item ${levelClass}">
-      <span class="text">${a.text}</span>
-      <a class="action-link" href="${a.link}">${escHtml(a.linkText)} &rarr;</a>
-    </div>`;
+    return `<a class="dash-alert-card ${levelClass}" href="${a.link}">
+      <span class="alert-text">${a.text}</span>
+      <span class="alert-action">${escHtml(a.linkText)} &rarr;</span>
+    </a>`;
   }).join('');
+}
+
+/* ───── Cleaning Jobs (card-based, next 7 days) ───── */
+
+function renderCleaningJobs() {
+  const container = document.getElementById('cleaningJobsList');
+  if (!container) return;
+  const countEl = document.getElementById('cleaningJobsCount');
+
+  const today = new Date().toISOString().split('T')[0];
+  const in7days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const jobs = filterByProperty(stats.pending_cleaning_jobs || [], 'property_id');
+
+  // Assigned jobs in the next 7 days
+  const upcomingJobs = jobs.filter((j) => j.cleaning_date >= today && j.cleaning_date <= in7days);
+
+  // Unassigned: checkouts in next 7 days with no matching job
+  const upcomingCheckouts = filterByProperty(bookings, 'property_id')
+    .filter((b) => b.status === 'confirmed' && b.check_out >= today && b.check_out <= in7days);
+
+  const unassigned = [];
+  for (const b of upcomingCheckouts) {
+    const hasJob = jobs.some((j) => String(j.property_id) === String(b.property_id) && j.cleaning_date === b.check_out);
+    if (!hasJob) {
+      unassigned.push(b);
+    }
+  }
+
+  const totalCount = upcomingJobs.length + unassigned.length;
+  if (countEl) countEl.textContent = totalCount;
+
+  if (totalCount === 0) {
+    container.innerHTML = '<div class="dash-empty">No cleaning jobs in the next 7 days.</div>';
+    return;
+  }
+
+  let html = '<div class="dash-jobs-grid">';
+
+  // Unassigned first (more urgent)
+  for (const b of unassigned) {
+    html += `<div class="dash-job-card">
+      <div class="job-left">
+        <div class="job-prop">${escHtml(b.property_name)}</div>
+        <div class="job-cleaner unassigned">Unassigned</div>
+        <div class="job-date">${b.check_out}</div>
+      </div>
+      <div class="job-right">
+        <span class="status-badge unassigned">Needs Cleaner</span>
+        <button class="btn btn-primary btn-sm" onclick="openAssignModal(${b.id || 0}, ${b.property_id}, '${b.check_out}')">Assign</button>
+      </div>
+    </div>`;
+  }
+
+  // Assigned jobs
+  for (const j of upcomingJobs) {
+    html += `<div class="dash-job-card">
+      <div class="job-left">
+        <div class="job-prop">${escHtml(j.property_name)}</div>
+        <div class="job-cleaner">${escHtml(j.cleaner_name || 'Unknown')}</div>
+        <div class="job-date">${j.cleaning_date}</div>
+      </div>
+      <div class="job-right">
+        <span class="status-badge ${j.status || 'assigned'}">${escHtml(j.status || 'Assigned')}</span>
+      </div>
+    </div>`;
+  }
+
+  html += '</div>';
+  container.innerHTML = html;
 }
 
 /* ───── Assign cleaner modal ───── */
@@ -426,7 +443,6 @@ function openAssignModal(bookingId, propertyId, date) {
   const propName = (properties || []).find(p => p.id === propertyId)?.name || `Property ${propertyId}`;
   info.innerHTML = `Assign cleaner for <strong>${escHtml(propName)}</strong> on <strong>${date}</strong>`;
 
-  // Filter cleaners assigned to this property (or all if no assignment data)
   const candidates = cleaners.filter((c) => {
     if (c.properties && Array.isArray(c.properties)) {
       return c.properties.some(p => p.id === propertyId);
@@ -527,31 +543,6 @@ async function assignCleaner(bookingId, propertyId, date, cleanerId) {
   }
 }
 
-/* ───── Calendar gaps ───── */
-
-function renderGaps() {
-  const tbody = document.getElementById('gapsTable');
-  if (!tbody) return;
-  const countEl = document.getElementById('gapsCount');
-  const gaps = filterByProperty(stats.gaps || [], 'property_id');
-
-  if (countEl) countEl.textContent = gaps.length;
-
-  if (gaps.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5">No short gaps detected.</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = gaps.map((g, i) => `
-    <tr>
-      <td><strong>${escHtml(g.property_name)}</strong></td>
-      <td>${g.gap_start}</td>
-      <td>${g.gap_end}</td>
-      <td><span class="gap-nights ${g.nights <= 1 ? 'short' : 'long'}">${g.nights} night${g.nights > 1 ? 's' : ''}</span></td>
-      <td><button class="btn btn-primary" style="padding:6px 14px;font-size:12px;" onclick="openGapDiscountModal(${i})">Apply Discount</button></td>
-    </tr>`).join('');
-}
-
 /* ───── Gap discount modal ───── */
 
 let _currentGapPromoText = '';
@@ -602,117 +593,10 @@ function copyGapPromoText() {
   });
 }
 
-/* ───── Apply all gap discounts ───── */
-
 function applyAllGapDiscounts() {
   const gaps = filterByProperty(stats.gaps || [], 'property_id');
   if (gaps.length === 0) return;
   openGapDiscountModal(0);
-}
-
-/* ───── All Bookings ───── */
-
-function renderBookings() {
-  const tbody = document.getElementById('bookingsTable');
-  if (!tbody) return;
-  const monthInput = document.getElementById('bookingsMonth');
-  bookingsMonthFilter = monthInput ? monthInput.value : bookingsMonthFilter;
-
-  let filtered = filterByProperty(bookings, 'property_id');
-
-  // Filter by month if set
-  if (bookingsMonthFilter) {
-    filtered = filtered.filter((b) => {
-      const checkinMonth = b.check_in ? b.check_in.substring(0, 7) : '';
-      const checkoutMonth = b.check_out ? b.check_out.substring(0, 7) : '';
-      return checkinMonth === bookingsMonthFilter || checkoutMonth === bookingsMonthFilter;
-    });
-  }
-
-  if (filtered.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7">No bookings found for selected period.</td></tr>';
-    return;
-  }
-
-  tbody.innerHTML = filtered
-    .map(
-      (b) => {
-        const ci = new Date(b.check_in);
-        const co = new Date(b.check_out);
-        const nights = Math.max(1, Math.round((co - ci) / (24 * 60 * 60 * 1000)));
-        const bookingJson = encodeURIComponent(JSON.stringify({
-          property: b.property_name, guest: b.guest_name || '-',
-          ci: b.check_in, co: b.check_out, platform: b.platform || 'Direct',
-          price: b.converted_total_price || b.total_price || 0, status: b.status, nights: nights
-        }));
-        return `
-      <tr onclick="showBookingDetail('${bookingJson}')" style="cursor:pointer;">
-        <td>${escHtml(b.property_name)}</td>
-        <td>${escHtml(b.guest_name) || '-'}</td>
-        <td>${b.check_in}</td>
-        <td>${b.check_out}</td>
-        <td>${platformBadge(b.platform)}</td>
-        <td>${fmtMoney(b.converted_total_price || b.total_price || 0)}</td>
-        <td><span class="badge badge-${b.status}">${escHtml(b.status)}</span></td>
-      </tr>`;
-      }
-    )
-    .join('');
-}
-
-/* ───── Cleaning jobs ───── */
-
-function renderJobs() {
-  const tbody = document.getElementById('jobsTable');
-  if (!tbody) return;
-  const jobs = filterByProperty(stats.pending_cleaning_jobs || [], 'property_id');
-  const today = new Date().toISOString().split('T')[0];
-  const in7days = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-
-  // Find upcoming checkouts (next 7 days) with no matching cleaning job
-  const upcomingCheckouts = filterByProperty(bookings, 'property_id')
-    .filter((b) => b.status === 'confirmed' && b.check_out >= today && b.check_out <= in7days);
-
-  const unassignedRows = [];
-  for (const b of upcomingCheckouts) {
-    const hasJob = jobs.some((j) => String(j.property_id) === String(b.property_id) && j.cleaning_date === b.check_out);
-    if (!hasJob) {
-      unassignedRows.push(b);
-    }
-  }
-
-  if (jobs.length === 0 && unassignedRows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5">No pending cleaning jobs.</td></tr>';
-    return;
-  }
-
-  let html = jobs
-    .map(
-      (j) => `
-      <tr>
-        <td>${escHtml(j.property_name)}</td>
-        <td>${escHtml(j.cleaner_name) || 'Unassigned'}</td>
-        <td>${j.cleaning_date}</td>
-        <td>${j.start_time} - ${j.end_time}</td>
-        <td><span class="badge badge-${j.status}">${escHtml(j.status)}</span></td>
-      </tr>`
-    )
-    .join('');
-
-  html += unassignedRows
-    .map(
-      (b) => `
-      <tr style="background:#fef2f2">
-        <td>${escHtml(b.property_name)}</td>
-        <td><span style="color:#dc2626;font-weight:600;">Unassigned</span></td>
-        <td>${b.check_out}</td>
-        <td>-</td>
-        <td><a class="btn btn-primary btn-sm" href="/cleaners.html">Assign</a></td>
-      </tr>`
-    )
-    .join('');
-
-  tbody.innerHTML = html;
 }
 
 /* ───── Property filter for calendar ───── */
@@ -751,7 +635,6 @@ function populateJumpMonth() {
   const select = document.getElementById('jumpMonth');
   if (!select) return;
 
-  // Determine range: earliest booking to 6 months from now
   let earliest = new Date();
   let latest = new Date();
   latest.setMonth(latest.getMonth() + 6);
@@ -813,13 +696,11 @@ function renderCalendar() {
   const today = new Date().toISOString().split('T')[0];
   const in48h = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-  // Also apply global property filter
   let filteredBookings = filterByProperty(bookings, 'property_id');
   if (calPropFilter !== 'all') {
     filteredBookings = filteredBookings.filter((b) => String(b.property_id) === String(calPropFilter));
   }
 
-  // Build booked dates map
   const bookedMap = {};
   const gapSet = new Set();
 
@@ -835,7 +716,6 @@ function renderCalendar() {
     }
   }
 
-  // Mark gaps
   const filteredGaps = filterByProperty(stats.gaps || [], 'property_id');
   for (const g of filteredGaps) {
     if (calPropFilter !== 'all' && String(g.property_id) !== String(calPropFilter)) continue;
@@ -850,7 +730,6 @@ function renderCalendar() {
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   let html = days.map((d) => `<div class="day-header">${d}</div>`).join('');
 
-  // Blank cells before first day
   for (let i = 0; i < firstDay; i++) {
     html += '<div class="day"></div>';
   }
@@ -866,7 +745,6 @@ function renderCalendar() {
     if (isToday) classes += ' today';
     if (isBooked) {
       classes += ' booked';
-      // Add platform-specific class from the first booking on that day
       classes += ' ' + getPlatformClass(isBooked[0].platform);
     }
     if (isCheckoutSoon) classes += ' checkout-soon';
@@ -895,11 +773,10 @@ function renderCalendar() {
   grid.innerHTML = html;
 }
 
-/* ───── Booking Detail Modal (All Bookings table) ───── */
+/* ───── Booking Detail Modal ───── */
 
 function showBookingDetail(encodedData) {
   const b = JSON.parse(decodeURIComponent(encodedData));
-  // Remove existing
   const existing = document.getElementById('bookingDetailModal');
   if (existing) existing.remove();
 
@@ -928,7 +805,6 @@ function showBookingDetail(encodedData) {
 
 function showBookingPopover(event, encodedData) {
   event.stopPropagation();
-  // Remove existing popover
   const existing = document.getElementById('bookingPopover');
   if (existing) existing.remove();
 
@@ -951,7 +827,6 @@ function showBookingPopover(event, encodedData) {
 
   document.body.appendChild(popover);
 
-  // Position near click
   const rect = event.target.closest('.day').getBoundingClientRect();
   let top = rect.bottom + 4;
   let left = rect.left;
@@ -960,7 +835,6 @@ function showBookingPopover(event, encodedData) {
   popover.style.top = top + 'px';
   popover.style.left = left + 'px';
 
-  // Close on outside click
   setTimeout(() => {
     document.addEventListener('click', function closePopover(e) {
       if (!popover.contains(e.target)) {
@@ -971,40 +845,9 @@ function showBookingPopover(event, encodedData) {
   }, 10);
 }
 
-/* ───── Revenue Pipeline ───── */
-
-function renderPipeline() {
-  const container = document.getElementById('pipelineStats');
-  if (!container) return;
-  const today = new Date().toISOString().split('T')[0];
-  const futureBookings = filterByProperty(bookings, 'property_id')
-    .filter((b) => b.status === 'confirmed' && b.check_in > today);
-
-  const totalRevenue = futureBookings.reduce((sum, b) => sum + (b.converted_total_price || b.total_price || 0), 0);
-  const count = futureBookings.length;
-  const avgPerBooking = count > 0 ? totalRevenue / count : 0;
-
-  container.innerHTML = `
-    <div class="grid">
-      <div class="stat-card">
-        <div class="value">${fmtMoney(totalRevenue)}</div>
-        <div class="label">Total Pipeline Revenue</div>
-      </div>
-      <div class="stat-card">
-        <div class="value">${count}</div>
-        <div class="label">Future Bookings</div>
-      </div>
-      <div class="stat-card">
-        <div class="value">${fmtMoney(avgPerBooking)}</div>
-        <div class="label">Avg per Booking</div>
-      </div>
-    </div>`;
-}
-
 /* ───── Event listeners & init ───── */
 
 window.addEventListener('propertyChanged', async () => {
-  // Re-fetch PnL for new property selection so Revenue/Profit This Month updates
   const now = new Date();
   const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
   const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
@@ -1017,15 +860,11 @@ window.addEventListener('propertyChanged', async () => {
   }
 
   renderKpis(pnlData);
-  renderStats(properties);
-  renderCheckouts();
-  renderCheckins();
+  renderCurrentGuests();
+  renderNextUp();
   renderAlerts();
-  renderGaps();
-  renderBookings();
-  renderJobs();
+  renderCleaningJobs();
   renderCalendar();
-  renderPipeline();
 });
 
 function injectDashboardToolbar() {

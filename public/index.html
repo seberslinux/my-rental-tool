@@ -8,67 +8,373 @@
   <link rel="stylesheet" href="styles.css">
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#1E293B">
+  <style>
+    /* ── Dashboard mobile-first cards ── */
+    .dash-kpi-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .dash-card {
+      background: #fff;
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius-sm);
+      padding: 16px;
+      box-shadow: var(--shadow-sm);
+    }
+    .dash-card-header {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--gray-500);
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .dash-card-value {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--gray-800);
+      line-height: 1.2;
+    }
+    .dash-card-sub {
+      font-size: 13px;
+      color: var(--gray-400);
+      margin-top: 4px;
+    }
+    .dash-section {
+      margin-bottom: 20px;
+    }
+    .dash-section-title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--gray-800);
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .dash-section-title .count {
+      background: var(--gray-100);
+      color: var(--gray-600);
+      font-size: 12px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 10px;
+    }
+    .dash-guest-card {
+      background: #fff;
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+      margin-bottom: 8px;
+      box-shadow: var(--shadow-sm);
+    }
+    .dash-guest-card .prop-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--gray-700);
+      margin-bottom: 4px;
+    }
+    .dash-guest-card .guest-name {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--gray-800);
+    }
+    .dash-guest-card .guest-dates {
+      font-size: 13px;
+      color: var(--gray-500);
+      margin-top: 4px;
+    }
+    .dash-guest-card .guest-count {
+      font-size: 13px;
+      color: var(--gray-400);
+      margin-top: 2px;
+    }
+    .dash-guest-card.vacant {
+      background: var(--gray-50);
+      border-style: dashed;
+    }
+    .dash-guest-card.vacant .guest-name {
+      color: var(--gray-400);
+      font-weight: 500;
+    }
+    .dash-nextup-card {
+      background: #fff;
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+      margin-bottom: 8px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+    .dash-nextup-card .nextup-left {
+      flex: 1;
+      min-width: 0;
+    }
+    .dash-nextup-card .nextup-type {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+    }
+    .dash-nextup-card .nextup-type.checkin {
+      color: var(--success);
+    }
+    .dash-nextup-card .nextup-type.checkout {
+      color: var(--danger);
+    }
+    .dash-nextup-card .nextup-prop {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--gray-700);
+    }
+    .dash-nextup-card .nextup-guest {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--gray-800);
+    }
+    .dash-nextup-card .nextup-date {
+      font-size: 13px;
+      color: var(--gray-500);
+      margin-top: 2px;
+    }
+    .dash-nextup-card .nextup-eta {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--primary);
+      white-space: nowrap;
+    }
+    .dash-alert-card {
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      min-height: 44px;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      border-left: 4px solid transparent;
+    }
+    .dash-alert-card.urgent {
+      background: var(--danger-bg);
+      border-left-color: var(--danger);
+    }
+    .dash-alert-card.warning {
+      background: var(--warning-bg);
+      border-left-color: var(--warning);
+    }
+    .dash-alert-card.info {
+      background: var(--primary-50);
+      border-left-color: var(--primary);
+    }
+    .dash-alert-card .alert-text {
+      font-size: 14px;
+      flex: 1;
+      line-height: 1.4;
+    }
+    .dash-alert-card .alert-action {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--primary);
+      white-space: nowrap;
+    }
+    .dash-job-card {
+      background: #fff;
+      border: 1px solid var(--gray-200);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+      margin-bottom: 8px;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .dash-job-card .job-left {
+      flex: 1;
+      min-width: 0;
+    }
+    .dash-job-card .job-prop {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--gray-700);
+    }
+    .dash-job-card .job-cleaner {
+      font-size: 15px;
+      font-weight: 500;
+      color: var(--gray-800);
+      margin-top: 2px;
+    }
+    .dash-job-card .job-cleaner.unassigned {
+      color: var(--danger);
+      font-weight: 700;
+    }
+    .dash-job-card .job-date {
+      font-size: 13px;
+      color: var(--gray-500);
+      margin-top: 2px;
+    }
+    .dash-job-card .job-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-badge {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 3px 10px;
+      border-radius: 10px;
+    }
+    .status-badge.assigned {
+      background: var(--success-bg);
+      color: #065F46;
+    }
+    .status-badge.pending, .status-badge.unassigned {
+      background: var(--warning-bg);
+      color: #B45309;
+    }
+    .status-badge.completed {
+      background: var(--gray-100);
+      color: var(--gray-600);
+    }
+    .dash-empty {
+      font-size: 14px;
+      color: var(--gray-400);
+      padding: 12px 0;
+    }
+    /* Calendar controls mobile stacking */
+    .cal-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .cal-nav {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .cal-nav h3 {
+      min-width: 140px;
+      text-align: center;
+      margin-bottom: 0;
+      font-size: 15px;
+    }
+    /* Mobile overrides */
+    @media (max-width: 768px) {
+      .dash-kpi-row {
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+      .dash-card-value {
+        font-size: 20px;
+      }
+      .cal-controls {
+        flex-direction: column;
+        align-items: stretch;
+      }
+      .cal-controls select {
+        width: 100%;
+      }
+      .cal-nav {
+        justify-content: center;
+      }
+      .calendar-grid .day .booking-label {
+        display: none;
+      }
+      .calendar-legend {
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+    }
+    @media (min-width: 769px) {
+      .dash-guests-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .dash-guests-grid .dash-guest-card {
+        margin-bottom: 0;
+      }
+      .dash-nextup-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .dash-nextup-grid .dash-nextup-card {
+        margin-bottom: 0;
+      }
+      .dash-jobs-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .dash-jobs-grid .dash-job-card {
+        margin-bottom: 0;
+      }
+    }
+  </style>
 </head>
 <body>
   <div class="container">
-    <!-- KPI Metric Cards -->
-    <div class="metrics-grid" id="kpiRow">
-      <div class="loading">Loading KPIs...</div>
-    </div>
-
-    <!-- Occupancy per property -->
-    <div class="occupancy-row" id="statsGrid">
-      <div class="loading">Loading stats...</div>
+    <!-- KPI Cards: Revenue + Pipeline -->
+    <div class="dash-kpi-row" id="kpiRow">
+      <div class="dash-card"><div class="dash-card-header">Loading...</div></div>
+      <div class="dash-card"><div class="dash-card-header">Loading...</div></div>
     </div>
 
     <!-- Alert Banner (no costs) -->
     <div id="noCostsBanner"></div>
 
+    <!-- Currently Staying -->
+    <div class="dash-section" id="currentGuestsSection">
+      <div class="dash-section-title">Currently Staying</div>
+      <div id="currentGuestsList">
+        <div class="dash-empty">Loading...</div>
+      </div>
+    </div>
+
+    <!-- Next Up -->
+    <div class="dash-section" id="nextUpSection">
+      <div class="dash-section-title">Next Up</div>
+      <div id="nextUpList">
+        <div class="dash-empty">Loading...</div>
+      </div>
+    </div>
+
     <!-- Needs Attention -->
-    <div class="section" id="alertsPanel">
-      <div class="section-header">
-        <h2>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          Needs Attention
-          <span class="count" id="alertsCount">0</span>
-        </h2>
+    <div class="dash-section" id="alertsPanel">
+      <div class="dash-section-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#F59E0B" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Needs Attention
+        <span class="count" id="alertsCount">0</span>
       </div>
-      <div class="attention-list" id="alertsList">
-        <div class="loading">Loading...</div>
+      <div id="alertsList">
+        <div class="dash-empty">Loading...</div>
       </div>
     </div>
 
-    <!-- Upcoming Check-outs -->
-    <div class="section">
-      <div class="section-header">
-        <h2>Upcoming Check-outs (Next 48h) <span class="count" id="checkoutCount">0</span></h2>
+    <!-- Cleaning Jobs -->
+    <div class="dash-section" id="cleaningJobsSection">
+      <div class="dash-section-title">
+        Cleaning Jobs (Next 7 Days)
+        <span class="count" id="cleaningJobsCount">0</span>
       </div>
-      <table>
-        <thead>
-          <tr>
-            <th>Property</th><th>Guest</th><th>Check-out</th><th>Platform</th><th>Cleaner</th><th>Status</th><th>Action</th>
-          </tr>
-        </thead>
-        <tbody id="checkoutTable">
-          <tr><td colspan="7" class="loading">Loading...</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- Calendar Gaps -->
-    <div class="section">
-      <div class="section-header">
-        <h2>Calendar Gaps (1-3 nights) <span class="count" id="gapsCount">0</span></h2>
-        <button class="btn btn-secondary" onclick="applyAllGapDiscounts()">Apply Discount to All</button>
+      <div id="cleaningJobsList">
+        <div class="dash-empty">Loading...</div>
       </div>
-      <table>
-        <thead>
-          <tr><th>Property</th><th>Gap Start</th><th>Gap End</th><th>Nights</th><th>Action</th></tr>
-        </thead>
-        <tbody id="gapsTable">
-          <tr><td colspan="5" class="loading">Loading...</td></tr>
-        </tbody>
-      </table>
     </div>
 
     <!-- Calendar -->
@@ -79,11 +385,11 @@
           Calendar
         </h2>
       </div>
-      <div style="display:flex;gap:1rem;align-items:center;margin-bottom:1rem;">
+      <div class="cal-controls">
         <select id="calendarProperty" onchange="renderCalendar()" style="width:auto;"><option value="all">All Properties</option></select>
-        <div style="display:flex;align-items:center;gap:8px;">
+        <div class="cal-nav">
           <button class="btn btn-secondary btn-sm" onclick="changeMonth(-1)">&larr;</button>
-          <h3 id="calendarMonth" style="min-width:150px;text-align:center;margin-bottom:0;"></h3>
+          <h3 id="calendarMonth"></h3>
           <button class="btn btn-secondary btn-sm" onclick="changeMonth(1)">&rarr;</button>
         </div>
         <select id="jumpMonth" onchange="jumpToMonth()" style="width:auto;font-size:12px;"></select>
