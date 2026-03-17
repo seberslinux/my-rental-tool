@@ -124,16 +124,17 @@ body {
 }
 .sidebar-user .btn-logout:hover { background: rgba(255,255,255,0.1); color: white; }
 
-/* Mobile sidebar toggle */
+/* Mobile sidebar toggle — sits inside the topbar */
 .sidebar-toggle {
   display: none;
-  position: fixed; top: 12px; left: 12px; z-index: 60;
-  width: 40px; height: 40px; border-radius: var(--radius-sm);
-  background: var(--gray-900); color: white; border: none;
+  position: fixed; top: 0; left: 0; z-index: 60;
+  width: 52px; height: 52px; border-radius: 0;
+  background: transparent; color: var(--gray-700); border: none;
   cursor: pointer; align-items: center; justify-content: center;
-  box-shadow: var(--shadow-md);
+  -webkit-tap-highlight-color: transparent;
 }
-.sidebar-toggle svg { width: 20px; height: 20px; }
+.sidebar-toggle:active { background: var(--gray-100); }
+.sidebar-toggle svg { width: 22px; height: 22px; }
 .sidebar-overlay {
   display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4);
   z-index: 45;
@@ -939,13 +940,15 @@ input:focus, select:focus, textarea:focus {
   .sidebar-overlay.open { display: block; }
   .main { margin-left: 0; }
 
-  /* Topbar: wrap elements */
-  .topbar { padding: 8px 12px; padding-left: 52px; flex-wrap: wrap; gap: 8px; }
-  .topbar-left h1 { font-size: 17px; }
-  .topbar-right { width: 100%; justify-content: flex-start; gap: 8px; }
+  /* Topbar: align with hamburger toggle */
+  .topbar { padding: 0 12px; padding-left: 48px; min-height: 52px; flex-wrap: wrap; gap: 4px; }
+  .topbar-left { min-height: 52px; }
+  .topbar-left h1 { font-size: 16px; }
+  .topbar-right { width: 100%; justify-content: flex-start; gap: 6px; padding-bottom: 8px; }
+  .topbar-right:empty { display: none; padding: 0; }
 
   /* Content */
-  .content, .container { padding: 12px; }
+  .content, .container { padding: 12px 10px; }
 
   /* Typography */
   h1 { font-size: 1.4rem; }
@@ -964,10 +967,9 @@ input:focus, select:focus, textarea:focus {
   .form-grid { grid-template-columns: 1fr; }
   .form-grid .form-group.span-2, .form-grid .form-group.span-4 { grid-column: span 1; }
 
-  /* Tables: horizontal scroll */
+  /* Tables: horizontal scroll only when needed */
   .table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .card-body { overflow-x: auto; -webkit-overflow-scrolling: touch; }
-  table { min-width: 500px; }
 
   /* Buttons: touch-friendly sizing */
   .btn, button { min-height: 44px; }
