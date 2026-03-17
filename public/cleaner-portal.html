@@ -936,7 +936,8 @@
   <div class="tab-panel active" id="panel-jobs">
     <h2>My Jobs</h2>
     <div class="view-toggle">
-      <button class="active" id="btnCalView" onclick="setJobView('calendar')">Calendar</button>
+      <button class="active" id="btnCalView" onclick="setJobView('calendar')">Month</button>
+      <button id="btnWeekView" onclick="setJobView('week')">Week</button>
       <button id="btnListView" onclick="setJobView('list')">List</button>
     </div>
     <div class="month-nav">
@@ -945,6 +946,7 @@
       <button onclick="changeJobMonth(1)">&rarr;</button>
     </div>
     <div id="jobCalendarView" class="calendar-grid"></div>
+    <div id="jobWeekView" style="display:none;"></div>
     <div id="jobListView" style="display:none;"></div>
   </div>
 

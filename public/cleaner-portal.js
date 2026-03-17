@@ -28,13 +28,10 @@ function _showToast(message, type) {
   alert(message);
 }
 
-function _doLogout() {
-  if (typeof doLogout === 'function') return doLogout();
+// Logout — always use direct fetch, don't rely on shared.js
+window.doLogout = function() {
   fetch('/api/auth/logout', { method: 'POST' }).then(() => { window.location.href = '/login.html'; });
-}
-
-// Expose doLogout globally for onclick
-window.doLogout = function() { _doLogout(); };
+};
 
 /* ───── Magic Link Token Auth ───── */
 
@@ -127,8 +124,10 @@ async function loadProfile() {
 function setJobView(view) {
   jobView = view;
   document.getElementById('btnCalView').classList.toggle('active', view === 'calendar');
+  document.getElementById('btnWeekView').classList.toggle('active', view === 'week');
   document.getElementById('btnListView').classList.toggle('active', view === 'list');
   document.getElementById('jobCalendarView').style.display = view === 'calendar' ? '' : 'none';
+  document.getElementById('jobWeekView').style.display = view === 'week' ? '' : 'none';
   document.getElementById('jobListView').style.display = view === 'list' ? '' : 'none';
   renderJobs();
 }
@@ -153,6 +152,7 @@ async function loadJobs() {
 
 function renderJobs() {
   if (jobView === 'calendar') renderJobCalendar();
+  else if (jobView === 'week') renderJobWeek();
   else renderJobList();
 }
 
@@ -210,6 +210,70 @@ function renderJobCalendar() {
   grid.innerHTML = html;
 }
 
+function renderJobWeek() {
+  const container = document.getElementById('jobWeekView');
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  const todayStr = today.toISOString().split('T')[0];
+
+  // Get Monday of current week based on jobMonth
+  const start = new Date(jobMonth);
+  const dow = start.getDay();
+  start.setDate(start.getDate() - (dow === 0 ? 6 : dow - 1)); // Monday
+
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(start);
+    d.setDate(d.getDate() + i);
+    days.push(d);
+  }
+
+  const jobsByDate = {};
+  for (const j of myJobs) {
+    if (!jobsByDate[j.cleaning_date]) jobsByDate[j.cleaning_date] = [];
+    jobsByDate[j.cleaning_date].push(j);
+  }
+
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
+    <button class="btn btn-secondary btn-sm" onclick="changeWeek(-1)">&larr;</button>
+    <span style="font-weight:600;font-size:0.9rem;">${days[0].toLocaleDateString('en-ZA',{month:'short',day:'numeric'})} — ${days[6].toLocaleDateString('en-ZA',{month:'short',day:'numeric',year:'numeric'})}</span>
+    <button class="btn btn-secondary btn-sm" onclick="changeWeek(1)">&rarr;</button>
+  </div>`;
+
+  for (const d of days) {
+    const ds = d.toISOString().split('T')[0];
+    const isToday = ds === todayStr;
+    const dayName = d.toLocaleDateString('en-ZA', { weekday: 'short', month: 'short', day: 'numeric' });
+    const jobs = jobsByDate[ds] || [];
+
+    html += `<div style="border-left:3px solid ${isToday ? 'var(--primary)' : 'var(--gray-200)'};padding:0.5rem 0.75rem;margin-bottom:0.5rem;background:${isToday ? 'var(--primary-50)' : '#fff'};border-radius:0 var(--radius-sm) var(--radius-sm) 0;">`;
+    html += `<div style="font-weight:600;font-size:0.85rem;color:${isToday ? 'var(--primary)' : 'var(--gray-700)'};margin-bottom:0.25rem;">${dayName}${isToday ? ' (Today)' : ''}</div>`;
+
+    if (jobs.length > 0) {
+      for (const j of jobs) {
+        html += `<div style="display:flex;justify-content:space-between;align-items:center;padding:0.35rem 0;">
+          <div>
+            <span style="font-weight:500;">${_escHtml(j.property_name)}</span>
+            <span style="font-size:0.8rem;color:var(--gray-500);"> ${j.start_time || '10:00'}-${j.end_time || '13:00'}</span>
+            ${j.guest_name ? `<div style="font-size:0.75rem;color:var(--gray-500);">Guest: ${_escHtml(j.guest_name)} (${j.num_guests || '?'})</div>` : ''}
+          </div>
+          <span class="job-status ${j.status}">${j.status}</span>
+        </div>`;
+      }
+    } else {
+      html += `<div style="font-size:0.8rem;color:var(--gray-400);">No jobs</div>`;
+    }
+    html += '</div>';
+  }
+
+  container.innerHTML = html;
+}
+
+function changeWeek(delta) {
+  jobMonth.setDate(jobMonth.getDate() + (delta * 7));
+  loadJobs();
+}
+
 function renderJobList() {
   const container = document.getElementById('jobListView');
   if (myJobs.length === 0) {
@@ -224,7 +288,10 @@ function renderJobList() {
       </div>
       <div class="job-meta">${j.cleaning_date} &middot; ${j.start_time || '10:00'} - ${j.end_time || '13:00'}</div>
       ${j.property_address ? `<div class="job-address">${_escHtml(j.property_address)}</div>` : ''}
-      ${j.guest_name ? `<div class="job-guest">Guest: ${_escHtml(j.guest_name)} (${j.num_guests || '?'} guests)</div>` : ''}
+      ${j.guest_name ? `<div class="job-guest" style="background:var(--primary-50);padding:0.5rem 0.75rem;border-radius:6px;margin-top:0.4rem;">
+        <div style="font-weight:600;font-size:0.85rem;">Guest: ${_escHtml(j.guest_name)}</div>
+        <div style="font-size:0.8rem;color:var(--gray-500);">${j.num_guests || '?'} guest(s) &middot; ${j.check_in ? 'Check-in: ' + j.check_in : ''} ${j.check_out ? '→ ' + j.check_out : ''}</div>
+      </div>` : ''}
       ${j.special_requirements ? `<div class="special-req">Special: ${_escHtml(j.special_requirements)}</div>` : ''}
       <div class="job-actions">
         ${j.status === 'pending' ? `<button class="btn btn-primary btn-full" onclick="updateJobStatus(${j.id}, 'confirmed')">Confirm Job</button>` : ''}
@@ -612,6 +679,16 @@ async function submitInventoryCheck() {
 async function markReadyForCheckin() {
   const jobId = document.getElementById('invJob').value || activeJobId;
   if (!jobId) { alert('Please select a cleaning job first'); return; }
+
+  // Only allow on cleaning date or later
+  const job = myJobs.find(j => String(j.id) === String(jobId));
+  if (job) {
+    const today = new Date().toISOString().split('T')[0];
+    if (job.cleaning_date > today) {
+      alert(`You can only mark ready on the cleaning date (${job.cleaning_date}) or later.`);
+      return;
+    }
+  }
 
   await submitInventoryCheck();
 
