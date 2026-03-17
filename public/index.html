@@ -253,6 +253,25 @@
       color: var(--gray-400);
       padding: 12px 0;
     }
+    /* Calendar booking bars */
+    .cal-bar {
+      height: 14px;
+      margin-top: 1px;
+      color: #fff;
+      font-size: 8px;
+      font-weight: 600;
+      line-height: 14px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      padding: 0 2px;
+      cursor: pointer;
+      opacity: 0.85;
+    }
+    .cal-bar:hover { opacity: 1; }
+    @media (min-width: 769px) {
+      .cal-bar { height: 18px; line-height: 18px; font-size: 10px; padding: 0 4px; }
+    }
     /* Calendar controls mobile stacking */
     .cal-controls {
       display: flex;
@@ -395,13 +414,7 @@
         <select id="jumpMonth" onchange="jumpToMonth()" style="width:auto;font-size:12px;"></select>
       </div>
       <div class="calendar-grid" id="calendarGrid"></div>
-      <div class="calendar-legend">
-        <span><div class="dot" style="background:var(--primary-50);border:1px solid var(--primary);"></div> Booked</span>
-        <span><div class="dot" style="background:#FEF3C7;border:1px solid #F59E0B;"></div> Gap</span>
-        <span><div class="dot" style="background:#FEE2E2;border:1px solid #EF4444;"></div> Check-out</span>
-        <span><div class="dot" style="background:var(--success-bg);border:1px solid var(--success);"></div> Check-in</span>
-        <span><div class="dot" style="background:white;border:2px solid var(--primary);"></div> Today</span>
-      </div>
+      <div id="calendarLegend" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;padding:8px 0;"></div>
     </div>
 
     <!-- Sync (admin only) -->

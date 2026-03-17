@@ -151,24 +151,30 @@ function renderKpis(pnl) {
       <div class="dash-card-sub">${futureBookings.length} booking${futureBookings.length !== 1 ? 's' : ''}</div>
     </div>`;
 
-  // No costs banner
+  // Remove no-costs banner from dashboard (shown on finances page instead)
   const banner = document.getElementById('noCostsBanner');
-  if (banner) {
-    if (totalCosts === 0 && revenueThisMonth > 0) {
-      banner.innerHTML = '<div class="alert-banner warning" style="margin-bottom:12px;"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>No costs configured — profit figures are estimates only. <a href="/finances.html#cost-settings">Add fixed costs &rarr;</a></div>';
-    } else {
-      banner.innerHTML = '';
-    }
-  }
+  if (banner) banner.innerHTML = '';
 }
 
 /* ───── Currently Staying ───── */
+
+function isCurrentlyStaying(b) {
+  const now = new Date();
+  const checkinTime = 15; // default check-in hour
+  const checkoutTime = 10; // default check-out hour
+
+  const ciDate = new Date(b.check_in + 'T00:00:00');
+  const coDate = new Date(b.check_out + 'T00:00:00');
+  ciDate.setHours(checkinTime, 0, 0);
+  coDate.setHours(checkoutTime, 0, 0);
+
+  return now >= ciDate && now < coDate;
+}
 
 function renderCurrentGuests() {
   const container = document.getElementById('currentGuestsList');
   if (!container) return;
 
-  const today = new Date().toISOString().split('T')[0];
   const filteredProps = filterByProperty(properties, 'id');
 
   if (filteredProps.length === 0) {
@@ -176,46 +182,48 @@ function renderCurrentGuests() {
     return;
   }
 
-  const cards = filteredProps.map((prop) => {
-    // Find a current booking for this property
+  // Only show properties with current guests
+  const stayingCards = [];
+  for (const prop of filteredProps) {
     const current = bookings.find((b) =>
       String(b.property_id) === String(prop.id) &&
       b.status === 'confirmed' &&
-      b.check_in <= today &&
-      b.check_out > today
+      isCurrentlyStaying(b)
     );
 
     if (current) {
-      const guestCount = current.adults || current.guests || '';
+      const guestCount = current.num_guests || current.adults || '';
       const guestCountLabel = guestCount ? `${guestCount} guest${guestCount > 1 ? 's' : ''}` : '';
-      return `<div class="dash-guest-card">
+      stayingCards.push(`<div class="dash-guest-card">
         <div class="prop-name">${escHtml(prop.name)}</div>
         <div class="guest-name">${escHtml(current.guest_name || 'Guest')}</div>
         <div class="guest-dates">${current.check_in} &rarr; ${current.check_out}</div>
         ${guestCountLabel ? `<div class="guest-count">${guestCountLabel}</div>` : ''}
-      </div>`;
-    } else {
-      return `<div class="dash-guest-card vacant">
-        <div class="prop-name">${escHtml(prop.name)}</div>
-        <div class="guest-name">Vacant</div>
-      </div>`;
+      </div>`);
     }
-  });
+  }
 
-  container.innerHTML = `<div class="dash-guests-grid">${cards.join('')}</div>`;
+  if (stayingCards.length === 0) {
+    container.innerHTML = '<div class="dash-empty">No guests currently staying.</div>';
+    return;
+  }
+
+  container.innerHTML = `<div class="dash-guests-grid">${stayingCards.join('')}</div>`;
 }
 
 /* ───── Next Up (next check-in + next check-out) ───── */
 
-function timeUntil(dateStr) {
+function timeUntilWithHour(dateStr, defaultHour) {
   const now = new Date();
-  const target = new Date(dateStr + 'T12:00:00');
+  const target = new Date(dateStr + 'T00:00:00');
+  target.setHours(defaultHour, 0, 0);
   const diffMs = target - now;
-  if (diffMs < 0) return 'today';
+  if (diffMs <= 0) return 'now';
+  const diffMins = Math.floor(diffMs / (1000 * 60));
+  if (diffMins < 60) return `in ${diffMins}m`;
   const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
-  if (diffHours < 1) return 'soon';
   if (diffHours < 24) return `in ${diffHours}h`;
-  const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+  const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24));
   if (diffDays === 1) return 'tomorrow';
   return `in ${diffDays} days`;
 }
@@ -224,20 +232,27 @@ function renderNextUp() {
   const container = document.getElementById('nextUpList');
   if (!container) return;
 
-  const today = new Date().toISOString().split('T')[0];
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
   const filtered = filterByProperty(bookings, 'property_id')
     .filter((b) => b.status === 'confirmed');
 
-  // Next check-in: earliest check_in >= today
-  const futureCheckins = filtered
-    .filter((b) => b.check_in >= today)
-    .sort((a, b) => a.check_in.localeCompare(b.check_in));
+  // Next check-in: earliest where check-in datetime (15:00) is in the future
+  const checkinHour = 15;
+  const futureCheckins = filtered.filter((b) => {
+    const ciDt = new Date(b.check_in + 'T00:00:00');
+    ciDt.setHours(checkinHour, 0, 0);
+    return ciDt > now;
+  }).sort((a, b) => a.check_in.localeCompare(b.check_in));
   const nextCheckin = futureCheckins.length > 0 ? futureCheckins[0] : null;
 
-  // Next check-out: earliest check_out >= today
-  const futureCheckouts = filtered
-    .filter((b) => b.check_out >= today)
-    .sort((a, b) => a.check_out.localeCompare(b.check_out));
+  // Next check-out: earliest where check-out datetime (10:00) is in the future
+  const checkoutHour = 10;
+  const futureCheckouts = filtered.filter((b) => {
+    const coDt = new Date(b.check_out + 'T00:00:00');
+    coDt.setHours(checkoutHour, 0, 0);
+    return coDt > now;
+  }).sort((a, b) => a.check_out.localeCompare(b.check_out));
   const nextCheckout = futureCheckouts.length > 0 ? futureCheckouts[0] : null;
 
   if (!nextCheckin && !nextCheckout) {
@@ -250,24 +265,24 @@ function renderNextUp() {
   if (nextCheckin) {
     html += `<div class="dash-nextup-card">
       <div class="nextup-left">
-        <div class="nextup-type checkin">Check-in</div>
+        <div class="nextup-type checkin">Check-in (${checkinHour}:00)</div>
         <div class="nextup-prop">${escHtml(nextCheckin.property_name)}</div>
         <div class="nextup-guest">${escHtml(nextCheckin.guest_name || 'Guest')}</div>
         <div class="nextup-date">${nextCheckin.check_in}</div>
       </div>
-      <div class="nextup-eta">${timeUntil(nextCheckin.check_in)}</div>
+      <div class="nextup-eta">${timeUntilWithHour(nextCheckin.check_in, checkinHour)}</div>
     </div>`;
   }
 
   if (nextCheckout) {
     html += `<div class="dash-nextup-card">
       <div class="nextup-left">
-        <div class="nextup-type checkout">Check-out</div>
+        <div class="nextup-type checkout">Check-out (${checkoutHour}:00)</div>
         <div class="nextup-prop">${escHtml(nextCheckout.property_name)}</div>
         <div class="nextup-guest">${escHtml(nextCheckout.guest_name || 'Guest')}</div>
         <div class="nextup-date">${nextCheckout.check_out}</div>
       </div>
-      <div class="nextup-eta">${timeUntil(nextCheckout.check_out)}</div>
+      <div class="nextup-eta">${timeUntilWithHour(nextCheckout.check_out, checkoutHour)}</div>
     </div>`;
   }
 
@@ -326,16 +341,6 @@ function renderAlerts() {
         linkText: 'Update pricing'
       });
     }
-  }
-
-  // 4. No costs configured
-  if (pnlData && pnlData.summary && pnlData.summary.total_costs === 0) {
-    alerts.push({
-      level: 'amber',
-      text: 'No fixed costs entered — profit data unreliable',
-      link: '/finances.html#cost-settings',
-      linkText: 'Add costs'
-    });
   }
 
   if (alerts.length === 0) {
@@ -675,6 +680,13 @@ function getPlatformClass(platform) {
   return 'booked-direct';
 }
 
+// Property color palette for calendar bars
+const PROP_COLORS = ['#2563EB','#D946EF','#F59E0B','#10B981','#EF4444','#8B5CF6','#06B6D4','#EC4899'];
+function getPropColor(propId) {
+  const idx = properties.findIndex(p => String(p.id) === String(propId));
+  return PROP_COLORS[(idx >= 0 ? idx : 0) % PROP_COLORS.length];
+}
+
 function renderCalendar() {
   const grid = document.getElementById('calendarGrid');
   if (!grid) return;
@@ -685,92 +697,96 @@ function renderCalendar() {
   const year = currentMonth.getFullYear();
   const month = currentMonth.getMonth();
   if (monthLabel) {
-    monthLabel.textContent = new Date(year, month).toLocaleString('default', {
-      month: 'long',
-      year: 'numeric',
-    });
+    monthLabel.textContent = new Date(year, month).toLocaleString('default', { month: 'long', year: 'numeric' });
   }
 
   const firstDay = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
   const today = new Date().toISOString().split('T')[0];
-  const in48h = new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-  let filteredBookings = filterByProperty(bookings, 'property_id');
+  let filteredBookings = filterByProperty(bookings, 'property_id')
+    .filter(b => b.status === 'confirmed');
   if (calPropFilter !== 'all') {
     filteredBookings = filteredBookings.filter((b) => String(b.property_id) === String(calPropFilter));
   }
 
+  // Build per-day booking map
   const bookedMap = {};
-  const gapSet = new Set();
-
   for (const b of filteredBookings) {
-    if (b.status !== 'confirmed') continue;
     let d = new Date(b.check_in);
     const end = new Date(b.check_out);
-    while (d < end) {
+    while (d <= end) {
       const ds = d.toISOString().split('T')[0];
       if (!bookedMap[ds]) bookedMap[ds] = [];
-      bookedMap[ds].push(b);
+      // Mark if this is check-in day, check-out day, or mid-stay
+      const isCI = ds === b.check_in;
+      const isCO = ds === b.check_out;
+      bookedMap[ds].push({ ...b, isCI, isCO });
       d.setDate(d.getDate() + 1);
     }
   }
 
-  const filteredGaps = filterByProperty(stats.gaps || [], 'property_id');
-  for (const g of filteredGaps) {
-    if (calPropFilter !== 'all' && String(g.property_id) !== String(calPropFilter)) continue;
-    let d = new Date(g.gap_start);
-    const end = new Date(g.gap_end);
-    while (d < end) {
-      gapSet.add(d.toISOString().split('T')[0]);
-      d.setDate(d.getDate() + 1);
-    }
-  }
+  const dayNames = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+  let html = dayNames.map((d) => `<div class="day-header">${d}</div>`).join('');
 
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-  let html = days.map((d) => `<div class="day-header">${d}</div>`).join('');
-
-  for (let i = 0; i < firstDay; i++) {
-    html += '<div class="day"></div>';
-  }
+  for (let i = 0; i < firstDay; i++) html += '<div class="day"></div>';
 
   for (let day = 1; day <= daysInMonth; day++) {
     const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const isToday = dateStr === today;
-    const isBooked = bookedMap[dateStr];
-    const isCheckoutSoon = dateStr >= today && dateStr <= in48h && isBooked;
-    const isGap = gapSet.has(dateStr);
+    const dayBookings = bookedMap[dateStr] || [];
 
     let classes = 'day';
     if (isToday) classes += ' today';
-    if (isBooked) {
-      classes += ' booked';
-      classes += ' ' + getPlatformClass(isBooked[0].platform);
-    }
-    if (isCheckoutSoon) classes += ' checkout-soon';
-    if (isGap) classes += ' gap';
 
-    let label = '';
-    if (isBooked) {
-      const names = [...new Set(isBooked.map((b) => b.guest_name || b.property_name))];
-      label = `<div class="booking-label">${escHtml(names.join(', '))}</div>`;
-    }
-    if (isGap) {
-      label += '<div class="booking-label" style="color:#cc8400">GAP</div>';
-    }
+    // Build booking bars
+    let bars = '';
+    for (const b of dayBookings) {
+      const color = getPropColor(b.property_id);
+      const propName = (properties.find(p => String(p.id) === String(b.property_id)) || {}).name || '';
+      // Check-in = right half, check-out = left half, mid = full width
+      let barStyle = `background:${color};`;
+      if (b.isCI && !b.isCO) {
+        barStyle += 'margin-left:50%;width:50%;border-radius:3px 0 0 3px;';
+      } else if (b.isCO && !b.isCI) {
+        barStyle += 'width:50%;border-radius:0 3px 3px 0;';
+      } else if (b.isCI && b.isCO) {
+        barStyle += 'margin-left:25%;width:50%;border-radius:3px;';
+      } else {
+        barStyle += 'width:100%;border-radius:0;';
+      }
 
-    if (isBooked) {
-      const bookingData = encodeURIComponent(JSON.stringify(isBooked.map(b => ({
+      const label = b.isCI ? escHtml(b.guest_name || propName) : '';
+      const bookingData = encodeURIComponent(JSON.stringify([{
         g: b.guest_name || '-', ci: b.check_in, co: b.check_out,
         p: b.platform || 'Direct', pr: b.converted_total_price || b.total_price || 0, s: b.status || '-'
-      }))));
-      html += `<div class="${classes}" onclick="showBookingPopover(event, '${bookingData}')" style="cursor:pointer;"><div class="date-num">${day}</div>${label}</div>`;
-    } else {
-      html += `<div class="${classes}"><div class="date-num">${day}</div>${label}</div>`;
+      }]));
+      bars += `<div class="cal-bar" style="${barStyle}" onclick="showBookingPopover(event, '${bookingData}')" title="${escHtml(b.guest_name || '')} @ ${escHtml(propName)}">${label}</div>`;
     }
+
+    html += `<div class="${classes}"><div class="date-num">${day}</div>${bars}</div>`;
   }
 
   grid.innerHTML = html;
+
+  // Render legend with property colors
+  renderCalendarLegend(calPropFilter);
+}
+
+function renderCalendarLegend(calPropFilter) {
+  const legendEl = document.getElementById('calendarLegend');
+  if (!legendEl) return;
+
+  const props = calPropFilter === 'all' ? filterByProperty(properties, 'id') : properties.filter(p => String(p.id) === calPropFilter);
+
+  let html = props.map(p => {
+    const color = getPropColor(p.id);
+    return `<span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;margin-right:12px;"><span style="width:12px;height:12px;border-radius:3px;background:${color};display:inline-block;"></span> ${escHtml(p.name)}</span>`;
+  }).join('');
+
+  html += `<span style="display:inline-flex;align-items:center;gap:4px;font-size:12px;"><span style="width:12px;height:12px;border-radius:50%;border:2px solid var(--primary);display:inline-block;"></span> Today</span>`;
+
+  legendEl.innerHTML = html;
 }
 
 /* ───── Booking Detail Modal ───── */
