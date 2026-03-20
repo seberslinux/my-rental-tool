@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -17,127 +17,99 @@ import {
   Wifi,
   Globe } from
 'lucide-react';
-interface SmoobuData {
-  location: {
-    street: string;
-    zip: string;
-    city: string;
-    country: string;
-    lat: string;
-    lng: string;
-  };
-  rooms: {
-    maxOccupancy: number;
-    bedrooms: number;
-    bathrooms: number;
-    doubleBeds: number;
-    singleBeds: number;
-    sofaBeds: number;
-    couches: number;
-    childBeds: number;
-    queenSizeBeds: number;
-    kingSizeBeds: number;
-  };
-  timeZone: string;
-  equipments: string[];
-  currency: string;
-  price: {
-    minimal: number;
-    maximal: number;
-  };
-  type: {
-    id: number;
-    name: string;
+
+interface Property {
+  id: number;
+  smoobu_id: number;
+  name: string;
+  address: string;
+  cleaning_hours_required: number | null;
+  base_price: number | null;
+  base_currency: string | null;
+  airbnb_url: string | null;
+  booking_url: string | null;
+  vrbo_url: string | null;
+  airbnb_commission: number | null;
+  booking_commission: number | null;
+  vrbo_commission: number | null;
+  airbnb_bank_charge: number | null;
+  booking_bank_charge: number | null;
+  vrbo_bank_charge: number | null;
+  vat_rate: number | null;
+  property_type: string | null;
+  bedrooms: number | null;
+  bathrooms: number | null;
+  max_guests: number | null;
+  location: string | null;
+  neighbourhood: string | null;
+  wifi_network: string | null;
+  wifi_password: string | null;
+  access_code: string | null;
+  check_in_instructions: string | null;
+  check_in_time: string | null;
+  check_out_time: string | null;
+}
+
+// Local editable state per property
+interface PropertyForm {
+  cleaning_hours_required: number;
+  airbnb_url: string;
+  booking_url: string;
+  vrbo_url: string;
+  airbnb_commission: number;
+  booking_commission: number;
+  vrbo_commission: number;
+  airbnb_bank_charge: number;
+  booking_bank_charge: number;
+  vrbo_bank_charge: number;
+  vat_rate: number;
+  check_in_time: string;
+  check_out_time: string;
+  wifi_network: string;
+  wifi_password: string;
+  check_in_instructions: string;
+}
+
+function buildForm(p: Property): PropertyForm {
+  return {
+    cleaning_hours_required: p.cleaning_hours_required ?? 0,
+    airbnb_url: p.airbnb_url ?? '',
+    booking_url: p.booking_url ?? '',
+    vrbo_url: p.vrbo_url ?? '',
+    airbnb_commission: p.airbnb_commission ?? 0,
+    booking_commission: p.booking_commission ?? 0,
+    vrbo_commission: p.vrbo_commission ?? 0,
+    airbnb_bank_charge: p.airbnb_bank_charge ?? 0,
+    booking_bank_charge: p.booking_bank_charge ?? 0,
+    vrbo_bank_charge: p.vrbo_bank_charge ?? 0,
+    vat_rate: p.vat_rate ?? 0,
+    check_in_time: p.check_in_time ?? '',
+    check_out_time: p.check_out_time ?? '',
+    wifi_network: p.wifi_network ?? '',
+    wifi_password: p.wifi_password ?? '',
+    check_in_instructions: p.check_in_instructions ?? '',
   };
 }
-const smoobuDataMap: Record<number, SmoobuData> = {
-  1: {
-    location: {
-      street: '12 Ocean View Dr',
-      zip: '8005',
-      city: 'Cape Town',
-      country: 'South Africa',
-      lat: '-33.9249',
-      lng: '18.4241'
-    },
-    rooms: {
-      maxOccupancy: 6,
-      bedrooms: 3,
-      bathrooms: 2,
-      doubleBeds: 1,
-      singleBeds: 0,
-      sofaBeds: 1,
-      couches: 1,
-      childBeds: 0,
-      queenSizeBeds: 1,
-      kingSizeBeds: 1
-    },
-    timeZone: 'Africa/Johannesburg',
-    equipments: [
-    'WiFi',
-    'Pool',
-    'Air conditioning',
-    'Kitchen',
-    'Parking',
-    'Washer',
-    'TV',
-    'Ocean view',
-    'BBQ'],
 
-    currency: 'ZAR',
-    price: {
-      minimal: 1800,
-      maximal: 3200
-    },
-    type: {
-      id: 3,
-      name: 'Villa'
-    }
-  },
-  2: {
-    location: {
-      street: '45 Main Rd',
-      zip: '8051',
-      city: 'Cape Town',
-      country: 'South Africa',
-      lat: '-33.9062',
-      lng: '18.4232'
-    },
-    rooms: {
-      maxOccupancy: 2,
-      bedrooms: 1,
-      bathrooms: 1,
-      doubleBeds: 1,
-      singleBeds: 0,
-      sofaBeds: 0,
-      couches: 1,
-      childBeds: 0,
-      queenSizeBeds: 0,
-      kingSizeBeds: 0
-    },
-    timeZone: 'Africa/Johannesburg',
-    equipments: ['WiFi', 'Air conditioning', 'Kitchen', 'Washer', 'TV'],
-    currency: 'ZAR',
-    price: {
-      minimal: 1200,
-      maximal: 1800
-    },
-    type: {
-      id: 1,
-      name: 'Apartment'
-    }
-  }
-};
+function relativeTime(dateStr: string): string {
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const diffMs = now - then;
+  if (isNaN(diffMs)) return dateStr;
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  return `${days}d ago`;
+}
+
 function Section({
   icon: Icon,
   title,
   children,
   defaultOpen = false
-
-
-
-
-
 }: {icon: React.ElementType;title: string;children: React.ReactNode;defaultOpen?: boolean;}) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -145,7 +117,7 @@ function Section({
       <button
         onClick={() => setOpen(!open)}
         className="w-full flex items-center justify-between py-3 text-left">
-        
+
         <div className="flex items-center gap-2">
           <Icon className="w-4 h-4 text-[#717171]" />
           <span className="text-[13px] md:text-[14px] font-semibold text-[#222222]">
@@ -173,33 +145,91 @@ function SyncBadge() {
 const inputCls =
 'w-full h-9 px-3 border border-[#EBEBEB] rounded-[8px] text-[13px] focus:outline-none focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF]';
 export function PropertiesPage() {
-  const [expandedProperty, setExpandedProperty] = useState<number | null>(1);
-  const properties = [
-  {
-    id: 1,
-    name: 'Hill Top Lodge',
-    smoobuId: '2500823'
-  },
-  {
-    id: 2,
-    name: 'The loft',
-    smoobuId: '2297844'
-  }];
+  const [expandedProperty, setExpandedProperty] = useState<number | null>(null);
+  const [properties, setProperties] = useState<Property[]>([]);
+  const [forms, setForms] = useState<Record<number, PropertyForm>>({});
+  const [syncing, setSyncing] = useState(false);
+  const [savingId, setSavingId] = useState<number | null>(null);
+  const [lastSynced, setLastSynced] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const fetchProperties = useCallback(async () => {
+    try {
+      const res = await fetch('/api/properties', { credentials: 'same-origin' });
+      if (!res.ok) throw new Error('Failed to fetch properties');
+      const data: Property[] = await res.json();
+      setProperties(data);
+      const newForms: Record<number, PropertyForm> = {};
+      data.forEach((p) => { newForms[p.id] = buildForm(p); });
+      setForms(newForms);
+      if (data.length > 0 && expandedProperty === null) {
+        setExpandedProperty(data[0].id);
+      }
+    } catch (err) {
+      console.error('Error fetching properties:', err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchProperties(); }, [fetchProperties]);
+
+  const handleSync = async () => {
+    setSyncing(true);
+    try {
+      const res = await fetch('/api/sync/properties', {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (!res.ok) throw new Error('Sync failed');
+      setLastSynced(new Date().toISOString());
+      await fetchProperties();
+    } catch (err) {
+      console.error('Error syncing:', err);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleSave = async (propId: number) => {
+    const form = forms[propId];
+    if (!form) return;
+    setSavingId(propId);
+    try {
+      const res = await fetch(`/api/properties/${propId}`, {
+        method: 'PUT',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) throw new Error('Save failed');
+      await fetchProperties();
+    } catch (err) {
+      console.error('Error saving property:', err);
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const updateForm = (propId: number, field: keyof PropertyForm, value: string | number) => {
+    setForms((prev) => ({
+      ...prev,
+      [propId]: { ...prev[propId], [field]: value },
+    }));
+  };
 
   const toggleProperty = (id: number) => {
     setExpandedProperty(expandedProperty === id ? null : id);
   };
-  const bedSummary = (r: SmoobuData['rooms']) => {
-    const parts: string[] = [];
-    if (r.kingSizeBeds > 0) parts.push(`${r.kingSizeBeds} King`);
-    if (r.queenSizeBeds > 0) parts.push(`${r.queenSizeBeds} Queen`);
-    if (r.doubleBeds > 0) parts.push(`${r.doubleBeds} Double`);
-    if (r.singleBeds > 0) parts.push(`${r.singleBeds} Single`);
-    if (r.sofaBeds > 0) parts.push(`${r.sofaBeds} Sofa`);
-    if (r.couches > 0) parts.push(`${r.couches} Couch`);
-    if (r.childBeds > 0) parts.push(`${r.childBeds} Child`);
-    return parts.join(' · ');
-  };
+
+  if (loading) {
+    return (
+      <div className="p-4 md:p-6 max-w-[1200px] mx-auto">
+        <p className="text-[13px] text-[#717171]">Loading properties...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="p-4 md:p-6 max-w-[1200px] mx-auto space-y-3 md:space-y-4 pb-28">
       {/* Header */}
@@ -209,12 +239,15 @@ export function PropertiesPage() {
             Sync properties from Smoobu first, then configure settings below.
           </p>
           <p className="text-[10px] text-[#B0B0B0] mt-0.5">
-            Last synced: 19 Mar 2026, 08:14
+            Last synced: {lastSynced ? relativeTime(lastSynced) : 'never'}
           </p>
         </div>
-        <button className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-[12px] md:text-[13px] font-semibold text-[#007AFF] bg-[#F0F9FF] border border-[#007AFF30] rounded-[8px] hover:bg-[#E0F2FE] transition-colors whitespace-nowrap">
-          <RefreshCw className="w-3.5 h-3.5" />
-          Sync from Smoobu
+        <button
+          onClick={handleSync}
+          disabled={syncing}
+          className="flex items-center justify-center gap-1.5 px-3 py-1.5 text-[12px] md:text-[13px] font-semibold text-[#007AFF] bg-[#F0F9FF] border border-[#007AFF30] rounded-[8px] hover:bg-[#E0F2FE] transition-colors whitespace-nowrap disabled:opacity-50">
+          <RefreshCw className={`w-3.5 h-3.5 ${syncing ? 'animate-spin' : ''}`} />
+          {syncing ? 'Syncing...' : 'Sync from Smoobu'}
         </button>
       </div>
 
@@ -222,17 +255,17 @@ export function PropertiesPage() {
       <div className="space-y-3">
         {properties.map((prop) => {
           const isExpanded = expandedProperty === prop.id;
-          const smoobu = smoobuDataMap[prop.id];
+          const form = forms[prop.id];
           return (
             <div
               key={prop.id}
               className="bg-white rounded-[10px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB] overflow-hidden">
-              
+
               {/* Card Header */}
               <div
                 className={`p-3 md:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer hover:bg-[#FAFAFA] transition-colors ${isExpanded ? 'border-b border-[#EBEBEB]' : ''}`}
                 onClick={() => toggleProperty(prop.id)}>
-                
+
                 <div className="flex items-center gap-2.5">
                   <div className="text-[#B0B0B0]">
                     {isExpanded ?
@@ -246,14 +279,14 @@ export function PropertiesPage() {
                       <h2 className="text-[15px] md:text-[16px] font-bold text-[#222222]">
                         {prop.name}
                       </h2>
-                      {smoobu &&
+                      {prop.property_type &&
                       <span className="text-[11px] text-[#717171] bg-[#F7F7F7] px-1.5 py-0.5 rounded">
-                          {smoobu.type.name}
+                          {prop.property_type}
                         </span>
                       }
                     </div>
                     <p className="text-[11px] text-[#B0B0B0]">
-                      ID: {prop.smoobuId}
+                      ID: {prop.smoobu_id}
                     </p>
                   </div>
                 </div>
@@ -261,22 +294,23 @@ export function PropertiesPage() {
                   <button
                     className="flex items-center gap-1 text-[12px] font-semibold text-[#007AFF] hover:underline"
                     onClick={(e) => e.stopPropagation()}>
-                    
+
                     <BarChart2 className="w-3.5 h-3.5" />
                     Performance
                   </button>
                   <button
                     className="flex items-center gap-1 px-3 py-1.5 text-[12px] font-semibold text-white bg-[#007AFF] rounded-[6px] hover:bg-[#0066CC]"
-                    onClick={(e) => e.stopPropagation()}>
-                    
+                    onClick={(e) => { e.stopPropagation(); handleSave(prop.id); }}
+                    disabled={savingId === prop.id}>
+
                     <Save className="w-3.5 h-3.5" />
-                    Save
+                    {savingId === prop.id ? 'Saving...' : 'Save'}
                   </button>
                 </div>
               </div>
 
               {/* Expanded Content */}
-              {isExpanded && smoobu &&
+              {isExpanded && form &&
               <div className="p-3 md:p-4">
                   {/* Compact Smoobu Summary */}
                   <div className="bg-[#F7F7F7] rounded-[8px] p-3 mb-3">
@@ -289,34 +323,34 @@ export function PropertiesPage() {
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-[#222222] mb-2">
                       <span>
                         <span className="text-[#B0B0B0]">Beds:</span>{' '}
-                        {smoobu.rooms.bedrooms}
+                        {prop.bedrooms ?? '—'}
                       </span>
                       <span>
                         <span className="text-[#B0B0B0]">Baths:</span>{' '}
-                        {smoobu.rooms.bathrooms}
+                        {prop.bathrooms ?? '—'}
                       </span>
                       <span>
                         <span className="text-[#B0B0B0]">Guests:</span>{' '}
-                        {smoobu.rooms.maxOccupancy}
+                        {prop.max_guests ?? '—'}
                       </span>
                       <span>
-                        <span className="text-[#B0B0B0]">Price:</span> R{' '}
-                        {smoobu.price.minimal.toLocaleString()}–
-                        {smoobu.price.maximal.toLocaleString()}
+                        <span className="text-[#B0B0B0]">Price:</span>{' '}
+                        {prop.base_price != null
+                          ? `${prop.base_currency === 'ZAR' ? 'R' : (prop.base_currency ?? '')} ${prop.base_price.toLocaleString()}`
+                          : '—'}
                       </span>
                       <span>
                         <span className="text-[#B0B0B0]">Currency:</span>{' '}
-                        {smoobu.currency}
+                        {prop.base_currency ?? '—'}
                       </span>
                     </div>
                     <div className="text-[11px] text-[#717171] flex items-center gap-1">
                       <MapPin className="w-3 h-3" />
-                      {smoobu.location.street}, {smoobu.location.city},{' '}
-                      {smoobu.location.country}
+                      {prop.address || '—'}
                     </div>
 
                     {/* Expandable details */}
-                    <SmoobuDetails smoobu={smoobu} bedSummary={bedSummary} />
+                    <SmoobuDetails prop={prop} />
                   </div>
 
                   {/* Editable Settings */}
@@ -325,7 +359,7 @@ export function PropertiesPage() {
                     icon={Sparkles}
                     title="Cleaning"
                     defaultOpen={true}>
-                    
+
                       <div className="w-full sm:w-48">
                         <label className="block text-[11px] font-medium text-[#222222] mb-1">
                           Cleaning Hours Required
@@ -333,9 +367,10 @@ export function PropertiesPage() {
                         <input
                         type="number"
                         step="0.5"
-                        defaultValue={2.5}
+                        value={form.cleaning_hours_required}
+                        onChange={(e) => updateForm(prop.id, 'cleaning_hours_required', parseFloat(e.target.value) || 0)}
                         className={inputCls} />
-                      
+
                       </div>
                     </Section>
 
@@ -343,32 +378,32 @@ export function PropertiesPage() {
                     icon={Link}
                     title="Platform Listings"
                     defaultOpen={true}>
-                    
+
                       <p className="text-[11px] text-[#B0B0B0] mb-3">
                         URLs for review scraping and market comparison
                       </p>
                       <div className="space-y-3">
-                        {[
+                        {([
                       {
                         label: 'Airbnb',
+                        urlField: 'airbnb_url' as const,
                         urlPh: 'https://www.airbnb.com/rooms/...',
-                        idPh: 'e.g. 12345678'
                       },
                       {
                         label: 'Booking.com',
+                        urlField: 'booking_url' as const,
                         urlPh: 'https://www.booking.com/hotel/...',
-                        idPh: 'e.g. 987654'
                       },
                       {
                         label: 'VRBO',
+                        urlField: 'vrbo_url' as const,
                         urlPh: 'https://www.vrbo.com/...',
-                        idPh: 'e.g. 1122334'
-                      }].
+                      }]).
                       map((p) =>
                       <div
                         key={p.label}
                         className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        
+
                             <div>
                               <label className="block text-[11px] font-medium text-[#222222] mb-1">
                                 {p.label} URL
@@ -376,18 +411,10 @@ export function PropertiesPage() {
                               <input
                             type="text"
                             placeholder={p.urlPh}
+                            value={form[p.urlField]}
+                            onChange={(e) => updateForm(prop.id, p.urlField, e.target.value)}
                             className={inputCls} />
-                          
-                            </div>
-                            <div>
-                              <label className="block text-[11px] font-medium text-[#222222] mb-1">
-                                {p.label} ID
-                              </label>
-                              <input
-                            type="text"
-                            placeholder={p.idPh}
-                            className={inputCls} />
-                          
+
                             </div>
                           </div>
                       )}
@@ -403,19 +430,19 @@ export function PropertiesPage() {
                         Commissions
                       </div>
                       <div className="grid grid-cols-3 gap-2 mb-3">
-                        {[
+                        {([
                       {
                         l: 'Airbnb %',
-                        v: 18
+                        field: 'airbnb_commission' as const,
                       },
                       {
                         l: 'Booking.com %',
-                        v: 15
+                        field: 'booking_commission' as const,
                       },
                       {
                         l: 'VRBO %',
-                        v: 8
-                      }].
+                        field: 'vrbo_commission' as const,
+                      }]).
                       map((c) =>
                       <div key={c.l}>
                             <label className="block text-[11px] font-medium text-[#222222] mb-1">
@@ -423,9 +450,10 @@ export function PropertiesPage() {
                             </label>
                             <input
                           type="number"
-                          defaultValue={c.v}
+                          value={form[c.field]}
+                          onChange={(e) => updateForm(prop.id, c.field, parseFloat(e.target.value) || 0)}
                           className={inputCls} />
-                        
+
                           </div>
                       )}
                       </div>
@@ -434,19 +462,19 @@ export function PropertiesPage() {
                         Bank Charges
                       </div>
                       <div className="grid grid-cols-3 gap-2 mb-3">
-                        {[
+                        {([
                       {
                         l: 'Airbnb %',
-                        v: 0
+                        field: 'airbnb_bank_charge' as const,
                       },
                       {
                         l: 'Booking.com %',
-                        v: 2.1
+                        field: 'booking_bank_charge' as const,
                       },
                       {
                         l: 'VRBO %',
-                        v: 0
-                      }].
+                        field: 'vrbo_bank_charge' as const,
+                      }]).
                       map((c) =>
                       <div key={c.l + 'bank'}>
                             <label className="block text-[11px] font-medium text-[#222222] mb-1">
@@ -454,10 +482,11 @@ export function PropertiesPage() {
                             </label>
                             <input
                           type="number"
-                          defaultValue={c.v}
+                          value={form[c.field]}
+                          onChange={(e) => updateForm(prop.id, c.field, parseFloat(e.target.value) || 0)}
                           step="0.1"
                           className={inputCls} />
-                        
+
                           </div>
                       )}
                       </div>
@@ -471,9 +500,10 @@ export function PropertiesPage() {
                         </label>
                         <input
                         type="number"
-                        defaultValue={0}
+                        value={form.vat_rate}
+                        onChange={(e) => updateForm(prop.id, 'vat_rate', parseFloat(e.target.value) || 0)}
                         className={inputCls} />
-                      
+
                         <p className="text-[10px] text-[#B0B0B0] mt-1 leading-tight">
                           Set to 14 if Booking.com rates include VAT.
                         </p>
@@ -498,8 +528,10 @@ export function PropertiesPage() {
                           <input
                           type="text"
                           placeholder="e.g. 15:00"
+                          value={form.check_in_time}
+                          onChange={(e) => updateForm(prop.id, 'check_in_time', e.target.value)}
                           className={inputCls} />
-                        
+
                         </div>
                         <div>
                           <label className="block text-[11px] font-medium text-[#222222] mb-1">
@@ -508,8 +540,10 @@ export function PropertiesPage() {
                           <input
                           type="text"
                           placeholder="e.g. 10:00"
+                          value={form.check_out_time}
+                          onChange={(e) => updateForm(prop.id, 'check_out_time', e.target.value)}
                           className={inputCls} />
-                        
+
                         </div>
                         <div>
                           <label className="block text-[11px] font-medium text-[#222222] mb-1">
@@ -518,8 +552,10 @@ export function PropertiesPage() {
                           <input
                           type="text"
                           placeholder="Network name"
+                          value={form.wifi_network}
+                          onChange={(e) => updateForm(prop.id, 'wifi_network', e.target.value)}
                           className={inputCls} />
-                        
+
                         </div>
                         <div>
                           <label className="block text-[11px] font-medium text-[#222222] mb-1">
@@ -528,8 +564,10 @@ export function PropertiesPage() {
                           <input
                           type="text"
                           placeholder="Password"
+                          value={form.wifi_password}
+                          onChange={(e) => updateForm(prop.id, 'wifi_password', e.target.value)}
                           className={inputCls} />
-                        
+
                         </div>
                       </div>
                       <div className="mt-3">
@@ -538,17 +576,22 @@ export function PropertiesPage() {
                         </label>
                         <textarea
                         placeholder="e.g. No smoking, quiet hours after 22:00..."
+                        value={form.check_in_instructions}
+                        onChange={(e) => updateForm(prop.id, 'check_in_instructions', e.target.value)}
                         className="w-full h-16 p-2 border border-[#EBEBEB] rounded-[8px] text-[13px] focus:outline-none focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF] resize-none" />
-                      
+
                       </div>
                     </Section>
                   </div>
 
                   {/* Save Button */}
                   <div className="flex justify-end pt-3">
-                    <button className="flex items-center gap-1.5 px-4 py-2 text-[12px] md:text-[13px] font-semibold text-white bg-[#007AFF] rounded-[8px] hover:bg-[#0066CC]">
+                    <button
+                      onClick={() => handleSave(prop.id)}
+                      disabled={savingId === prop.id}
+                      className="flex items-center gap-1.5 px-4 py-2 text-[12px] md:text-[13px] font-semibold text-white bg-[#007AFF] rounded-[8px] hover:bg-[#0066CC] disabled:opacity-50">
                       <Save className="w-3.5 h-3.5" />
-                      Save Settings
+                      {savingId === prop.id ? 'Saving...' : 'Save Settings'}
                     </button>
                   </div>
                 </div>
@@ -563,7 +606,9 @@ export function PropertiesPage() {
         <span className="text-[12px] font-medium text-[#717171]">
           Unsaved changes may exist
         </span>
-        <button className="flex items-center gap-1.5 px-4 py-2 text-[12px] font-semibold text-white bg-[#007AFF] rounded-[8px] hover:bg-[#0066CC]">
+        <button
+          onClick={() => { if (expandedProperty !== null) handleSave(expandedProperty); }}
+          className="flex items-center gap-1.5 px-4 py-2 text-[12px] font-semibold text-white bg-[#007AFF] rounded-[8px] hover:bg-[#0066CC]">
           <Save className="w-3.5 h-3.5" />
           Save Settings
         </button>
@@ -572,19 +617,15 @@ export function PropertiesPage() {
 
 }
 function SmoobuDetails({
-  smoobu,
-  bedSummary
-
-
-
-}: {smoobu: SmoobuData;bedSummary: (r: SmoobuData['rooms']) => string;}) {
+  prop,
+}: {prop: Property;}) {
   const [open, setOpen] = useState(false);
   return (
     <div className="mt-2">
       <button
         onClick={() => setOpen(!open)}
         className="text-[11px] font-medium text-[#007AFF] hover:underline flex items-center gap-1">
-        
+
         {open ?
         <ChevronDown className="w-3 h-3" /> :
 
@@ -603,16 +644,21 @@ function SmoobuDetails({
               </span>
             </div>
             <div className="flex flex-wrap gap-1.5">
-              {bedSummary(smoobu.rooms).
-            split(' · ').
-            map((b) =>
-            <span
-              key={b}
-              className="text-[11px] bg-white px-2 py-0.5 rounded-full border border-[#EBEBEB] text-[#222222]">
-              
-                    {b}
-                  </span>
-            )}
+              {prop.bedrooms != null &&
+                <span className="text-[11px] bg-white px-2 py-0.5 rounded-full border border-[#EBEBEB] text-[#222222]">
+                  {prop.bedrooms} Bedroom{prop.bedrooms !== 1 ? 's' : ''}
+                </span>
+              }
+              {prop.bathrooms != null &&
+                <span className="text-[11px] bg-white px-2 py-0.5 rounded-full border border-[#EBEBEB] text-[#222222]">
+                  {prop.bathrooms} Bathroom{prop.bathrooms !== 1 ? 's' : ''}
+                </span>
+              }
+              {prop.max_guests != null &&
+                <span className="text-[11px] bg-white px-2 py-0.5 rounded-full border border-[#EBEBEB] text-[#222222]">
+                  Max {prop.max_guests} Guest{prop.max_guests !== 1 ? 's' : ''}
+                </span>
+              }
             </div>
           </div>
 
@@ -625,44 +671,29 @@ function SmoobuDetails({
               </span>
             </div>
             <div className="text-[11px] text-[#222222]">
-              {smoobu.location.street}, {smoobu.location.zip}{' '}
-              {smoobu.location.city}, {smoobu.location.country}
+              {prop.address || '—'}
             </div>
+            {prop.location &&
             <div className="text-[10px] text-[#B0B0B0] mt-0.5">
-              {smoobu.location.lat}, {smoobu.location.lng}
+              {prop.location}
             </div>
+            }
           </div>
 
-          {/* Amenities */}
+          {/* Neighbourhood */}
+          {prop.neighbourhood &&
           <div>
             <div className="flex items-center gap-1.5 mb-1">
-              <Wifi className="w-3 h-3 text-[#717171]" />
+              <Globe className="w-3 h-3 text-[#717171]" />
               <span className="text-[10px] font-semibold uppercase tracking-[0.3px] text-[#717171]">
-                Amenities
+                Neighbourhood
               </span>
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {smoobu.equipments.map((eq) =>
-            <span
-              key={eq}
-              className="text-[11px] bg-[#F0F9FF] text-[#007AFF] px-2 py-0.5 rounded-full">
-              
-                  {eq}
-                </span>
-            )}
+            <div className="text-[11px] text-[#222222]">
+              {prop.neighbourhood}
             </div>
           </div>
-
-          {/* Timezone */}
-          <div className="flex items-center gap-1.5">
-            <Globe className="w-3 h-3 text-[#717171]" />
-            <span className="text-[10px] font-semibold uppercase tracking-[0.3px] text-[#717171]">
-              Timezone
-            </span>
-            <span className="text-[11px] text-[#222222] ml-1">
-              {smoobu.timeZone}
-            </span>
-          </div>
+          }
         </div>
       }
     </div>);
