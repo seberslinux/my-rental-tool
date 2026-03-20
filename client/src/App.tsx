@@ -131,7 +131,7 @@ export function App() {
         {activeTab === 'cleaners' && <CleanersPage />}
         {activeTab === 'analytics' && <AnalyticsPage />}
         {activeTab === 'properties' && <PropertiesPage />}
-        {activeTab === 'more' && <MorePage onNavigate={setActiveTab} />}
+        {activeTab === 'more' && <MorePage onNavigate={setActiveTab} onLogout={() => { setIsLoggedIn(false); setDataLoaded(false); }} />}
       </main>
 
       <TabBar activeTab={activeTab} onTabChange={setActiveTab} />

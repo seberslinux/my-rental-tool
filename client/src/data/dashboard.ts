@@ -14,6 +14,8 @@ export let nextUp: { id: number; type: string; label: string; name: string; deta
 
 export let cleaningJobs: { id: number; title: string; subtitle: string; status: string; buttonText: string; isProblem: boolean }[] = [];
 
+export let recentCancellations: { id: number; guestName: string; property: string; checkIn: string; checkOut: string; platform: string }[] = [];
+
 // Holidays are static — no API needed
 export const upcomingHolidays = [
   { id: 1, title: 'Human Rights Day', subtitle: 'Mar 21 · South Africa · expect higher demand' },
@@ -66,8 +68,27 @@ export async function loadDashboardData(): Promise<void> {
 
     if (bookingsRes.ok) {
       const bData = await bookingsRes.json();
-      allBookings = bData.bookings || bData;
+      const rawBookings: any[] = bData.bookings || bData;
       displayCurrency = bData.display_currency || 'ZAR';
+
+      // Separate cancelled from active bookings
+      const cancelledBookings = rawBookings.filter((b: any) => b.status === 'cancelled');
+      allBookings = rawBookings.filter((b: any) => b.status !== 'cancelled');
+
+      // Recent cancellations (last 30 days)
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+      recentCancellations = cancelledBookings
+        .filter((b: any) => b.check_in >= thirtyDaysAgo)
+        .sort((a: any, b: any) => b.check_in.localeCompare(a.check_in))
+        .slice(0, 5)
+        .map((b: any) => ({
+          id: b.id,
+          guestName: b.guest_name || 'Unknown',
+          property: b.property_name || `Property ${b.property_id}`,
+          checkIn: fmtDate(b.check_in),
+          checkOut: fmtDate(b.check_out),
+          platform: platformLabel(b.platform),
+        }));
     }
 
     let stats: any = { occupancy: [], gaps: [], pending_cleaning_jobs: [], upcoming_checkouts: [] };

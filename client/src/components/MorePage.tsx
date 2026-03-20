@@ -6,12 +6,21 @@ import {
   Wrench,
   Star,
   Users,
-  Settings } from
+  Settings,
+  LogOut } from
 'lucide-react';
 interface MorePageProps {
   onNavigate?: (tab: string) => void;
+  onLogout?: () => void;
 }
-export function MorePage({ onNavigate }: MorePageProps) {
+export function MorePage({ onNavigate, onLogout }: MorePageProps) {
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+    } catch {}
+    if (onLogout) onLogout();
+    else window.location.reload();
+  };
   return (
     <div className="p-4 bg-[#F7F7F7] min-h-full">
       {/* Manage Section */}
@@ -106,7 +115,18 @@ export function MorePage({ onNavigate }: MorePageProps) {
             <ChevronRight
               className="w-3.5 h-3.5 text-[#B0B0B0] shrink-0"
               strokeWidth={2} />
-            
+
+          </div>
+
+          <div
+            className="flex items-center gap-3 p-3 px-4 min-h-[48px] active:bg-[#F7F7F7] cursor-pointer border-t border-[#F0F0F0]"
+            onClick={handleLogout}>
+            <div className="w-[30px] h-[30px] rounded-[7px] bg-[#DC2626] flex items-center justify-center shrink-0 text-white">
+              <LogOut className="w-4 h-4" strokeWidth={2} />
+            </div>
+            <div className="flex-1 text-[16px] font-normal text-[#DC2626]">
+              Sign Out
+            </div>
           </div>
         </div>
       </div>

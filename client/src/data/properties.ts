@@ -57,7 +57,7 @@ export async function loadCalendarData(): Promise<void> {
 
   if (bookingsRes.ok) {
     const bData = await bookingsRes.json();
-    const bArray: any[] = bData.bookings || bData;
+    const bArray: any[] = (bData.bookings || bData).filter((b: any) => b.status !== 'cancelled');
     bookings = bArray.map((b) => ({
       id: String(b.id),
       propId: b.property_id,

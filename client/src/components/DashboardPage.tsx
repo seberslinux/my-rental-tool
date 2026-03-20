@@ -6,7 +6,8 @@ import {
   currentlyStaying,
   nextUp,
   cleaningJobs,
-  upcomingHolidays } from
+  upcomingHolidays,
+  recentCancellations } from
 '../data/dashboard';
 export function DashboardPage() {
   return (
@@ -228,6 +229,36 @@ export function DashboardPage() {
           )}
         </div>
       </div>
+
+      {/* Recent Cancellations */}
+      {recentCancellations.length > 0 &&
+      <div className="mb-6">
+        <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
+          Recent Cancellations
+        </div>
+        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] overflow-hidden">
+          {recentCancellations.map((c, idx) =>
+          <div
+            key={c.id}
+            className={`flex items-center gap-3 p-3 px-4 min-h-[52px] ${idx > 0 ? 'border-t border-[#F0F0F0]' : ''}`}>
+
+              <div className="w-2 h-2 rounded-full shrink-0 bg-[#D93900]"></div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[15px] font-medium text-[#222222] tracking-[-0.2px]">
+                  {c.guestName} <span className="text-[13px] font-normal text-[#717171]">· {c.platform}</span>
+                </div>
+                <div className="text-[13px] text-[#717171] mt-[1px]">
+                  {c.property} · {c.checkIn} – {c.checkOut}
+                </div>
+              </div>
+              <span className="text-[11px] font-semibold px-2 py-[3px] rounded-[6px] bg-[#FEF2F2] text-[#DC2626]">
+                Cancelled
+              </span>
+            </div>
+          )}
+        </div>
+      </div>
+      }
     </div>);
 
 }

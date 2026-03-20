@@ -25,6 +25,7 @@ import {
   guestCountries,
   recentReviews } from
 '../data/analytics';
+import { properties } from '../data/properties';
 const TABS = [
 {
   id: 'overview',
@@ -68,11 +69,7 @@ const TABS = [
 }];
 
 const PERIODS = ['30D', '90D', '6M', '1Y', 'YTD', 'Custom'];
-const PROPERTIES = [
-'All Properties',
-'Camps Bay Villa',
-'Green Point Apt',
-'Sea Point Studio'];
+const PROPERTIES = () => ['All Properties', ...properties.map(p => p.name)];
 
 export function AnalyticsPage() {
   const [activeTab, setActiveTab] = useState('overview');
@@ -89,7 +86,7 @@ export function AnalyticsPage() {
             onChange={(e) => setActiveProperty(e.target.value)}
             className="appearance-none bg-white border border-[#EBEBEB] rounded-[8px] pl-3 pr-8 py-2 text-[13px] font-medium text-[#222222] shadow-[0_1px_2px_rgba(0,0,0,0.04)] focus:outline-none focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF]">
             
-            {PROPERTIES.map((prop) =>
+            {PROPERTIES().map((prop) =>
             <option key={prop} value={prop}>
                 {prop}
               </option>
@@ -378,49 +375,35 @@ export function AnalyticsPage() {
         <>
             {/* Revenue KPIs */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-            {
-              label: 'Gross Revenue',
-              value: 'R 1,085,568',
-              trend: '↑ 97.6%',
-              isPositive: true
-            },
-            {
-              label: 'Net Revenue',
-              value: 'R 931,188',
-              trend: '↑ 89%',
-              isPositive: true
-            },
-            {
-              label: 'Avg Booking Value',
-              value: 'R 9,195',
-              trend: '↑ 12%',
-              isPositive: true
-            },
-            {
-              label: 'Commission Paid',
-              value: 'R 154,380',
-              trend: '↑ 15%',
-              isPositive: false
-            }].
+              {(() => {
+                const totalRev = revenueData.reduce((s, m) => s + m.current, 0);
+                const totalBookings = propertyPerformance.reduce((s, p) => s + p.bookings, 0);
+                const avgBookingVal = totalBookings > 0 ? Math.round(totalRev / totalBookings) : 0;
+                return [
+                  { label: 'Gross Revenue', value: totalRev > 0 ? `R ${totalRev.toLocaleString()}` : '--', trend: '', isPositive: true },
+                  { label: 'Avg Booking Value', value: avgBookingVal > 0 ? `R ${avgBookingVal.toLocaleString()}` : '--', trend: '', isPositive: true },
+                  { label: 'Total Bookings', value: totalBookings > 0 ? String(totalBookings) : '--', trend: '', isPositive: true },
+                  { label: 'Properties', value: propertyPerformance.length > 0 ? String(propertyPerformance.length) : '--', trend: '', isPositive: true },
+                ];
+              })().
             map((kpi, idx) =>
             <div
               key={idx}
               className="bg-white rounded-[12px] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
-              
+
                   <div className="text-[11px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0] mb-1">
                     {kpi.label}
                   </div>
                   <div className="text-[20px] font-bold tracking-[-0.3px] text-[#222222]">
                     {kpi.value}
                   </div>
-                  <span
+                  {kpi.trend && <span
                 className={`text-[12px] font-semibold ${kpi.isPositive ? 'text-[#00A699]' : 'text-[#D93900]'}`}>
-                
+
                     {kpi.trend}
-                  </span>
+                  </span>}
                   <span className="text-[11px] text-[#B0B0B0] ml-1">
-                    vs last year
+                    selected period
                   </span>
                 </div>
             )}
@@ -590,30 +573,11 @@ export function AnalyticsPage() {
                     </ResponsiveContainer>
                   </div>
                   <div className="flex-1 pl-4 space-y-3">
-                    {[
-                  {
-                    name: 'Airbnb',
-                    value: 'R 553,648',
-                    pct: '51%',
-                    color: '#FF385C'
-                  },
-                  {
-                    name: 'Booking.com',
-                    value: 'R 336,526',
-                    pct: '31%',
-                    color: '#003580'
-                  },
-                  {
-                    name: 'Direct',
-                    value: 'R 195,394',
-                    pct: '18%',
-                    color: '#717171'
-                  }].
-                  map((item, idx) =>
+                    {channelMixData.map((item, idx) =>
                   <div
                     key={idx}
                     className="flex items-center justify-between">
-                    
+
                         <div className="flex items-center gap-2">
                           <div
                         className="w-2.5 h-2.5 rounded-sm"
@@ -627,10 +591,7 @@ export function AnalyticsPage() {
                         </div>
                         <div className="text-right">
                           <span className="text-[13px] font-semibold text-[#222222]">
-                            {item.value}
-                          </span>
-                          <span className="text-[11px] text-[#B0B0B0] ml-1.5">
-                            {item.pct}
+                            {item.value}%
                           </span>
                         </div>
                       </div>
@@ -696,68 +657,11 @@ export function AnalyticsPage() {
                 <div className="h-[220px] w-full mt-3">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart
-                    data={[
-                    {
-                      month: 'Jul',
-                      actual: 12000,
-                      forecast: null
-                    },
-                    {
-                      month: 'Aug',
-                      actual: 28000,
-                      forecast: null
-                    },
-                    {
-                      month: 'Sep',
-                      actual: 45000,
-                      forecast: null
-                    },
-                    {
-                      month: 'Oct',
-                      actual: 110000,
-                      forecast: null
-                    },
-                    {
-                      month: 'Nov',
-                      actual: 135000,
-                      forecast: null
-                    },
-                    {
-                      month: 'Dec',
-                      actual: 199880,
-                      forecast: null
-                    },
-                    {
-                      month: 'Jan',
-                      actual: 149607,
-                      forecast: null
-                    },
-                    {
-                      month: 'Feb',
-                      actual: 154971,
-                      forecast: null
-                    },
-                    {
-                      month: 'Mar',
-                      actual: 142000,
-                      forecast: 142000
-                    },
-                    {
-                      month: 'Apr',
-                      actual: null,
-                      forecast: 105000
-                    },
-                    {
-                      month: 'May',
-                      actual: null,
-                      forecast: 72000
-                    },
-                    {
-                      month: 'Jun',
-                      actual: null,
-                      forecast: 45000
-                    }]
-                    }
+                    data={revenueData.map((m) => ({
+                      month: m.month,
+                      actual: m.current,
+                      forecast: null,
+                    }))}
                     margin={{
                       top: 5,
                       right: 5,
@@ -861,65 +765,22 @@ export function AnalyticsPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#F0F0F0]">
-                      {[
-                    {
-                      month: 'Dec 2025',
-                      revenue: 'R 199,880',
-                      bookings: 11,
-                      nights: 54,
-                      adr: 'R 3,701'
-                    },
-                    {
-                      month: 'Feb 2026',
-                      revenue: 'R 154,971',
-                      bookings: 13,
-                      nights: 50,
-                      adr: 'R 3,099'
-                    },
-                    {
-                      month: 'Jan 2026',
-                      revenue: 'R 149,607',
-                      bookings: 13,
-                      nights: 43,
-                      adr: 'R 3,479'
-                    },
-                    {
-                      month: 'Mar 2025',
-                      revenue: 'R 112,954',
-                      bookings: 14,
-                      nights: 50,
-                      adr: 'R 2,259'
-                    },
-                    {
-                      month: 'Nov 2025',
-                      revenue: 'R 112,725',
-                      bookings: 14,
-                      nights: 42,
-                      adr: 'R 2,684'
-                    },
-                    {
-                      month: 'Mar 2026',
-                      revenue: 'R 100,607',
-                      bookings: 12,
-                      nights: 33,
-                      adr: 'R 3,049'
-                    }].
-                    map((row, idx) =>
+                      {[...revenueData].sort((a, b) => b.current - a.current).slice(0, 6).map((row, idx) =>
                     <tr key={idx}>
                           <td className="p-3 pl-5 text-[13px] font-medium text-[#222222]">
                             {row.month}
                           </td>
                           <td className="p-3 text-[13px] text-[#222222]">
-                            {row.revenue}
+                            R {row.current.toLocaleString()}
                           </td>
                           <td className="p-3 text-[13px] text-[#717171]">
-                            {row.bookings}
+                            --
                           </td>
                           <td className="p-3 text-[13px] text-[#717171]">
-                            {row.nights}
+                            --
                           </td>
                           <td className="p-3 pr-5 text-[13px] text-[#222222]">
-                            {row.adr}
+                            --
                           </td>
                         </tr>
                     )}
@@ -945,8 +806,11 @@ export function AnalyticsPage() {
                     </svg>
                   </div>
                   <p className="text-[12px] text-[#334155] leading-relaxed">
-                    Peak revenue month: <strong>Dec 2025</strong> generating R
-                    199,880 at R 3,701 ADR across 54 nights.
+                    {(() => {
+                      if (revenueData.length === 0) return 'No revenue data available.';
+                      const peak = [...revenueData].sort((a, b) => b.current - a.current)[0];
+                      return <>Peak revenue month: <strong>{peak.month}</strong> generating R {peak.current.toLocaleString()}.</>;
+                    })()}
                   </p>
                 </div>
               </div>
@@ -959,40 +823,22 @@ export function AnalyticsPage() {
         <>
             {/* KPIs */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-            {
-              label: 'Monthly Occupancy',
-              value: '58%',
-              trend: '↑ 30%',
-              trendDetail: 'vs last year',
-              isPositive: true
-            },
-            {
-              label: 'Avg Daily Rate (ADR)',
-              value: 'R 2,396',
-              trend: '↓ 4%',
-              trendDetail: 'vs last year',
-              isPositive: false
-            },
-            {
-              label: 'RevPAR',
-              value: 'R 1,371',
-              trend: '',
-              trendDetail: 'rev per available night',
-              isPositive: true
-            },
-            {
-              label: 'Avg Stay Duration',
-              value: '3.8 nights',
-              trend: '↑ 0.5',
-              trendDetail: 'vs last year',
-              isPositive: true
-            }].
-            map((kpi, idx) =>
+              {(() => {
+                const avgOcc = occupancyTrendData.length > 0 ? Math.round(occupancyTrendData.reduce((s, o) => s + o.rate, 0) / occupancyTrendData.length) : 0;
+                const avgAdr = rateTrendData.length > 0 ? Math.round(rateTrendData.reduce((s, r) => s + r.adr, 0) / rateTrendData.length) : 0;
+                const avgRevpar = rateTrendData.length > 0 ? Math.round(rateTrendData.reduce((s, r) => s + r.revpar, 0) / rateTrendData.length) : 0;
+                const avgStayKpi = overviewKPIs.find(k => k.label === 'Avg Stay');
+                return [
+                  { label: 'Avg Occupancy', value: avgOcc > 0 ? `${avgOcc}%` : '--', trend: '', trendDetail: 'across properties', isPositive: avgOcc >= 50 },
+                  { label: 'Avg Daily Rate (ADR)', value: avgAdr > 0 ? `R ${avgAdr.toLocaleString()}` : '--', trend: '', trendDetail: 'per night', isPositive: true },
+                  { label: 'RevPAR', value: avgRevpar > 0 ? `R ${avgRevpar.toLocaleString()}` : '--', trend: '', trendDetail: 'rev per available night', isPositive: true },
+                  { label: 'Avg Stay Duration', value: avgStayKpi ? avgStayKpi.value : '--', trend: '', trendDetail: 'per booking', isPositive: true },
+                ];
+              })().map((kpi, idx) =>
             <div
               key={idx}
               className="bg-white rounded-[12px] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
-              
+
                   <div className="text-[11px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0] mb-1">
                     {kpi.label}
                   </div>
@@ -1003,7 +849,7 @@ export function AnalyticsPage() {
                     {kpi.trend &&
                 <span
                   className={`text-[12px] font-semibold ${kpi.isPositive ? 'text-[#00A699]' : 'text-[#D93900]'}`}>
-                  
+
                         {kpi.trend}
                       </span>
                 }
@@ -1209,45 +1055,32 @@ export function AnalyticsPage() {
                   Occupancy by Property
                 </h3>
                 <div className="space-y-4">
-                  {[
-                {
-                  name: 'Camps Bay Villa',
-                  occupancy: 67,
-                  color: '#E8913A'
-                },
-                {
-                  name: 'Green Point Apt',
-                  occupancy: 52,
-                  color: '#E8913A'
-                },
-                {
-                  name: 'Sea Point Studio',
-                  occupancy: 49,
-                  color: '#D93900'
-                }].
-                map((prop, idx) =>
+                  {propertyPerformance.length > 0 ? propertyPerformance.map((prop, idx) => {
+                    const occ = prop.occupancy;
+                    const color = occ >= 70 ? '#00A699' : occ >= 50 ? '#E8913A' : '#D93900';
+                    return (
                 <div key={idx}>
                       <div className="flex justify-between items-center mb-1.5">
                         <span className="text-[13px] font-medium text-[#222222]">
                           {prop.name}
                         </span>
                         <span
-                      className={`text-[13px] font-semibold ${prop.occupancy >= 70 ? 'text-[#00A699]' : prop.occupancy >= 50 ? 'text-[#E8913A]' : 'text-[#D93900]'}`}>
-                      
-                          {prop.occupancy}%
+                      className={`text-[13px] font-semibold ${occ >= 70 ? 'text-[#00A699]' : occ >= 50 ? 'text-[#E8913A]' : 'text-[#D93900]'}`}>
+
+                          {occ}%
                         </span>
                       </div>
                       <div className="h-[6px] bg-[#F0F0F0] rounded-full overflow-hidden">
                         <div
                       className="h-full rounded-full"
                       style={{
-                        width: `${prop.occupancy}%`,
-                        backgroundColor: prop.color
+                        width: `${occ}%`,
+                        backgroundColor: color
                       }}>
                     </div>
                       </div>
-                    </div>
-                )}
+                    </div>);
+                  }) : <div className="text-[13px] text-[#B0B0B0] text-center py-4">No data available</div>}
                 </div>
               </div>
 
@@ -1264,7 +1097,7 @@ export function AnalyticsPage() {
                 <div className="flex gap-6 mb-4">
                   <div className="text-center">
                     <div className="text-[24px] font-bold text-[#222222]">
-                      38
+                      --
                     </div>
                     <div className="text-[10px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0]">
                       Avg Lead Time
@@ -1272,77 +1105,14 @@ export function AnalyticsPage() {
                   </div>
                   <div className="text-center">
                     <div className="text-[24px] font-bold text-[#222222]">
-                      118
+                      {propertyPerformance.reduce((s, p) => s + p.bookings, 0) || '--'}
                     </div>
                     <div className="text-[10px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0]">
                       Total Bookings
                     </div>
                   </div>
                 </div>
-                <div className="space-y-2.5">
-                  {[
-                {
-                  range: '0-1 days',
-                  pct: 19,
-                  count: 23,
-                  color: '#8B5CF6'
-                },
-                {
-                  range: '2-7 days',
-                  pct: 19,
-                  count: 23,
-                  color: '#E8913A'
-                },
-                {
-                  range: '8-14 days',
-                  pct: 4,
-                  count: 5,
-                  color: '#D93900'
-                },
-                {
-                  range: '15-30 days',
-                  pct: 16,
-                  count: 19,
-                  color: '#0EA5E9'
-                },
-                {
-                  range: '31-60 days',
-                  pct: 18,
-                  count: 21,
-                  color: '#007AFF'
-                },
-                {
-                  range: '60+ days',
-                  pct: 23,
-                  count: 27,
-                  color: '#00A699'
-                }].
-                map((item, idx) =>
-                <div key={idx} className="flex items-center gap-3">
-                      <span className="text-[12px] text-[#717171] w-[70px] flex-shrink-0">
-                        {item.range}
-                      </span>
-                      <div className="flex-1 h-[18px] bg-[#F0F0F0] rounded-[3px] overflow-hidden relative">
-                        <div
-                      className="h-full rounded-[3px] flex items-center pl-2"
-                      style={{
-                        width: `${Math.max(item.pct * 2, 8)}%`,
-                        backgroundColor: item.color
-                      }}>
-                      
-                          {item.pct >= 10 &&
-                      <span className="text-[10px] font-semibold text-white">
-                              {item.pct}%
-                            </span>
-                      }
-                        </div>
-                      </div>
-                      <span className="text-[12px] font-medium text-[#222222] w-[24px] text-right flex-shrink-0">
-                        {item.count}
-                      </span>
-                    </div>
-                )}
-                </div>
+                <div className="text-[13px] text-[#B0B0B0] text-center py-4">No lead time data available</div>
               </div>
             </div>
 
@@ -1361,7 +1131,7 @@ export function AnalyticsPage() {
                 <div className="flex gap-6 mb-4">
                   <div className="text-center">
                     <div className="text-[24px] font-bold text-[#222222]">
-                      3.8
+                      {(() => { const k = overviewKPIs.find(k => k.label === 'Avg Stay'); return k ? k.value.replace(' nights', '') : '--'; })()}
                     </div>
                     <div className="text-[10px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0]">
                       Avg Nights
@@ -1369,83 +1139,14 @@ export function AnalyticsPage() {
                   </div>
                   <div className="text-center">
                     <div className="text-[24px] font-bold text-[#222222]">
-                      118
+                      {propertyPerformance.reduce((s, p) => s + p.bookings, 0) || '--'}
                     </div>
                     <div className="text-[10px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0]">
                       Total Bookings
                     </div>
                   </div>
                 </div>
-                <div className="space-y-2.5">
-                  {[
-                {
-                  nights: '1 night',
-                  pct: 12,
-                  count: 14,
-                  color: '#8B5CF6'
-                },
-                {
-                  nights: '2 nights',
-                  pct: 36,
-                  count: 43,
-                  color: '#007AFF'
-                },
-                {
-                  nights: '3 nights',
-                  pct: 25,
-                  count: 29,
-                  color: '#00A699'
-                },
-                {
-                  nights: '4 nights',
-                  pct: 9,
-                  count: 11,
-                  color: '#E8913A'
-                },
-                {
-                  nights: '5 nights',
-                  pct: 6,
-                  count: 7,
-                  color: '#0EA5E9'
-                },
-                {
-                  nights: '6 nights',
-                  pct: 3,
-                  count: 3,
-                  color: '#007AFF'
-                },
-                {
-                  nights: '7+ nights',
-                  pct: 9,
-                  count: 11,
-                  color: '#D93900'
-                }].
-                map((item, idx) =>
-                <div key={idx} className="flex items-center gap-3">
-                      <span className="text-[12px] text-[#717171] w-[65px] flex-shrink-0">
-                        {item.nights}
-                      </span>
-                      <div className="flex-1 h-[18px] bg-[#F0F0F0] rounded-[3px] overflow-hidden relative">
-                        <div
-                      className="h-full rounded-[3px] flex items-center pl-2"
-                      style={{
-                        width: `${Math.max(item.pct * 2, 8)}%`,
-                        backgroundColor: item.color
-                      }}>
-                      
-                          {item.pct >= 6 &&
-                      <span className="text-[10px] font-semibold text-white">
-                              {item.pct}%
-                            </span>
-                      }
-                        </div>
-                      </div>
-                      <span className="text-[12px] font-medium text-[#222222] w-[24px] text-right flex-shrink-0">
-                        {item.count}
-                      </span>
-                    </div>
-                )}
-                </div>
+                <div className="text-[13px] text-[#B0B0B0] text-center py-4">No length-of-stay distribution data available</div>
               </div>
 
               {/* Lead Time vs Nightly Rate scatter */}
@@ -1458,130 +1159,7 @@ export function AnalyticsPage() {
                     Do earlier bookers pay more?
                   </span>
                 </div>
-                <div className="h-[200px] w-full">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart
-                    data={[
-                    {
-                      range: '0-1d',
-                      rate: 2370,
-                      color: '#8B5CF6'
-                    },
-                    {
-                      range: '2-7d',
-                      rate: 2477,
-                      color: '#E8913A'
-                    },
-                    {
-                      range: '8-14d',
-                      rate: 2814,
-                      color: '#D93900'
-                    },
-                    {
-                      range: '15-30d',
-                      rate: 2762,
-                      color: '#0EA5E9'
-                    },
-                    {
-                      range: '31-60d',
-                      rate: 3065,
-                      color: '#007AFF'
-                    },
-                    {
-                      range: '60+d',
-                      rate: 3010,
-                      color: '#00A699'
-                    }]
-                    }
-                    margin={{
-                      top: 20,
-                      right: 5,
-                      left: -5,
-                      bottom: 0
-                    }}>
-                    
-                      <CartesianGrid
-                      strokeDasharray="3 3"
-                      vertical={false}
-                      stroke="#F0F0F0" />
-                    
-                      <XAxis
-                      dataKey="range"
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{
-                        fontSize: 10,
-                        fill: '#B0B0B0'
-                      }}
-                      dy={10} />
-                    
-                      <YAxis
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{
-                        fontSize: 10,
-                        fill: '#B0B0B0'
-                      }}
-                      tickFormatter={(val) => `R ${val.toLocaleString()}`}
-                      domain={[0, 'auto']} />
-                    
-                      <Tooltip
-                      contentStyle={{
-                        borderRadius: '8px',
-                        border: '1px solid #EBEBEB',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
-                      }}
-                      formatter={(value: number) => [
-                      `R ${value.toLocaleString()}`,
-                      'Avg Rate']
-                      } />
-                    
-                      <Bar
-                      dataKey="rate"
-                      radius={[4, 4, 0, 0]}
-                      label={{
-                        position: 'top',
-                        fontSize: 10,
-                        fill: '#717171',
-                        formatter: (val: number) =>
-                        `R ${val.toLocaleString()}`
-                      }}>
-                      
-                        {[
-                      {
-                        color: '#007AFF'
-                      },
-                      {
-                        color: '#D93900'
-                      },
-                      {
-                        color: '#0EA5E9'
-                      },
-                      {
-                        color: '#00A699'
-                      },
-                      {
-                        color: '#E8913A'
-                      },
-                      {
-                        color: '#8B5CF6'
-                      }].
-                      map((item, index) =>
-                      <Cell key={`lt-${index}`} fill={item.color} />
-                      )}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-                {/* Insight */}
-                <div className="mt-3 p-3 bg-[#FFFBEB] rounded-[8px] flex items-start gap-2.5">
-                  <span className="text-[14px] flex-shrink-0">💡</span>
-                  <p className="text-[12px] text-[#92400E] leading-relaxed">
-                    Short-notice bookings average <strong>R 3,065/night</strong>{' '}
-                    — 29% higher than longer lead-time bookings at{' '}
-                    <strong>R 2,370/night</strong>.
-                  </p>
-                </div>
+                <div className="text-[13px] text-[#B0B0B0] text-center py-8">No lead time vs rate data available</div>
               </div>
             </div>
           </>
@@ -1656,32 +1234,23 @@ export function AnalyticsPage() {
         <>
             {/* KPIs */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-            {
-              label: 'Overall Rating',
-              value: '4.8 ★',
-              detail: '20 reviews total'
-            },
-            {
-              label: 'Total Reviews',
-              value: '20',
-              detail: 'across all properties'
-            },
-            {
-              label: '5-Star Rate',
-              value: '80%',
-              detail: '16 five-star reviews'
-            },
-            {
-              label: 'Properties Rated',
-              value: '1',
-              detail: 'of 1 total'
-            }].
-            map((kpi, idx) =>
+              {(() => {
+                const total = recentReviews.length;
+                const avgRating = total > 0 ? (recentReviews.reduce((s, r) => s + r.rating, 0) / total).toFixed(1) : '--';
+                const fiveStarCount = recentReviews.filter(r => r.rating === 5).length;
+                const fiveStarPct = total > 0 ? Math.round((fiveStarCount / total) * 100) : 0;
+                const propsRated = new Set(recentReviews.map(r => r.property)).size;
+                return [
+                  { label: 'Overall Rating', value: total > 0 ? `${avgRating} ★` : '--', detail: `${total} reviews total` },
+                  { label: 'Total Reviews', value: total > 0 ? String(total) : '--', detail: 'across all properties' },
+                  { label: '5-Star Rate', value: total > 0 ? `${fiveStarPct}%` : '--', detail: `${fiveStarCount} five-star reviews` },
+                  { label: 'Properties Rated', value: propsRated > 0 ? String(propsRated) : '--', detail: `of ${properties.length} total` },
+                ];
+              })().map((kpi, idx) =>
             <div
               key={idx}
               className="bg-white rounded-[12px] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
-              
+
                   <div className="text-[11px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0] mb-1">
                     {kpi.label}
                   </div>
@@ -1703,38 +1272,14 @@ export function AnalyticsPage() {
                   Rating Distribution
                 </h3>
                 <div className="space-y-3">
-                  {[
-                {
-                  stars: 5,
-                  count: 16,
-                  pct: 80,
-                  color: '#00A699'
-                },
-                {
-                  stars: 4,
-                  count: 4,
-                  pct: 20,
-                  color: '#007AFF'
-                },
-                {
-                  stars: 3,
-                  count: 0,
-                  pct: 0,
-                  color: '#E8913A'
-                },
-                {
-                  stars: 2,
-                  count: 0,
-                  pct: 0,
-                  color: '#D93900'
-                },
-                {
-                  stars: 1,
-                  count: 0,
-                  pct: 0,
-                  color: '#D93900'
-                }].
-                map((item, idx) =>
+                  {(() => {
+                    const total = recentReviews.length;
+                    const starColors: Record<number, string> = { 5: '#00A699', 4: '#007AFF', 3: '#E8913A', 2: '#D93900', 1: '#D93900' };
+                    return [5, 4, 3, 2, 1].map(s => {
+                      const count = recentReviews.filter(r => r.rating === s).length;
+                      return { stars: s, count, pct: total > 0 ? Math.round((count / total) * 100) : 0, color: starColors[s] };
+                    });
+                  })().map((item, idx) =>
                 <div key={idx} className="flex items-center gap-3">
                       <span className="text-[13px] text-[#DDAD4F] w-[60px] flex-shrink-0 tracking-tight">
                         {'★'.repeat(item.stars)}
@@ -1769,23 +1314,19 @@ export function AnalyticsPage() {
                   Ratings by Property
                 </h3>
                 <div className="space-y-4">
-                  {[
-                {
-                  name: 'Camps Bay Villa',
-                  rating: 4.8,
-                  color: '#00A699'
-                },
-                {
-                  name: 'Green Point Apt',
-                  rating: 4.6,
-                  color: '#007AFF'
-                },
-                {
-                  name: 'Sea Point Studio',
-                  rating: 4.5,
-                  color: '#007AFF'
-                }].
-                map((prop, idx) =>
+                  {(() => {
+                    const propReviews: Record<string, number[]> = {};
+                    recentReviews.forEach(r => {
+                      if (!propReviews[r.property]) propReviews[r.property] = [];
+                      propReviews[r.property].push(r.rating);
+                    });
+                    const entries = Object.entries(propReviews).map(([name, ratings]) => ({
+                      name,
+                      rating: parseFloat((ratings.reduce((s, r) => s + r, 0) / ratings.length).toFixed(1)),
+                      color: (ratings.reduce((s, r) => s + r, 0) / ratings.length) >= 4.5 ? '#00A699' : '#007AFF',
+                    })).sort((a, b) => b.rating - a.rating);
+                    if (entries.length === 0) return <div className="text-[13px] text-[#B0B0B0] text-center py-4">No review data available</div>;
+                    return entries.map((prop, idx) =>
                 <div key={idx}>
                       <div className="flex justify-between items-center mb-1.5">
                         <span className="text-[13px] font-medium text-[#222222]">
@@ -1806,8 +1347,8 @@ export function AnalyticsPage() {
                           {prop.rating}
                         </span>
                       </div>
-                    </div>
-                )}
+                    </div>);
+                  })()}
                 </div>
               </div>
             </div>
@@ -1829,11 +1370,7 @@ export function AnalyticsPage() {
                 '#D93900'];
 
                 const colorIdx = review.guest.charCodeAt(0) % colors.length;
-                const platformColor = review.property.includes('Camps Bay') ?
-                '#FF385C' :
-                review.property.includes('Green') ?
-                '#FF385C' :
-                '#FF385C';
+                const platformColor = '#FF385C';
                 return (
                   <div key={review.id} className="p-5">
                       <div className="flex justify-between items-start">
@@ -1871,7 +1408,7 @@ export function AnalyticsPage() {
                         {review.text}
                       </p>
                       <div className="text-[12px] text-[#B0B0B0] mt-2 font-medium">
-                        {review.property} · via Airbnb
+                        {review.property}
                       </div>
                     </div>);
 
@@ -1886,32 +1423,20 @@ export function AnalyticsPage() {
         <>
             {/* KPIs */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {[
-            {
-              label: 'Total Guests',
-              value: '118',
-              detail: '453 nights'
-            },
-            {
-              label: 'Countries',
-              value: '14',
-              detail: 'unique origins'
-            },
-            {
-              label: 'Avg Group Size',
-              value: '2',
-              detail: 'guests per booking'
-            },
-            {
-              label: 'Languages',
-              value: '7',
-              detail: 'unique languages'
-            }].
-            map((kpi, idx) =>
+              {(() => {
+                const totalBookings = propertyPerformance.reduce((s, p) => s + p.bookings, 0);
+                const countriesCount = guestCountries.length;
+                return [
+                  { label: 'Total Bookings', value: totalBookings > 0 ? String(totalBookings) : '--', detail: 'confirmed bookings' },
+                  { label: 'Countries', value: countriesCount > 0 ? String(countriesCount) : '--', detail: 'unique origins' },
+                  { label: 'Top Country', value: guestCountries.length > 0 ? guestCountries[0].country : '--', detail: guestCountries.length > 0 ? `${guestCountries[0].percentage}% of guests` : '' },
+                  { label: 'Properties', value: propertyPerformance.length > 0 ? String(propertyPerformance.length) : '--', detail: 'active listings' },
+                ];
+              })().map((kpi, idx) =>
             <div
               key={idx}
               className="bg-white rounded-[12px] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
-              
+
                   <div className="text-[11px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0] mb-1">
                     {kpi.label}
                   </div>
@@ -1933,76 +1458,34 @@ export function AnalyticsPage() {
                   Guest Countries
                 </h3>
                 <div className="space-y-3">
-                  {[
-                {
-                  country: 'South Africa',
-                  pct: 35,
-                  count: 41,
-                  color: '#007AFF'
-                },
-                {
-                  country: 'Germany',
-                  pct: 26,
-                  count: 31,
-                  color: '#007AFF'
-                },
-                {
-                  country: 'United Kingdom',
-                  pct: 6,
-                  count: 7,
-                  color: '#007AFF'
-                },
-                {
-                  country: 'Netherlands',
-                  pct: 5,
-                  count: 6,
-                  color: '#007AFF'
-                },
-                {
-                  country: 'Saudi Arabia',
-                  pct: 4,
-                  count: 5,
-                  color: '#007AFF'
-                },
-                {
-                  country: 'Russia',
-                  pct: 4,
-                  count: 5,
-                  color: '#007AFF'
-                },
-                {
-                  country: 'United States',
-                  pct: 3,
-                  count: 3,
-                  color: '#007AFF'
-                }].
-                map((item, idx) =>
+                  {(guestCountries.length > 0 ? guestCountries : []).map((item, idx) =>
                 <div key={idx} className="flex items-center gap-3">
                       <span className="text-[13px] text-[#222222] w-[110px] flex-shrink-0 font-medium">
                         {item.country}
                       </span>
                       <div className="flex-1 flex items-center gap-2">
                         <div className="flex items-center gap-1.5 flex-1">
-                          {item.pct >= 5 &&
+                          {item.percentage >= 5 &&
                       <span className="text-[10px] font-semibold text-white bg-[#007AFF] rounded-[3px] px-1.5 py-[1px] flex-shrink-0">
-                              {item.pct}%
+                              {item.percentage}%
                             </span>
                       }
                           <div className="flex-1 h-[6px] bg-[#F0F0F0] rounded-full overflow-hidden">
                             <div
                           className="h-full bg-[#007AFF] rounded-full"
                           style={{
-                            width: `${item.pct * 2.5}%`
+                            width: `${item.percentage * 2.5}%`
                           }}>
                         </div>
                           </div>
                         </div>
                         <span className="text-[13px] font-medium text-[#222222] w-[28px] text-right flex-shrink-0">
-                          {item.count}
+                          {item.percentage}%
                         </span>
                       </div>
                     </div>
                 )}
+                {guestCountries.length === 0 && <div className="text-[13px] text-[#B0B0B0] text-center py-4">No guest country data available</div>}
                 </div>
               </div>
 
@@ -2011,134 +1494,7 @@ export function AnalyticsPage() {
                 <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
                   Guest Languages
                 </h3>
-                <div className="flex items-center">
-                  <div className="h-[180px] w-[180px] shrink-0 relative">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <PieChart>
-                        <Pie
-                        data={[
-                        {
-                          name: 'en',
-                          value: 62,
-                          color: '#007AFF'
-                        },
-                        {
-                          name: 'de',
-                          value: 27,
-                          color: '#8B5CF6'
-                        },
-                        {
-                          name: 'ru',
-                          value: 4,
-                          color: '#00A699'
-                        },
-                        {
-                          name: 'nl',
-                          value: 3,
-                          color: '#E8913A'
-                        },
-                        {
-                          name: 'Other',
-                          value: 5,
-                          color: '#CBD5E1'
-                        }]
-                        }
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={50}
-                        outerRadius={75}
-                        paddingAngle={2}
-                        dataKey="value"
-                        stroke="none">
-                        
-                          {[
-                        {
-                          color: '#007AFF'
-                        },
-                        {
-                          color: '#8B5CF6'
-                        },
-                        {
-                          color: '#00A699'
-                        },
-                        {
-                          color: '#E8913A'
-                        },
-                        {
-                          color: '#CBD5E1'
-                        }].
-                        map((entry, index) =>
-                        <Cell key={`lang-${index}`} fill={entry.color} />
-                        )}
-                        </Pie>
-                        <Tooltip
-                        contentStyle={{
-                          borderRadius: '8px',
-                          border: '1px solid #EBEBEB',
-                          boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
-                        }}
-                        formatter={(value: number) => [`${value}%`, '']} />
-                      
-                      </PieChart>
-                    </ResponsiveContainer>
-                    {/* Center label */}
-                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                      <span className="text-[22px] font-bold text-[#222222]">
-                        111
-                      </span>
-                      <span className="text-[11px] text-[#B0B0B0]">guests</span>
-                    </div>
-                  </div>
-                  <div className="flex-1 pl-4 space-y-3">
-                    {[
-                  {
-                    code: 'en',
-                    pct: '62%',
-                    color: '#007AFF'
-                  },
-                  {
-                    code: 'de',
-                    pct: '27%',
-                    color: '#8B5CF6'
-                  },
-                  {
-                    code: 'ru',
-                    pct: '4%',
-                    color: '#00A699'
-                  },
-                  {
-                    code: 'nl',
-                    pct: '3%',
-                    color: '#E8913A'
-                  },
-                  {
-                    code: 'Other',
-                    pct: '5%',
-                    color: '#CBD5E1'
-                  }].
-                  map((lang, idx) =>
-                  <div
-                    key={idx}
-                    className="flex items-center justify-between">
-                    
-                        <div className="flex items-center gap-2">
-                          <div
-                        className="w-2.5 h-2.5 rounded-sm"
-                        style={{
-                          backgroundColor: lang.color
-                        }}>
-                      </div>
-                          <span className="text-[13px] font-medium text-[#222222]">
-                            {lang.code}
-                          </span>
-                        </div>
-                        <span className="text-[13px] font-semibold text-[#222222]">
-                          {lang.pct}
-                        </span>
-                      </div>
-                  )}
-                  </div>
-                </div>
+                <div className="text-[13px] text-[#B0B0B0] text-center py-8">No language data available</div>
               </div>
             </div>
           </>
@@ -2197,35 +1553,20 @@ export function AnalyticsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {[
-                  {
-                    name: 'Camps Bay Villa',
-                    data: [90, 89, 65, 40, 42, 33, 6, 97, 100, 87, 80, 74]
-                  },
-                  {
-                    name: 'Green Point Apt',
-                    data: [71, 68, 75, 63, 19, 23, 19, 29, 27, 32, 57, 81]
-                  },
-                  {
-                    name: 'Sea Point Studio',
-                    data: [55, 48, 52, 38, 22, 18, 15, 35, 42, 48, 62, 70]
-                  }].
-                  map((prop, idx) =>
+                    {propertyPerformance.length > 0 ? propertyPerformance.map((prop, idx) =>
                   <tr key={idx}>
                         <td className="p-2 text-[13px] font-medium text-[#222222] whitespace-nowrap">
                           {prop.name}
                         </td>
-                        {prop.data.map((val, mIdx) =>
+                        {[...Array(12)].map((_, mIdx) =>
                     <td key={mIdx} className="p-1.5 text-center">
-                            <div
-                        className={`rounded-[6px] py-1.5 px-1 text-[12px] font-semibold ${val >= 75 ? 'bg-[#00A69915] text-[#00A699]' : val >= 50 ? 'bg-[#E8913A15] text-[#E8913A]' : 'bg-[#D9390015] text-[#D93900]'}`}>
-                        
-                              {val}%
+                            <div className="rounded-[6px] py-1.5 px-1 text-[12px] font-semibold bg-[#F0F0F0] text-[#B0B0B0]">
+                              --
                             </div>
                           </td>
                     )}
                       </tr>
-                  )}
+                  ) : <tr><td colSpan={13} className="p-4 text-center text-[13px] text-[#B0B0B0]">No heatmap data available</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -2238,62 +1579,7 @@ export function AnalyticsPage() {
                 <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
                   Booking Patterns — Day of Week
                 </h3>
-                <div className="space-y-3">
-                  {[
-                {
-                  day: 'Monday',
-                  pct: 17
-                },
-                {
-                  day: 'Tuesday',
-                  pct: 8
-                },
-                {
-                  day: 'Wednesday',
-                  pct: 9
-                },
-                {
-                  day: 'Thursday',
-                  pct: 15
-                },
-                {
-                  day: 'Friday',
-                  pct: 20
-                },
-                {
-                  day: 'Saturday',
-                  pct: 19
-                },
-                {
-                  day: 'Sunday',
-                  pct: 11
-                }].
-                map((item, idx) =>
-                <div key={idx} className="flex items-center gap-3">
-                      <span className="text-[13px] text-[#222222] w-[80px] flex-shrink-0">
-                        {item.day}
-                      </span>
-                      <div className="flex-1 h-[18px] bg-[#F0F0F0] rounded-[3px] overflow-hidden">
-                        <div
-                      className="h-full rounded-[3px] flex items-center pl-2"
-                      style={{
-                        width: `${Math.max(item.pct * 4, 10)}%`,
-                        backgroundColor: '#007AFF'
-                      }}>
-                      
-                          {item.pct >= 15 &&
-                      <span className="text-[10px] font-semibold text-white">
-                              {item.pct}%
-                            </span>
-                      }
-                        </div>
-                      </div>
-                      <span className="text-[13px] font-semibold text-[#222222] w-[32px] text-right">
-                        {item.pct}%
-                      </span>
-                    </div>
-                )}
-                </div>
+                <div className="text-[13px] text-[#B0B0B0] text-center py-8">No booking pattern data available</div>
               </div>
 
               {/* Check-in Day Distribution */}
@@ -2301,62 +1587,7 @@ export function AnalyticsPage() {
                 <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
                   Check-in Day Distribution
                 </h3>
-                <div className="space-y-3">
-                  {[
-                {
-                  day: 'Monday',
-                  pct: 17
-                },
-                {
-                  day: 'Tuesday',
-                  pct: 8
-                },
-                {
-                  day: 'Wednesday',
-                  pct: 9
-                },
-                {
-                  day: 'Thursday',
-                  pct: 15
-                },
-                {
-                  day: 'Friday',
-                  pct: 20
-                },
-                {
-                  day: 'Saturday',
-                  pct: 19
-                },
-                {
-                  day: 'Sunday',
-                  pct: 11
-                }].
-                map((item, idx) =>
-                <div key={idx} className="flex items-center gap-3">
-                      <span className="text-[13px] text-[#222222] w-[80px] flex-shrink-0">
-                        {item.day}
-                      </span>
-                      <div className="flex-1 h-[18px] bg-[#F0F0F0] rounded-[3px] overflow-hidden">
-                        <div
-                      className="h-full rounded-[3px] flex items-center pl-2"
-                      style={{
-                        width: `${Math.max(item.pct * 4, 10)}%`,
-                        backgroundColor: '#00A699'
-                      }}>
-                      
-                          {item.pct >= 15 &&
-                      <span className="text-[10px] font-semibold text-white">
-                              {item.pct}%
-                            </span>
-                      }
-                        </div>
-                      </div>
-                      <span className="text-[13px] font-semibold text-[#00A699] w-[32px] text-right">
-                        {item.pct}%
-                      </span>
-                    </div>
-                )}
-                </div>
+                <div className="text-[13px] text-[#B0B0B0] text-center py-8">No check-in pattern data available</div>
               </div>
             </div>
 
@@ -2367,62 +1598,7 @@ export function AnalyticsPage() {
                 <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
                   Check-out Day Distribution
                 </h3>
-                <div className="space-y-3">
-                  {[
-                {
-                  day: 'Monday',
-                  pct: 15
-                },
-                {
-                  day: 'Tuesday',
-                  pct: 8
-                },
-                {
-                  day: 'Wednesday',
-                  pct: 12
-                },
-                {
-                  day: 'Thursday',
-                  pct: 17
-                },
-                {
-                  day: 'Friday',
-                  pct: 14
-                },
-                {
-                  day: 'Saturday',
-                  pct: 14
-                },
-                {
-                  day: 'Sunday',
-                  pct: 20
-                }].
-                map((item, idx) =>
-                <div key={idx} className="flex items-center gap-3">
-                      <span className="text-[13px] text-[#222222] w-[80px] flex-shrink-0">
-                        {item.day}
-                      </span>
-                      <div className="flex-1 h-[18px] bg-[#F0F0F0] rounded-[3px] overflow-hidden">
-                        <div
-                      className="h-full rounded-[3px] flex items-center pl-2"
-                      style={{
-                        width: `${Math.max(item.pct * 4, 10)}%`,
-                        backgroundColor: '#8B5CF6'
-                      }}>
-                      
-                          {item.pct >= 15 &&
-                      <span className="text-[10px] font-semibold text-white">
-                              {item.pct}%
-                            </span>
-                      }
-                        </div>
-                      </div>
-                      <span className="text-[13px] font-semibold text-[#222222] w-[32px] text-right">
-                        {item.pct}%
-                      </span>
-                    </div>
-                )}
-                </div>
+                <div className="text-[13px] text-[#B0B0B0] text-center py-8">No check-out pattern data available</div>
               </div>
 
               {/* Booking Time of Day */}
@@ -2430,66 +1606,7 @@ export function AnalyticsPage() {
                 <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
                   Booking Time of Day
                 </h3>
-                <div className="space-y-3">
-                  {[
-                {
-                  time: '12am–3am',
-                  pct: 8
-                },
-                {
-                  time: '3am–6am',
-                  pct: 0
-                },
-                {
-                  time: '6am–9am',
-                  pct: 3
-                },
-                {
-                  time: '9am–12pm',
-                  pct: 15
-                },
-                {
-                  time: '12pm–3pm',
-                  pct: 18
-                },
-                {
-                  time: '3pm–6pm',
-                  pct: 28
-                },
-                {
-                  time: '6pm–9pm',
-                  pct: 11
-                },
-                {
-                  time: '9pm–12am',
-                  pct: 16
-                }].
-                map((item, idx) =>
-                <div key={idx} className="flex items-center gap-3">
-                      <span className="text-[13px] text-[#222222] w-[80px] flex-shrink-0">
-                        {item.time}
-                      </span>
-                      <div className="flex-1 h-[18px] bg-[#F0F0F0] rounded-[3px] overflow-hidden">
-                        <div
-                      className="h-full rounded-[3px] flex items-center pl-2"
-                      style={{
-                        width: `${Math.max(item.pct * 3, item.pct > 0 ? 6 : 2)}%`,
-                        backgroundColor: '#E8913A'
-                      }}>
-                      
-                          {item.pct >= 15 &&
-                      <span className="text-[10px] font-semibold text-white">
-                              {item.pct}%
-                            </span>
-                      }
-                        </div>
-                      </div>
-                      <span className="text-[13px] font-semibold text-[#222222] w-[32px] text-right">
-                        {item.pct}%
-                      </span>
-                    </div>
-                )}
-                </div>
+                <div className="text-[13px] text-[#B0B0B0] text-center py-8">No booking time data available</div>
               </div>
             </div>
 
@@ -2504,56 +1621,34 @@ export function AnalyticsPage() {
                 </span>
               </div>
               <div className="space-y-4">
-                {[
-              {
-                name: 'Sea Point Studio',
-                nights: 3.1,
-                color: '#00A699'
-              },
-              {
-                name: 'Green Point Apt',
-                nights: 3.3,
-                color: '#00A699'
-              },
-              {
-                name: 'Camps Bay Villa',
-                nights: 4.3,
-                color: '#007AFF'
-              }].
-              map((prop, idx) =>
+                {propertyPerformance.length > 0 ? propertyPerformance.map((prop, idx) => {
+                  const nights = parseFloat(prop.avgStay) || 0;
+                  const color = nights >= 4 ? '#007AFF' : '#00A699';
+                  return (
               <div key={idx}>
                     <div className="flex justify-between items-center mb-1.5">
                       <span className="text-[13px] font-medium text-[#222222]">
                         {prop.name}
                       </span>
                       <span className="text-[13px] font-semibold text-[#222222]">
-                        {prop.nights} nights
+                        {prop.avgStay}
                       </span>
                     </div>
                     <div className="h-[22px] bg-[#F0F0F0] rounded-[4px] overflow-hidden">
                       <div
                     className="h-full rounded-[4px] flex items-center pl-2.5"
                     style={{
-                      width: `${prop.nights / 5 * 100}%`,
-                      backgroundColor: prop.color
+                      width: `${Math.min(nights / 7 * 100, 100)}%`,
+                      backgroundColor: color
                     }}>
-                    
+
                         <span className="text-[11px] font-semibold text-white">
-                          {prop.nights}
+                          {nights.toFixed(1)}
                         </span>
                       </div>
                     </div>
-                  </div>
-              )}
-              </div>
-              {/* Insight */}
-              <div className="mt-4 p-3 bg-[#F0F9FF] rounded-[8px] flex items-start gap-2.5">
-                <span className="text-[14px] flex-shrink-0">📊</span>
-                <p className="text-[12px] text-[#334155] leading-relaxed">
-                  Camps Bay Villa guests stay <strong>31% longer</strong> on
-                  average than Green Point Apt. Consider promoting multi-night
-                  discounts at shorter-stay properties.
-                </p>
+                  </div>);
+                }) : <div className="text-[13px] text-[#B0B0B0] text-center py-4">No data available</div>}
               </div>
             </div>
           </>
@@ -2588,10 +1683,17 @@ export function AnalyticsPage() {
                     </div>
                     <div>
                       <div className="text-[13px] font-semibold text-[#222222]">
-                        Revenue trending down 35%
+                        Revenue trend
                       </div>
                       <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
-                        Mar 2026 revenue is R 100,607 vs R 154,971 in Feb 2026.
+                        {(() => {
+                          if (revenueData.length < 2) return 'Not enough data to determine trend.';
+                          const last = revenueData[revenueData.length - 1];
+                          const prev = revenueData[revenueData.length - 2];
+                          if (prev.current === 0) return `Latest month (${last.month}): R ${last.current.toLocaleString()}.`;
+                          const change = Math.round(((last.current - prev.current) / prev.current) * 100);
+                          return `${last.month} revenue is R ${last.current.toLocaleString()} vs R ${prev.current.toLocaleString()} in ${prev.month} (${change >= 0 ? '+' : ''}${change}%).`;
+                        })()}
                       </p>
                     </div>
                   </div>
@@ -2615,11 +1717,12 @@ export function AnalyticsPage() {
                     </div>
                     <div>
                       <div className="text-[13px] font-semibold text-[#222222]">
-                        Top earner: Camps Bay Villa
+                        {revenueByProperty.length > 0 ? `Top earner: ${revenueByProperty[0].name}` : 'Top earner'}
                       </div>
                       <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
-                        Generating R 461,988 at R 2,444/night ADR with 57
-                        bookings.
+                        {revenueByProperty.length > 0
+                          ? `Generating R ${revenueByProperty[0].revenue.toLocaleString()} (${revenueByProperty[0].percentage}% of total revenue).`
+                          : 'No property revenue data available.'}
                       </p>
                     </div>
                   </div>
@@ -2641,11 +1744,10 @@ export function AnalyticsPage() {
                     </div>
                     <div>
                       <div className="text-[13px] font-semibold text-[#222222]">
-                        Direct bookings at 7%
+                        {(() => { const direct = channelMixData.find(c => c.name === 'Direct'); return direct ? `Direct bookings at ${direct.value}%` : 'Direct bookings'; })()}
                       </div>
                       <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
-                        8 direct bookings saving on platform commissions. Keep
-                        promoting your direct booking link.
+                        {(() => { const direct = channelMixData.find(c => c.name === 'Direct'); return direct ? `Direct bookings represent ${direct.value}% of your channel mix. Keep promoting your direct booking link to save on commissions.` : 'No direct booking data available.'; })()}
                       </p>
                     </div>
                   </div>
@@ -2685,12 +1787,12 @@ export function AnalyticsPage() {
                     </div>
                     <div>
                       <div className="text-[13px] font-semibold text-[#222222]">
-                        Winter dip approaching (Jun–Aug)
+                        Occupancy overview
                       </div>
                       <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
-                        Based on historical data, expect ~35% occupancy. Plan
-                        promotions for long-stay guests and consider winter
-                        pricing strategy now.
+                        {occupancyTrendData.length > 0
+                          ? `Average occupancy is ${Math.round(occupancyTrendData.reduce((s, o) => s + o.rate, 0) / occupancyTrendData.length)}% across the tracked period. Consider seasonal pricing adjustments for low-occupancy months.`
+                          : 'No occupancy data available yet.'}
                       </p>
                     </div>
                   </div>
@@ -2712,11 +1814,15 @@ export function AnalyticsPage() {
                     </div>
                     <div>
                       <div className="text-[13px] font-semibold text-[#222222]">
-                        Lead time shortening
+                        Booking volume
                       </div>
                       <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
-                        19% of bookings are same/next-day. Consider a
-                        last-minute pricing strategy.
+                        {(() => {
+                          const total = propertyPerformance.reduce((s, p) => s + p.bookings, 0);
+                          return total > 0
+                            ? `${total} total bookings across ${propertyPerformance.length} ${propertyPerformance.length === 1 ? 'property' : 'properties'} in the tracked period.`
+                            : 'No booking data available yet.';
+                        })()}
                       </p>
                     </div>
                   </div>
@@ -2751,11 +1857,12 @@ export function AnalyticsPage() {
                     </div>
                     <div>
                       <div className="text-[13px] font-semibold text-[#222222]">
-                        Top guest market: South Africa
+                        {guestCountries.length > 0 ? `Top guest market: ${guestCountries[0].country}` : 'Top guest market'}
                       </div>
                       <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
-                        41 guests from South Africa. Consider tailoring welcome
-                        guides and listing descriptions for this audience.
+                        {guestCountries.length > 0
+                          ? `${guestCountries[0].percentage}% of guests from ${guestCountries[0].country}. Consider tailoring welcome guides and listing descriptions for this audience.`
+                          : 'No guest country data available.'}
                       </p>
                     </div>
                   </div>
@@ -2778,11 +1885,12 @@ export function AnalyticsPage() {
                     </div>
                     <div>
                       <div className="text-[13px] font-semibold text-[#222222]">
-                        Airbnb cancellation rate 19%
+                        Channel mix overview
                       </div>
                       <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
-                        16 of 85 bookings cancelled. Consider stricter
-                        cancellation policy for Airbnb listings.
+                        {channelMixData.length > 0
+                          ? `Top channel: ${channelMixData[0].name} at ${channelMixData[0].value}% of bookings.`
+                          : 'No channel data available.'}
                       </p>
                     </div>
                   </div>
@@ -2805,11 +1913,12 @@ export function AnalyticsPage() {
                     </div>
                     <div>
                       <div className="text-[13px] font-semibold text-[#222222]">
-                        Booking.com cancellation rate 23%
+                        Property count
                       </div>
                       <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
-                        11 of 48 bookings cancelled. Consider stricter
-                        cancellation policy for Booking.com listings.
+                        {propertyPerformance.length > 0
+                          ? `Managing ${propertyPerformance.length} active ${propertyPerformance.length === 1 ? 'property' : 'properties'}.`
+                          : 'No property data available.'}
                       </p>
                     </div>
                   </div>
@@ -2839,10 +1948,14 @@ export function AnalyticsPage() {
                     </div>
                     <div>
                       <div className="text-[13px] font-semibold text-[#222222]">
-                        Overall ratings excellent
+                        Reviews summary
                       </div>
                       <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
-                        4.8/5 across 20 reviews. Keep up the great work!
+                        {(() => {
+                          if (recentReviews.length === 0) return 'No reviews data available.';
+                          const avg = (recentReviews.reduce((s, r) => s + r.rating, 0) / recentReviews.length).toFixed(1);
+                          return `${avg}/5 across ${recentReviews.length} reviews.`;
+                        })()}
                       </p>
                     </div>
                   </div>
@@ -2876,26 +1989,17 @@ export function AnalyticsPage() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[#F0F0F0]">
-                    {[
-                  {
-                    month: 'Apr 2026',
-                    revenue: 'R 50,938',
-                    bookings: '~7',
-                    nights: '~23'
-                  },
-                  {
-                    month: 'May 2026',
-                    revenue: 'R 49,748',
-                    bookings: '~9',
-                    nights: '~21'
-                  },
-                  {
-                    month: 'Jun 2026',
-                    revenue: 'R 29,544',
-                    bookings: '~6',
-                    nights: '~13'
-                  }].
-                  map((row, idx) =>
+                    {(revenueData.length > 0 ? (() => {
+                      const avg3 = revenueData.length >= 3
+                        ? Math.round(revenueData.slice(-3).reduce((s, m) => s + m.current, 0) / 3)
+                        : Math.round(revenueData.reduce((s, m) => s + m.current, 0) / revenueData.length);
+                      const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                      const now = new Date();
+                      return [1, 2, 3].map(offset => {
+                        const d = new Date(now.getFullYear(), now.getMonth() + offset, 1);
+                        return { month: `${months[d.getMonth()]} ${d.getFullYear()}`, revenue: `R ${avg3.toLocaleString()}`, bookings: '--', nights: '--' };
+                      });
+                    })() : []).map((row, idx) =>
                   <tr key={idx}>
                         <td className="p-3 pl-5 text-[13px] font-medium text-[#222222]">
                           {row.month}
@@ -2931,16 +2035,16 @@ export function AnalyticsPage() {
               <div className="grid grid-cols-3 gap-3">
                 {[
               {
-                label: 'Confirmed Future Revenue',
-                value: 'R 38,835'
+                label: 'Total Revenue',
+                value: (() => { const t = revenueData.reduce((s, m) => s + m.current, 0); return t > 0 ? `R ${t.toLocaleString()}` : '--'; })()
               },
               {
-                label: 'Upcoming Bookings',
-                value: '4'
+                label: 'Total Bookings',
+                value: (() => { const t = propertyPerformance.reduce((s, p) => s + p.bookings, 0); return t > 0 ? String(t) : '--'; })()
               },
               {
-                label: 'Future Nights Booked',
-                value: '12'
+                label: 'Properties',
+                value: propertyPerformance.length > 0 ? String(propertyPerformance.length) : '--'
               }].
               map((kpi, idx) =>
               <div key={idx} className="bg-[#F7F7F7] rounded-[10px] p-4">
