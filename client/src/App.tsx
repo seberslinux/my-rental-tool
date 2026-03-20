@@ -11,6 +11,7 @@ import { AnalyticsPage } from './components/AnalyticsPage';
 import { LoginPage } from './components/LoginPage';
 import { CleanersPage } from './components/CleanersPage';
 import { PropertiesPage } from './components/PropertiesPage';
+import { UsersPage } from './components/UsersPage';
 import { properties, bookings, Booking, loadCalendarData } from './data/properties';
 import { loadDashboardData } from './data/dashboard';
 import { loadAnalyticsData } from './data/analytics';
@@ -76,6 +77,8 @@ export function App() {
         return 'Analytics';
       case 'properties':
         return 'Properties';
+      case 'users':
+        return 'Users';
       case 'more':
         return 'More';
       default:
@@ -131,6 +134,7 @@ export function App() {
         {activeTab === 'cleaners' && <CleanersPage />}
         {activeTab === 'analytics' && <AnalyticsPage />}
         {activeTab === 'properties' && <PropertiesPage />}
+        {activeTab === 'users' && <UsersPage />}
         {activeTab === 'more' && <MorePage onNavigate={setActiveTab} onLogout={() => { setIsLoggedIn(false); setDataLoaded(false); }} />}
       </main>
 

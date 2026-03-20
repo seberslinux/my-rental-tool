@@ -92,7 +92,9 @@ export function MorePage({ onNavigate, onLogout }: MorePageProps) {
           Account
         </div>
         <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] overflow-hidden">
-          <div className="flex items-center gap-3 p-3 px-4 min-h-[48px] active:bg-[#F7F7F7] cursor-pointer">
+          <div
+            className="flex items-center gap-3 p-3 px-4 min-h-[48px] active:bg-[#F7F7F7] cursor-pointer"
+            onClick={() => onNavigate && onNavigate('users')}>
             <div className="w-[30px] h-[30px] rounded-[7px] bg-[#6B7B8D] flex items-center justify-center shrink-0 text-white">
               <Users className="w-4 h-4" strokeWidth={2} />
             </div>
