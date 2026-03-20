@@ -62,7 +62,7 @@ async function start() {
 
   // SPA fallback — serve index.html for all non-API routes (React router)
   if (hasClientBuild) {
-    app.get('*', (req, res) => {
+    app.get('{*splat}', (req, res) => {
       res.sendFile(path.join(clientDist, 'index.html'));
     });
   }
