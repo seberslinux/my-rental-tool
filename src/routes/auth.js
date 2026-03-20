@@ -59,8 +59,8 @@ router.post('/cleaner-token', async (req, res) => {
 router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
 router.get('/google/callback',
-  passport.authenticate('google', { failureRedirect: '/login.html?error=google_failed' }),
-  (req, res) => res.redirect(req.user.role === 'cleaner' ? '/cleaner-portal.html' : '/')
+  passport.authenticate('google', { failureRedirect: '/login?error=google_failed' }),
+  (req, res) => res.redirect(req.user.role === 'cleaner' ? '/cleaner-portal' : '/')
 );
 
 // Logout

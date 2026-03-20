@@ -5,7 +5,10 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "dev:client": "cd client && npx vite",
+    "build": "cd client && npm install && npx vite build",
+    "postinstall": "cd client && npm install"
   },
   "keywords": [],
   "author": "",

@@ -13,7 +13,16 @@ const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(express.json({ limit: '10mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+
+// Serve React build if it exists, otherwise fall back to public/
+const clientDist = path.join(__dirname, 'client', 'dist');
+const fs = require('fs');
+const hasClientBuild = fs.existsSync(clientDist);
+if (hasClientBuild) {
+  app.use(express.static(clientDist));
+} else {
+  app.use(express.static(path.join(__dirname, 'public')));
+}
 
 async function start() {
   // Run database migrations on startup
@@ -50,6 +59,13 @@ async function start() {
   app.use('/api/cleaner-portal', require('./src/routes/cleaner-portal'));
   app.use('/api/inventory', require('./src/routes/inventory'));
   app.use('/api/settings', require('./src/routes/settings'));
+
+  // SPA fallback — serve index.html for all non-API routes (React router)
+  if (hasClientBuild) {
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(clientDist, 'index.html'));
+    });
+  }
 
   // Cron jobs
   require('./src/cron/jobs');
