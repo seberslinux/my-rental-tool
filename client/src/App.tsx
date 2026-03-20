@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { CalendarHeader } from './components/CalendarHeader';
 import { MonthCalendar } from './components/MonthCalendar';
 import { TimelineView } from './components/TimelineView';
@@ -7,7 +7,6 @@ import { BookingDetailSheet } from './components/BookingDetailSheet';
 import { AppHeader } from './components/AppHeader';
 import { DashboardPage } from './components/DashboardPage';
 import { MorePage } from './components/MorePage';
-import { PlaceholderPage } from './components/PlaceholderPage';
 import { AnalyticsPage } from './components/AnalyticsPage';
 import { LoginPage } from './components/LoginPage';
 import { CleanersPage } from './components/CleanersPage';
@@ -15,12 +14,26 @@ import { PropertiesPage } from './components/PropertiesPage';
 import { properties, bookings, Booking } from './data/properties';
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
   const [activeTab, setActiveTab] = useState('home');
   // Calendar state (existing)
   const [mode, setMode] = useState<'single' | 'multi'>('single');
   const [propertyId, setPropertyId] = useState<number>(1);
   const [channelFilter, setChannelFilter] = useState<string>('all');
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+
+  // Check auth on mount
+  useEffect(() => {
+    fetch('/api/auth/me', { credentials: 'same-origin' })
+      .then((res) => {
+        if (res.ok) {
+          setIsLoggedIn(true);
+        }
+      })
+      .catch(() => {})
+      .finally(() => setAuthChecked(true));
+  }, []);
+
   // Filter bookings based on channel
   const filteredBookings = useMemo(() => {
     let filtered = bookings;
@@ -49,6 +62,16 @@ export function App() {
         return '';
     }
   };
+
+  // Show loading spinner while checking auth
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen bg-[#F7F7F7] flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-[#FF385C] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   if (!isLoggedIn) {
     return <LoginPage onLogin={() => setIsLoggedIn(true)} />;
   }
