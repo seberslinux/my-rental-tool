@@ -12,6 +12,7 @@ import { LoginPage } from './components/LoginPage';
 import { CleanersPage } from './components/CleanersPage';
 import { PropertiesPage } from './components/PropertiesPage';
 import { properties, bookings, Booking, loadCalendarData } from './data/properties';
+import { loadDashboardData } from './data/dashboard';
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [authChecked, setAuthChecked] = useState(false);
@@ -37,7 +38,7 @@ export function App() {
 
   // Load API data once authenticated
   const loadData = useCallback(async () => {
-    await loadCalendarData();
+    await Promise.all([loadCalendarData(), loadDashboardData()]);
     // Default to first property
     if (properties.length > 0 && propertyId === 0) {
       setPropertyId(properties[0].id);

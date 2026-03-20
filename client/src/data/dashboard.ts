@@ -1,128 +1,218 @@
-export const kpis = [
-{ label: 'Revenue', value: 'R 42,350', trend: '+12%', isPositive: true },
-{ label: 'Occupancy', value: '78%', trend: '+5%', isPositive: true },
-{ label: 'Avg Rate', value: 'R 1,850', trend: '-3%', isPositive: false }];
+// Dashboard data — populated by loadDashboardData() from the real API
 
+export let kpis: { label: string; value: string; trend: string; isPositive: boolean }[] = [];
 
-export const needsAttention = [
-{
-  id: 1,
-  title: 'No cleaner assigned',
-  subtitle: 'Sea Point Studio · tomorrow',
-  dotColor: 'bg-[#D93900]'
-},
-{
-  id: 2,
-  title: '1-night gap on Mar 22',
-  subtitle: 'Camps Bay Villa · offer discount?',
-  dotColor: 'bg-[#E8913A]'
-},
-{
-  id: 3,
-  title: 'New review · 4.8 ★',
-  subtitle: 'Maria K. · Green Point Apartment',
-  dotColor: 'bg-[#007AFF]'
-}];
+export let needsAttention: { id: number; title: string; subtitle: string; dotColor: string }[] = [];
 
+export let currentlyStaying: {
+  id: number; property: string; platform: string; guestName: string;
+  meta: string; rate?: string; total?: string; isVacant: boolean;
+  statusText?: string; statusType?: string;
+}[] = [];
 
-export const currentlyStaying = [
-{
-  id: 1,
-  property: 'Camps Bay Villa',
-  platform: 'Airbnb',
-  guestName: 'Thomas Mueller',
-  meta: 'Germany · 3 guests · Mar 15–21',
-  rate: 'R 2,100',
-  total: 'R 12,600 total',
-  isVacant: false
-},
-{
-  id: 2,
-  property: 'Green Point Apartment',
-  platform: 'Booking',
-  guestName: 'Sarah Johnson',
-  meta: 'United Kingdom · 2 guests · Mar 16–19',
-  rate: 'R 1,450',
-  total: 'R 4,350 total',
-  isVacant: false
-},
-{
-  id: 3,
-  property: 'Sea Point Studio',
-  platform: 'Vacant',
-  guestName: 'No current guest',
-  meta: 'Next check-in: Mar 20 · Pierre Dupont',
-  statusText: 'Needs cleaning · Thandi M. · tomorrow 10:00',
-  statusType: 'needs-cleaning',
-  isVacant: true
-}];
+export let nextUp: { id: number; type: string; label: string; name: string; detail: string; isLast?: boolean }[] = [];
 
+export let cleaningJobs: { id: number; title: string; subtitle: string; status: string; buttonText: string; isProblem: boolean }[] = [];
 
-export const nextUp = [
-{
-  id: 1,
-  type: 'out',
-  label: 'Check-out · tomorrow',
-  name: 'Sarah Johnson',
-  detail: 'Green Point Apartment'
-},
-{
-  id: 2,
-  type: 'in',
-  label: 'Check-in · Mar 20',
-  name: 'Pierre Dupont',
-  detail: 'Sea Point Studio · France · 2 guests'
-},
-{
-  id: 3,
-  type: 'out',
-  label: 'Check-out · Mar 21',
-  name: 'Thomas Mueller',
-  detail: 'Camps Bay Villa',
-  isLast: true
-}];
-
-
-export const cleaningJobs = [
-{
-  id: 1,
-  title: 'Sea Point Studio · Unassigned',
-  subtitle: 'Tomorrow, 10:00–12:30 · before Pierre Dupont',
-  status: 'warn',
-  buttonText: 'Assign',
-  isProblem: true
-},
-{
-  id: 2,
-  title: 'Green Point Apt · Thandi M.',
-  subtitle: 'Mar 19, 11:00–13:30 · after Sarah Johnson',
-  status: 'ok',
-  buttonText: 'Confirmed',
-  isProblem: false
-},
-{
-  id: 3,
-  title: 'Camps Bay Villa · Linda K.',
-  subtitle: 'Mar 21, 10:00–13:00 · after Thomas Mueller',
-  status: 'ok',
-  buttonText: 'Confirmed',
-  isProblem: false
-}];
-
-
+// Holidays are static — no API needed
 export const upcomingHolidays = [
-{
-  id: 1,
-  title: 'Human Rights Day',
-  subtitle: 'Mar 21 · South Africa · expect higher demand'
-},
-{
-  id: 2,
-  title: 'Good Friday',
-  subtitle: 'Apr 18 · International · long weekend'
-},
-{
-  id: 3,
-  title: 'Easter Weekend',
-  subtitle: 'Apr 18–21 · Europe + SA · peak bookings'
-}];
+  { id: 1, title: 'Human Rights Day', subtitle: 'Mar 21 · South Africa · expect higher demand' },
+  { id: 2, title: 'Good Friday', subtitle: 'Apr 18 · International · long weekend' },
+  { id: 3, title: 'Easter Weekend', subtitle: 'Apr 18–21 · Europe + SA · peak bookings' },
+];
+
+function fmtDate(dateStr: string): string {
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('en-ZA', { month: 'short', day: 'numeric' });
+}
+
+function fmtMoney(amount: number): string {
+  if (!amount) return 'R 0';
+  return amount >= 1000 ? `R ${(amount / 1000).toFixed(1)}K` : `R ${amount}`;
+}
+
+function platformLabel(p: string): string {
+  const pl = (p || '').toLowerCase();
+  if (pl.includes('airbnb')) return 'Airbnb';
+  if (pl.includes('booking')) return 'Booking';
+  if (pl.includes('blocked')) return 'Blocked';
+  return 'Direct';
+}
+
+function daysFromNow(dateStr: string): number {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const d = new Date(dateStr + 'T00:00:00');
+  return Math.round((d.getTime() - today.getTime()) / 86400000);
+}
+
+function relativeDay(dateStr: string): string {
+  const diff = daysFromNow(dateStr);
+  if (diff === 0) return 'today';
+  if (diff === 1) return 'tomorrow';
+  if (diff === -1) return 'yesterday';
+  return fmtDate(dateStr);
+}
+
+export async function loadDashboardData(): Promise<void> {
+  try {
+    const [bookingsRes, statsRes] = await Promise.all([
+      fetch('/api/bookings', { credentials: 'same-origin' }),
+      fetch('/api/dashboard/stats', { credentials: 'same-origin' }),
+    ]);
+
+    const today = new Date().toISOString().split('T')[0];
+    let allBookings: any[] = [];
+    let displayCurrency = 'ZAR';
+
+    if (bookingsRes.ok) {
+      const bData = await bookingsRes.json();
+      allBookings = bData.bookings || bData;
+      displayCurrency = bData.display_currency || 'ZAR';
+    }
+
+    let stats: any = { occupancy: [], gaps: [], pending_cleaning_jobs: [], upcoming_checkouts: [] };
+    if (statsRes.ok) {
+      stats = await statsRes.json();
+    }
+
+    // --- KPIs ---
+    const realBookings = allBookings.filter((b: any) => !(b.platform || '').toLowerCase().includes('block'));
+    const totalRevenue = realBookings.reduce((s: number, b: any) => s + (b.total_price || 0), 0);
+    const avgOccupancy = stats.occupancy.length > 0
+      ? Math.round(stats.occupancy.reduce((s: number, o: any) => s + o.occupancy_rate, 0) / stats.occupancy.length)
+      : 0;
+    const avgRate = realBookings.length > 0
+      ? Math.round(realBookings.reduce((s: number, b: any) => s + (b.price_per_night || 0), 0) / realBookings.length)
+      : 0;
+
+    kpis = [
+      { label: 'Revenue', value: fmtMoney(totalRevenue), trend: '', isPositive: true },
+      { label: 'Occupancy', value: `${avgOccupancy}%`, trend: '', isPositive: avgOccupancy >= 50 },
+      { label: 'Avg Rate', value: fmtMoney(avgRate), trend: '', isPositive: true },
+    ];
+
+    // --- Needs Attention ---
+    const attentionItems: typeof needsAttention = [];
+    let attId = 1;
+
+    // Unassigned cleaning jobs
+    const unassignedJobs = (stats.pending_cleaning_jobs || []).filter((j: any) => !j.cleaner_id);
+    unassignedJobs.forEach((j: any) => {
+      attentionItems.push({
+        id: attId++,
+        title: 'No cleaner assigned',
+        subtitle: `${j.property_name} · ${relativeDay(j.cleaning_date)}`,
+        dotColor: 'bg-[#D93900]',
+      });
+    });
+
+    // Gaps
+    (stats.gaps || []).forEach((g: any) => {
+      attentionItems.push({
+        id: attId++,
+        title: `${g.nights}-night gap ${fmtDate(g.gap_start)}`,
+        subtitle: `${g.property_name} · offer discount?`,
+        dotColor: 'bg-[#E8913A]',
+      });
+    });
+
+    needsAttention = attentionItems.slice(0, 5);
+
+    // --- Currently Staying ---
+    const stayingBookings = allBookings.filter((b: any) =>
+      b.check_in <= today && b.check_out > today && !((b.platform || '').toLowerCase().includes('block'))
+    );
+
+    // Find properties with no current guest
+    const stayingPropIds = new Set(stayingBookings.map((b: any) => b.property_id));
+
+    // We'll need property names — build from bookings or fetch
+    const propNames: Record<number, string> = {};
+    allBookings.forEach((b: any) => { if (b.property_name) propNames[b.property_id] = b.property_name; });
+
+    const stayItems: typeof currentlyStaying = [];
+    stayingBookings.forEach((b: any) => {
+      const nights = Math.ceil((new Date(b.check_out).getTime() - new Date(b.check_in).getTime()) / 86400000);
+      stayItems.push({
+        id: b.id,
+        property: b.property_name || `Property ${b.property_id}`,
+        platform: platformLabel(b.platform),
+        guestName: b.guest_name,
+        meta: `${b.num_guests || '?'} guests · ${fmtDate(b.check_in)}–${fmtDate(b.check_out)}`,
+        rate: b.price_per_night ? fmtMoney(b.price_per_night) : undefined,
+        total: b.total_price ? `${fmtMoney(b.total_price)} total` : undefined,
+        isVacant: false,
+      });
+    });
+
+    currentlyStaying = stayItems;
+
+    // --- Next Up (check-ins and check-outs) ---
+    const nextItems: typeof nextUp = [];
+    let nextId = 1;
+
+    // Upcoming check-outs (today + next 7 days)
+    const upcomingOuts = allBookings
+      .filter((b: any) => {
+        const diff = daysFromNow(b.check_out);
+        return diff >= 0 && diff <= 7 && !((b.platform || '').toLowerCase().includes('block'));
+      })
+      .sort((a: any, b: any) => a.check_out.localeCompare(b.check_out));
+
+    upcomingOuts.slice(0, 3).forEach((b: any) => {
+      nextItems.push({
+        id: nextId++,
+        type: 'out',
+        label: `Check-out · ${relativeDay(b.check_out)}`,
+        name: b.guest_name,
+        detail: b.property_name || `Property ${b.property_id}`,
+      });
+    });
+
+    // Upcoming check-ins (today + next 7 days)
+    const upcomingIns = allBookings
+      .filter((b: any) => {
+        const diff = daysFromNow(b.check_in);
+        return diff >= 0 && diff <= 7 && !((b.platform || '').toLowerCase().includes('block'));
+      })
+      .sort((a: any, b: any) => a.check_in.localeCompare(b.check_in));
+
+    upcomingIns.slice(0, 3).forEach((b: any) => {
+      nextItems.push({
+        id: nextId++,
+        type: 'in',
+        label: `Check-in · ${relativeDay(b.check_in)}`,
+        name: b.guest_name,
+        detail: `${b.property_name || ''} · ${b.num_guests || '?'} guests`,
+      });
+    });
+
+    // Sort by date, mark last
+    nextItems.sort((a, b) => {
+      const dateA = a.label; const dateB = b.label;
+      return dateA.localeCompare(dateB);
+    });
+    if (nextItems.length > 0) {
+      nextItems[nextItems.length - 1].isLast = true;
+    }
+    nextUp = nextItems.slice(0, 5);
+
+    // --- Cleaning Jobs ---
+    const jobItems: typeof cleaningJobs = [];
+    (stats.pending_cleaning_jobs || []).forEach((j: any) => {
+      const hasAssignment = !!j.cleaner_name;
+      jobItems.push({
+        id: j.id,
+        title: `${j.property_name} · ${j.cleaner_name || 'Unassigned'}`,
+        subtitle: `${fmtDate(j.cleaning_date)} · ${j.status}`,
+        status: hasAssignment ? 'ok' : 'warn',
+        buttonText: hasAssignment ? 'Confirmed' : 'Assign',
+        isProblem: !hasAssignment,
+      });
+    });
+    cleaningJobs = jobItems;
+
+  } catch (err) {
+    console.error('Failed to load dashboard data:', err);
+  }
+}
