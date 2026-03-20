@@ -1,0 +1,2978 @@
+import React, { useState } from 'react';
+import {
+  LineChart,
+  Line,
+  BarChart,
+  Bar,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  Legend } from
+'recharts';
+import {
+  overviewKPIs,
+  revenueData,
+  propertyPerformance,
+  revenueByProperty,
+  channelMixData,
+  occupancyTrendData,
+  rateTrendData,
+  guestCountries,
+  recentReviews } from
+'../data/analytics';
+const TABS = [
+{
+  id: 'overview',
+  label: 'Overview'
+},
+{
+  id: 'revenue',
+  label: 'Revenue'
+},
+{
+  id: 'occupancy',
+  label: 'Occupancy & Rates'
+},
+{
+  id: 'guests',
+  label: 'Guests'
+},
+{
+  id: 'channels',
+  label: 'Channels'
+},
+{
+  id: 'patterns',
+  label: 'Patterns'
+},
+{
+  id: 'seasonality',
+  label: 'Seasonality'
+},
+{
+  id: 'market',
+  label: 'Market'
+},
+{
+  id: 'reviews',
+  label: 'Reviews'
+},
+{
+  id: 'insights',
+  label: 'Insights'
+}];
+
+const PERIODS = ['30D', '90D', '6M', '1Y', 'YTD', 'Custom'];
+const PROPERTIES = [
+'All Properties',
+'Camps Bay Villa',
+'Green Point Apt',
+'Sea Point Studio'];
+
+export function AnalyticsPage() {
+  const [activeTab, setActiveTab] = useState('overview');
+  const [activePeriod, setActivePeriod] = useState('1Y');
+  const [activeProperty, setActiveProperty] = useState('All Properties');
+  return (
+    <div className="p-4 bg-[#F7F7F7] min-h-full pb-8">
+      {/* Global Filters: Property + Period */}
+      <div className="flex items-center gap-3 mb-3 -mx-4 px-4 overflow-x-auto no-scrollbar">
+        {/* Property Filter */}
+        <div className="relative flex-shrink-0">
+          <select
+            value={activeProperty}
+            onChange={(e) => setActiveProperty(e.target.value)}
+            className="appearance-none bg-white border border-[#EBEBEB] rounded-[8px] pl-3 pr-8 py-2 text-[13px] font-medium text-[#222222] shadow-[0_1px_2px_rgba(0,0,0,0.04)] focus:outline-none focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF]">
+            
+            {PROPERTIES.map((prop) =>
+            <option key={prop} value={prop}>
+                {prop}
+              </option>
+            )}
+          </select>
+          <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none">
+            <svg
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="#717171"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round">
+              
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </div>
+        </div>
+
+        {/* Period Selector */}
+        <div className="flex overflow-x-auto no-scrollbar bg-[#F0F0F0] rounded-[8px] p-[3px] flex-shrink-0">
+          {PERIODS.map((period) =>
+          <button
+            key={period}
+            onClick={() => setActivePeriod(period)}
+            className={`px-3 py-1.5 rounded-[6px] text-[12px] font-medium whitespace-nowrap transition-all ${activePeriod === period ? 'bg-white text-[#222222] shadow-[0_1px_3px_rgba(0,0,0,0.08)]' : 'text-[#717171]'}`}>
+            
+              {period}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Scrollable Tabs */}
+      <div className="flex overflow-x-auto no-scrollbar border-b border-[#EBEBEB] mb-4 -mx-4 px-4">
+        {TABS.map((tab) =>
+        <button
+          key={tab.id}
+          onClick={() => setActiveTab(tab.id)}
+          className={`whitespace-nowrap px-4 py-3 text-[13px] font-medium transition-colors border-b-2 ${activeTab === tab.id ? 'border-[#007AFF] text-[#007AFF] font-semibold' : 'border-transparent text-[#717171]'}`}>
+          
+            {tab.label}
+          </button>
+        )}
+      </div>
+
+      {/* Tab Content */}
+      <div className="space-y-4">
+        {/* OVERVIEW TAB */}
+        {activeTab === 'overview' &&
+        <>
+            {/* KPIs — responsive grid */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+              {overviewKPIs.map((kpi, idx) =>
+            <div
+              key={idx}
+              className="bg-white rounded-[12px] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+              
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0] mb-1">
+                    {kpi.label}
+                  </div>
+                  <div className="text-[22px] font-bold tracking-[-0.3px] text-[#222222]">
+                    {kpi.value}
+                  </div>
+                  <div className="mt-1">
+                    {kpi.trend &&
+                <span
+                  className={`text-[12px] font-semibold ${kpi.isPositive ? 'text-[#00A699]' : 'text-[#D93900]'}`}>
+                  
+                        {kpi.trend}
+                      </span>
+                }
+                    <span className="text-[11px] text-[#B0B0B0] ml-1">
+                      {kpi.trendDetail}
+                    </span>
+                  </div>
+                </div>
+            )}
+            </div>
+
+            {/* Revenue Over Time + Revenue by Property */}
+            <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+              <div className="flex justify-between items-center mb-5">
+                <h3 className="text-[15px] font-semibold text-[#222222]">
+                  Revenue Over Time
+                </h3>
+                <div className="flex gap-4 text-[11px] text-[#717171]">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-[#007AFF]"></div>
+                    Current
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-[#CBD5E1]"></div>
+                    Last Year
+                  </div>
+                </div>
+              </div>
+              <div className="h-[200px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart
+                  data={revenueData}
+                  margin={{
+                    top: 5,
+                    right: 5,
+                    left: -15,
+                    bottom: 0
+                  }}>
+                  
+                    <CartesianGrid
+                    strokeDasharray="3 3"
+                    vertical={false}
+                    stroke="#F0F0F0" />
+                  
+                    <XAxis
+                    dataKey="month"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{
+                      fontSize: 11,
+                      fill: '#B0B0B0'
+                    }}
+                    dy={10} />
+                  
+                    <YAxis
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{
+                      fontSize: 11,
+                      fill: '#B0B0B0'
+                    }}
+                    tickFormatter={(val) => `R ${val / 1000}k`} />
+                  
+                    <Tooltip
+                    contentStyle={{
+                      borderRadius: '8px',
+                      border: '1px solid #EBEBEB',
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
+                      fontSize: 13
+                    }}
+                    formatter={(value: number) => [
+                    `R ${value.toLocaleString()}`,
+                    '']
+                    } />
+                  
+                    <Line
+                    type="monotone"
+                    dataKey="previous"
+                    stroke="#CBD5E1"
+                    strokeWidth={2}
+                    strokeDasharray="6 4"
+                    dot={false} />
+                  
+                    <Line
+                    type="monotone"
+                    dataKey="current"
+                    stroke="#007AFF"
+                    strokeWidth={2.5}
+                    dot={{
+                      r: 3,
+                      fill: '#007AFF',
+                      strokeWidth: 0
+                    }}
+                    activeDot={{
+                      r: 5
+                    }} />
+                  
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Revenue by Property */}
+            <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+              <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                Revenue by Property
+              </h3>
+              <div className="space-y-4">
+                {revenueByProperty.map((prop, idx) =>
+              <div key={idx}>
+                    <div className="flex justify-between items-center mb-1.5">
+                      <span className="text-[13px] font-medium text-[#222222]">
+                        {prop.name}
+                      </span>
+                      <span className="text-[13px] font-semibold text-[#222222]">
+                        R {prop.revenue.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="h-[6px] bg-[#F0F0F0] rounded-full overflow-hidden">
+                      <div
+                    className="h-full bg-[#007AFF] rounded-full transition-all"
+                    style={{
+                      width: `${prop.percentage}%`
+                    }}>
+                  </div>
+                    </div>
+                  </div>
+              )}
+              </div>
+            </div>
+
+            {/* Top Performing Listings */}
+            <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB] overflow-hidden">
+              <div className="p-5 border-b border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222]">
+                  Top Performing Listings
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-[12px]">
+                  <thead className="bg-[#F7F7F7] text-[#717171]">
+                    <tr>
+                      <th className="p-3 pl-5 font-semibold uppercase tracking-[0.3px] text-[10px]">
+                        Property
+                      </th>
+                      <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px]">
+                        Revenue
+                      </th>
+                      <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px]">
+                        Occupancy
+                      </th>
+                      <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px]">
+                        Avg Rate
+                      </th>
+                      <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px]">
+                        Avg Stay
+                      </th>
+                      <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px]">
+                        Bookings
+                      </th>
+                      <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px]">
+                        Rating
+                      </th>
+                      <th className="p-3 pr-5 font-semibold uppercase tracking-[0.3px] text-[10px]">
+                        Top Platform
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#F0F0F0]">
+                    {propertyPerformance.map((prop, idx) =>
+                  <tr key={idx}>
+                        <td className="p-3 pl-5 font-medium text-[13px] text-[#222222] whitespace-nowrap">
+                          {prop.name}
+                        </td>
+                        <td className="p-3 text-[13px] text-[#222222]">
+                          {prop.revenue}
+                        </td>
+                        <td className="p-3">
+                          <span
+                        className={`text-[13px] font-semibold ${prop.occupancy >= 60 ? 'text-[#00A699]' : 'text-[#D93900]'}`}>
+                        
+                            {prop.occupancy}%
+                          </span>
+                        </td>
+                        <td className="p-3 text-[13px] text-[#222222]">
+                          {prop.adr}
+                        </td>
+                        <td className="p-3 text-[13px] text-[#717171]">
+                          {prop.avgStay}
+                        </td>
+                        <td className="p-3 text-[13px] text-[#222222]">
+                          {prop.bookings}
+                        </td>
+                        <td className="p-3 text-[13px] text-[#717171]">
+                          {prop.rating}
+                        </td>
+                        <td className="p-3 pr-5">
+                          <span
+                        className={`text-[11px] font-semibold px-2 py-[3px] rounded-full ${prop.topPlatform === 'Airbnb' ? 'bg-[#FF385C14] text-[#E31C5F]' : prop.topPlatform === 'Booking.com' ? 'bg-[#003B9510] text-[#003B95]' : 'bg-[#F0F0F0] text-[#717171]'}`}>
+                        
+                            {prop.topPlatform}
+                          </span>
+                        </td>
+                      </tr>
+                  )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>
+        }
+
+        {/* REVENUE TAB */}
+        {activeTab === 'revenue' &&
+        <>
+            {/* Revenue KPIs */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+            {
+              label: 'Gross Revenue',
+              value: 'R 1,085,568',
+              trend: '↑ 97.6%',
+              isPositive: true
+            },
+            {
+              label: 'Net Revenue',
+              value: 'R 931,188',
+              trend: '↑ 89%',
+              isPositive: true
+            },
+            {
+              label: 'Avg Booking Value',
+              value: 'R 9,195',
+              trend: '↑ 12%',
+              isPositive: true
+            },
+            {
+              label: 'Commission Paid',
+              value: 'R 154,380',
+              trend: '↑ 15%',
+              isPositive: false
+            }].
+            map((kpi, idx) =>
+            <div
+              key={idx}
+              className="bg-white rounded-[12px] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+              
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0] mb-1">
+                    {kpi.label}
+                  </div>
+                  <div className="text-[20px] font-bold tracking-[-0.3px] text-[#222222]">
+                    {kpi.value}
+                  </div>
+                  <span
+                className={`text-[12px] font-semibold ${kpi.isPositive ? 'text-[#00A699]' : 'text-[#D93900]'}`}>
+                
+                    {kpi.trend}
+                  </span>
+                  <span className="text-[11px] text-[#B0B0B0] ml-1">
+                    vs last year
+                  </span>
+                </div>
+            )}
+            </div>
+
+            {/* Monthly Revenue Bar Chart */}
+            <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+              <div className="flex justify-between items-center mb-5">
+                <h3 className="text-[15px] font-semibold text-[#222222]">
+                  Monthly Revenue Trend
+                </h3>
+                <div className="flex gap-4 text-[11px] text-[#717171]">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-[#007AFF]"></div>
+                    Current
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-[#E2E8F0]"></div>
+                    Prior Year
+                  </div>
+                </div>
+              </div>
+              <div className="h-[240px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                  data={revenueData}
+                  margin={{
+                    top: 5,
+                    right: 5,
+                    left: -15,
+                    bottom: 0
+                  }}>
+                  
+                    <CartesianGrid
+                    strokeDasharray="3 3"
+                    vertical={false}
+                    stroke="#F0F0F0" />
+                  
+                    <XAxis
+                    dataKey="month"
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{
+                      fontSize: 11,
+                      fill: '#B0B0B0'
+                    }}
+                    dy={10} />
+                  
+                    <YAxis
+                    axisLine={false}
+                    tickLine={false}
+                    tick={{
+                      fontSize: 11,
+                      fill: '#B0B0B0'
+                    }}
+                    tickFormatter={(val) => `R${val / 1000}k`} />
+                  
+                    <Tooltip
+                    cursor={{
+                      fill: '#F7F7F7'
+                    }}
+                    content={({ active, payload, label }) => {
+                      if (!active || !payload?.length) return null;
+                      const current = payload.find(
+                        (p: any) => p.dataKey === 'current'
+                      )?.value as number | undefined;
+                      const previous = payload.find(
+                        (p: any) => p.dataKey === 'previous'
+                      )?.value as number | undefined;
+                      const idx = revenueData.findIndex(
+                        (d) => d.month === label
+                      );
+                      const prevMonth =
+                      idx > 0 ? revenueData[idx - 1].current : null;
+                      const growth =
+                      prevMonth && current ?
+                      (current - prevMonth) / prevMonth * 100 :
+                      null;
+                      return (
+                        <div className="bg-white rounded-[8px] border border-[#EBEBEB] shadow-[0_4px_12px_rgba(0,0,0,0.08)] p-3 text-[12px]">
+                            <div className="font-semibold text-[#222222] mb-1.5">
+                              {label}
+                            </div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className="w-2 h-2 rounded-full bg-[#007AFF]"></div>
+                              <span className="text-[#717171]">Current:</span>
+                              <span className="font-semibold text-[#222222]">
+                                R {current?.toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className="w-2 h-2 rounded-full bg-[#E2E8F0]"></div>
+                              <span className="text-[#717171]">
+                                Prior Year:
+                              </span>
+                              <span className="font-semibold text-[#222222]">
+                                R {previous?.toLocaleString()}
+                              </span>
+                            </div>
+                            {growth !== null &&
+                          <div className="mt-1.5 pt-1.5 border-t border-[#F0F0F0] flex items-center gap-1">
+                                <span className="text-[#717171]">MoM:</span>
+                                <span
+                              className={`font-semibold ${growth >= 0 ? 'text-[#00A699]' : 'text-[#D93900]'}`}>
+                              
+                                  {growth >= 0 ? '↑' : '↓'}{' '}
+                                  {Math.abs(growth).toFixed(1)}%
+                                </span>
+                              </div>
+                          }
+                          </div>);
+
+                    }} />
+                  
+                    <Bar
+                    dataKey="previous"
+                    fill="#E2E8F0"
+                    radius={[4, 4, 0, 0]} />
+                  
+                    <Bar
+                    dataKey="current"
+                    fill="#007AFF"
+                    radius={[4, 4, 0, 0]} />
+                  
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Revenue Breakdown Donut + Revenue by Channel */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Revenue Breakdown */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                  Revenue Breakdown
+                </h3>
+                <div className="flex items-center">
+                  <div className="h-[160px] w-[160px] shrink-0">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                        data={channelMixData}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={45}
+                        outerRadius={70}
+                        paddingAngle={2}
+                        dataKey="value"
+                        stroke="none">
+                        
+                          {channelMixData.map((entry, index) =>
+                        <Cell
+                          key={`rev-cell-${index}`}
+                          fill={entry.color} />
+
+                        )}
+                        </Pie>
+                        <Tooltip
+                        contentStyle={{
+                          borderRadius: '8px',
+                          border: '1px solid #EBEBEB',
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
+                        }}
+                        formatter={(value: number) => [`${value}%`, 'Share']} />
+                      
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="flex-1 pl-4 space-y-3">
+                    {[
+                  {
+                    name: 'Airbnb',
+                    value: 'R 553,648',
+                    pct: '51%',
+                    color: '#FF385C'
+                  },
+                  {
+                    name: 'Booking.com',
+                    value: 'R 336,526',
+                    pct: '31%',
+                    color: '#003580'
+                  },
+                  {
+                    name: 'Direct',
+                    value: 'R 195,394',
+                    pct: '18%',
+                    color: '#717171'
+                  }].
+                  map((item, idx) =>
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between">
+                    
+                        <div className="flex items-center gap-2">
+                          <div
+                        className="w-2.5 h-2.5 rounded-sm"
+                        style={{
+                          backgroundColor: item.color
+                        }}>
+                      </div>
+                          <span className="text-[13px] text-[#717171]">
+                            {item.name}
+                          </span>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-[13px] font-semibold text-[#222222]">
+                            {item.value}
+                          </span>
+                          <span className="text-[11px] text-[#B0B0B0] ml-1.5">
+                            {item.pct}
+                          </span>
+                        </div>
+                      </div>
+                  )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Revenue by Property */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                  Revenue by Property
+                </h3>
+                <div className="space-y-4">
+                  {revenueByProperty.map((prop, idx) =>
+                <div key={idx}>
+                      <div className="flex justify-between items-center mb-1.5">
+                        <span className="text-[13px] font-medium text-[#222222]">
+                          {prop.name}
+                        </span>
+                        <span className="text-[13px] font-semibold text-[#222222]">
+                          R {prop.revenue.toLocaleString()}
+                        </span>
+                      </div>
+                      <div className="h-[6px] bg-[#F0F0F0] rounded-full overflow-hidden">
+                        <div
+                      className="h-full bg-[#007AFF] rounded-full"
+                      style={{
+                        width: `${prop.percentage}%`
+                      }}>
+                    </div>
+                      </div>
+                    </div>
+                )}
+                </div>
+              </div>
+            </div>
+
+            {/* Revenue Forecast + Top Revenue Periods */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Revenue Forecast */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <div className="flex justify-between items-start mb-1">
+                  <div>
+                    <h3 className="text-[15px] font-semibold text-[#222222]">
+                      Revenue Forecast
+                    </h3>
+                    <p className="text-[12px] text-[#B0B0B0] mt-0.5">
+                      Actual vs projected revenue
+                    </p>
+                  </div>
+                  <div className="flex gap-4 text-[11px] text-[#717171]">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-full bg-[#007AFF]"></div>
+                      Actual
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-full bg-[#00A699]"></div>
+                      Forecast
+                    </div>
+                  </div>
+                </div>
+                <div className="h-[220px] w-full mt-3">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                    data={[
+                    {
+                      month: 'Jul',
+                      actual: 12000,
+                      forecast: null
+                    },
+                    {
+                      month: 'Aug',
+                      actual: 28000,
+                      forecast: null
+                    },
+                    {
+                      month: 'Sep',
+                      actual: 45000,
+                      forecast: null
+                    },
+                    {
+                      month: 'Oct',
+                      actual: 110000,
+                      forecast: null
+                    },
+                    {
+                      month: 'Nov',
+                      actual: 135000,
+                      forecast: null
+                    },
+                    {
+                      month: 'Dec',
+                      actual: 199880,
+                      forecast: null
+                    },
+                    {
+                      month: 'Jan',
+                      actual: 149607,
+                      forecast: null
+                    },
+                    {
+                      month: 'Feb',
+                      actual: 154971,
+                      forecast: null
+                    },
+                    {
+                      month: 'Mar',
+                      actual: 142000,
+                      forecast: 142000
+                    },
+                    {
+                      month: 'Apr',
+                      actual: null,
+                      forecast: 105000
+                    },
+                    {
+                      month: 'May',
+                      actual: null,
+                      forecast: 72000
+                    },
+                    {
+                      month: 'Jun',
+                      actual: null,
+                      forecast: 45000
+                    }]
+                    }
+                    margin={{
+                      top: 5,
+                      right: 5,
+                      left: -15,
+                      bottom: 0
+                    }}>
+                    
+                      <CartesianGrid
+                      strokeDasharray="3 3"
+                      vertical={false}
+                      stroke="#F0F0F0" />
+                    
+                      <XAxis
+                      dataKey="month"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{
+                        fontSize: 11,
+                        fill: '#B0B0B0'
+                      }}
+                      dy={10} />
+                    
+                      <YAxis
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{
+                        fontSize: 11,
+                        fill: '#B0B0B0'
+                      }}
+                      tickFormatter={(val) => `R ${val / 1000}k`} />
+                    
+                      <Tooltip
+                      contentStyle={{
+                        borderRadius: '8px',
+                        border: '1px solid #EBEBEB',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
+                      }}
+                      formatter={(value: number | null) =>
+                      value ?
+                      [`R ${value.toLocaleString()}`, ''] :
+                      ['-', '']
+                      } />
+                    
+                      <Line
+                      type="monotone"
+                      dataKey="actual"
+                      stroke="#007AFF"
+                      strokeWidth={2.5}
+                      dot={{
+                        r: 3,
+                        fill: '#007AFF',
+                        strokeWidth: 0
+                      }}
+                      connectNulls={false} />
+                    
+                      <Line
+                      type="monotone"
+                      dataKey="forecast"
+                      stroke="#00A699"
+                      strokeWidth={2}
+                      strokeDasharray="6 4"
+                      dot={{
+                        r: 3,
+                        fill: '#00A699',
+                        strokeWidth: 2,
+                        stroke: '#fff'
+                      }}
+                      connectNulls={false} />
+                    
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Top Revenue Periods */}
+              <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB] overflow-hidden">
+                <div className="p-5 pb-3">
+                  <h3 className="text-[15px] font-semibold text-[#222222]">
+                    Top Revenue Periods
+                  </h3>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-[12px]">
+                    <thead className="bg-[#F7F7F7] text-[#717171]">
+                      <tr>
+                        <th className="p-3 pl-5 font-semibold uppercase tracking-[0.3px] text-[10px]">
+                          Month
+                        </th>
+                        <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px]">
+                          Revenue
+                        </th>
+                        <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px]">
+                          Bookings
+                        </th>
+                        <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px]">
+                          Nights
+                        </th>
+                        <th className="p-3 pr-5 font-semibold uppercase tracking-[0.3px] text-[10px]">
+                          ADR
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#F0F0F0]">
+                      {[
+                    {
+                      month: 'Dec 2025',
+                      revenue: 'R 199,880',
+                      bookings: 11,
+                      nights: 54,
+                      adr: 'R 3,701'
+                    },
+                    {
+                      month: 'Feb 2026',
+                      revenue: 'R 154,971',
+                      bookings: 13,
+                      nights: 50,
+                      adr: 'R 3,099'
+                    },
+                    {
+                      month: 'Jan 2026',
+                      revenue: 'R 149,607',
+                      bookings: 13,
+                      nights: 43,
+                      adr: 'R 3,479'
+                    },
+                    {
+                      month: 'Mar 2025',
+                      revenue: 'R 112,954',
+                      bookings: 14,
+                      nights: 50,
+                      adr: 'R 2,259'
+                    },
+                    {
+                      month: 'Nov 2025',
+                      revenue: 'R 112,725',
+                      bookings: 14,
+                      nights: 42,
+                      adr: 'R 2,684'
+                    },
+                    {
+                      month: 'Mar 2026',
+                      revenue: 'R 100,607',
+                      bookings: 12,
+                      nights: 33,
+                      adr: 'R 3,049'
+                    }].
+                    map((row, idx) =>
+                    <tr key={idx}>
+                          <td className="p-3 pl-5 text-[13px] font-medium text-[#222222]">
+                            {row.month}
+                          </td>
+                          <td className="p-3 text-[13px] text-[#222222]">
+                            {row.revenue}
+                          </td>
+                          <td className="p-3 text-[13px] text-[#717171]">
+                            {row.bookings}
+                          </td>
+                          <td className="p-3 text-[13px] text-[#717171]">
+                            {row.nights}
+                          </td>
+                          <td className="p-3 pr-5 text-[13px] text-[#222222]">
+                            {row.adr}
+                          </td>
+                        </tr>
+                    )}
+                    </tbody>
+                  </table>
+                </div>
+                {/* Peak insight */}
+                <div className="mx-5 mb-4 mt-3 p-3 bg-[#F0F9FF] rounded-[8px] flex items-start gap-2.5">
+                  <div className="w-5 h-5 rounded-full bg-[#007AFF20] flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="#007AFF"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round">
+                    
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="16" x2="12" y2="12" />
+                      <line x1="12" y1="8" x2="12.01" y2="8" />
+                    </svg>
+                  </div>
+                  <p className="text-[12px] text-[#334155] leading-relaxed">
+                    Peak revenue month: <strong>Dec 2025</strong> generating R
+                    199,880 at R 3,701 ADR across 54 nights.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </>
+        }
+
+        {/* OCCUPANCY TAB */}
+        {activeTab === 'occupancy' &&
+        <>
+            {/* KPIs */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+            {
+              label: 'Monthly Occupancy',
+              value: '58%',
+              trend: '↑ 30%',
+              trendDetail: 'vs last year',
+              isPositive: true
+            },
+            {
+              label: 'Avg Daily Rate (ADR)',
+              value: 'R 2,396',
+              trend: '↓ 4%',
+              trendDetail: 'vs last year',
+              isPositive: false
+            },
+            {
+              label: 'RevPAR',
+              value: 'R 1,371',
+              trend: '',
+              trendDetail: 'rev per available night',
+              isPositive: true
+            },
+            {
+              label: 'Avg Stay Duration',
+              value: '3.8 nights',
+              trend: '↑ 0.5',
+              trendDetail: 'vs last year',
+              isPositive: true
+            }].
+            map((kpi, idx) =>
+            <div
+              key={idx}
+              className="bg-white rounded-[12px] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+              
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0] mb-1">
+                    {kpi.label}
+                  </div>
+                  <div className="text-[20px] font-bold tracking-[-0.3px] text-[#222222]">
+                    {kpi.value}
+                  </div>
+                  <div className="mt-1">
+                    {kpi.trend &&
+                <span
+                  className={`text-[12px] font-semibold ${kpi.isPositive ? 'text-[#00A699]' : 'text-[#D93900]'}`}>
+                  
+                        {kpi.trend}
+                      </span>
+                }
+                    <span className="text-[11px] text-[#B0B0B0] ml-1">
+                      {kpi.trendDetail}
+                    </span>
+                  </div>
+                </div>
+            )}
+            </div>
+
+            {/* Monthly Occupancy Rate + Rate Trends */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Monthly Occupancy — color-coded bars */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <div className="flex justify-between items-center mb-5">
+                  <h3 className="text-[15px] font-semibold text-[#222222]">
+                    Monthly Occupancy Rate
+                  </h3>
+                  <div className="flex gap-3 text-[11px] text-[#717171]">
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-[#00A699]"></div>
+                      ≥70%
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-[#E8913A]"></div>
+                      50-69%
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 rounded-full bg-[#D93900]"></div>
+                      &lt;50%
+                    </div>
+                  </div>
+                </div>
+                <div className="h-[220px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                    data={occupancyTrendData}
+                    margin={{
+                      top: 20,
+                      right: 5,
+                      left: -15,
+                      bottom: 0
+                    }}>
+                    
+                      <CartesianGrid
+                      strokeDasharray="3 3"
+                      vertical={false}
+                      stroke="#F0F0F0" />
+                    
+                      <XAxis
+                      dataKey="month"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{
+                        fontSize: 10,
+                        fill: '#B0B0B0'
+                      }}
+                      dy={10} />
+                    
+                      <YAxis
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{
+                        fontSize: 11,
+                        fill: '#B0B0B0'
+                      }}
+                      tickFormatter={(val) => `${val}%`}
+                      domain={[0, 100]} />
+                    
+                      <Tooltip
+                      contentStyle={{
+                        borderRadius: '8px',
+                        border: '1px solid #EBEBEB',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
+                      }}
+                      formatter={(value: number) => [
+                      `${value}%`,
+                      'Occupancy']
+                      } />
+                    
+                      <Bar
+                      dataKey="rate"
+                      radius={[4, 4, 0, 0]}
+                      label={{
+                        position: 'top',
+                        fontSize: 10,
+                        fill: '#717171',
+                        formatter: (val: number) => `${val}%`
+                      }}>
+                      
+                        {occupancyTrendData.map((entry, index) =>
+                      <Cell
+                        key={`occ-${index}`}
+                        fill={
+                        entry.rate >= 70 ?
+                        '#00A699' :
+                        entry.rate >= 50 ?
+                        '#E8913A' :
+                        '#D93900'
+                        } />
+
+                      )}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Rate Trends (ADR) */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <div className="flex justify-between items-center mb-5">
+                  <h3 className="text-[15px] font-semibold text-[#222222]">
+                    Rate Trends (ADR)
+                  </h3>
+                  <div className="flex gap-4 text-[11px] text-[#717171]">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-full bg-[#007AFF]"></div>
+                      ADR
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-full bg-[#00A699]"></div>
+                      RevPAR
+                    </div>
+                  </div>
+                </div>
+                <div className="h-[220px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart
+                    data={rateTrendData}
+                    margin={{
+                      top: 5,
+                      right: 5,
+                      left: -15,
+                      bottom: 0
+                    }}>
+                    
+                      <CartesianGrid
+                      strokeDasharray="3 3"
+                      vertical={false}
+                      stroke="#F0F0F0" />
+                    
+                      <XAxis
+                      dataKey="month"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{
+                        fontSize: 10,
+                        fill: '#B0B0B0'
+                      }}
+                      dy={10} />
+                    
+                      <YAxis
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{
+                        fontSize: 11,
+                        fill: '#B0B0B0'
+                      }}
+                      tickFormatter={(val) => `R ${val.toLocaleString()}`} />
+                    
+                      <Tooltip
+                      contentStyle={{
+                        borderRadius: '8px',
+                        border: '1px solid #EBEBEB',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
+                      }}
+                      formatter={(value: number) => [
+                      `R ${value.toLocaleString()}`,
+                      '']
+                      } />
+                    
+                      <Line
+                      type="monotone"
+                      dataKey="adr"
+                      stroke="#007AFF"
+                      strokeWidth={2.5}
+                      dot={{
+                        r: 3,
+                        fill: '#007AFF',
+                        strokeWidth: 0
+                      }} />
+                    
+                      <Line
+                      type="monotone"
+                      dataKey="revpar"
+                      stroke="#00A699"
+                      strokeWidth={2}
+                      strokeDasharray="6 4"
+                      dot={false} />
+                    
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+
+            {/* Occupancy by Property + Lead Time Analysis */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Occupancy by Property */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                  Occupancy by Property
+                </h3>
+                <div className="space-y-4">
+                  {[
+                {
+                  name: 'Camps Bay Villa',
+                  occupancy: 67,
+                  color: '#E8913A'
+                },
+                {
+                  name: 'Green Point Apt',
+                  occupancy: 52,
+                  color: '#E8913A'
+                },
+                {
+                  name: 'Sea Point Studio',
+                  occupancy: 49,
+                  color: '#D93900'
+                }].
+                map((prop, idx) =>
+                <div key={idx}>
+                      <div className="flex justify-between items-center mb-1.5">
+                        <span className="text-[13px] font-medium text-[#222222]">
+                          {prop.name}
+                        </span>
+                        <span
+                      className={`text-[13px] font-semibold ${prop.occupancy >= 70 ? 'text-[#00A699]' : prop.occupancy >= 50 ? 'text-[#E8913A]' : 'text-[#D93900]'}`}>
+                      
+                          {prop.occupancy}%
+                        </span>
+                      </div>
+                      <div className="h-[6px] bg-[#F0F0F0] rounded-full overflow-hidden">
+                        <div
+                      className="h-full rounded-full"
+                      style={{
+                        width: `${prop.occupancy}%`,
+                        backgroundColor: prop.color
+                      }}>
+                    </div>
+                      </div>
+                    </div>
+                )}
+                </div>
+              </div>
+
+              {/* Lead Time Analysis */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-[15px] font-semibold text-[#222222]">
+                    Lead Time Analysis
+                  </h3>
+                  <span className="text-[11px] text-[#B0B0B0]">
+                    Days between booking and check-in
+                  </span>
+                </div>
+                <div className="flex gap-6 mb-4">
+                  <div className="text-center">
+                    <div className="text-[24px] font-bold text-[#222222]">
+                      38
+                    </div>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0]">
+                      Avg Lead Time
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-[24px] font-bold text-[#222222]">
+                      118
+                    </div>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0]">
+                      Total Bookings
+                    </div>
+                  </div>
+                </div>
+                <div className="space-y-2.5">
+                  {[
+                {
+                  range: '0-1 days',
+                  pct: 19,
+                  count: 23,
+                  color: '#8B5CF6'
+                },
+                {
+                  range: '2-7 days',
+                  pct: 19,
+                  count: 23,
+                  color: '#E8913A'
+                },
+                {
+                  range: '8-14 days',
+                  pct: 4,
+                  count: 5,
+                  color: '#D93900'
+                },
+                {
+                  range: '15-30 days',
+                  pct: 16,
+                  count: 19,
+                  color: '#0EA5E9'
+                },
+                {
+                  range: '31-60 days',
+                  pct: 18,
+                  count: 21,
+                  color: '#007AFF'
+                },
+                {
+                  range: '60+ days',
+                  pct: 23,
+                  count: 27,
+                  color: '#00A699'
+                }].
+                map((item, idx) =>
+                <div key={idx} className="flex items-center gap-3">
+                      <span className="text-[12px] text-[#717171] w-[70px] flex-shrink-0">
+                        {item.range}
+                      </span>
+                      <div className="flex-1 h-[18px] bg-[#F0F0F0] rounded-[3px] overflow-hidden relative">
+                        <div
+                      className="h-full rounded-[3px] flex items-center pl-2"
+                      style={{
+                        width: `${Math.max(item.pct * 2, 8)}%`,
+                        backgroundColor: item.color
+                      }}>
+                      
+                          {item.pct >= 10 &&
+                      <span className="text-[10px] font-semibold text-white">
+                              {item.pct}%
+                            </span>
+                      }
+                        </div>
+                      </div>
+                      <span className="text-[12px] font-medium text-[#222222] w-[24px] text-right flex-shrink-0">
+                        {item.count}
+                      </span>
+                    </div>
+                )}
+                </div>
+              </div>
+            </div>
+
+            {/* Length of Stay + Lead Time vs Nightly Rate */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Length of Stay Distribution */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-[15px] font-semibold text-[#222222]">
+                    Length of Stay Distribution
+                  </h3>
+                  <span className="text-[11px] text-[#B0B0B0]">
+                    Number of bookings by nights stayed
+                  </span>
+                </div>
+                <div className="flex gap-6 mb-4">
+                  <div className="text-center">
+                    <div className="text-[24px] font-bold text-[#222222]">
+                      3.8
+                    </div>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0]">
+                      Avg Nights
+                    </div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-[24px] font-bold text-[#222222]">
+                      118
+                    </div>
+                    <div className="text-[10px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0]">
+                      Total Bookings
+                    </div>
+                  </div>
+                </div>
+                <div className="space-y-2.5">
+                  {[
+                {
+                  nights: '1 night',
+                  pct: 12,
+                  count: 14,
+                  color: '#8B5CF6'
+                },
+                {
+                  nights: '2 nights',
+                  pct: 36,
+                  count: 43,
+                  color: '#007AFF'
+                },
+                {
+                  nights: '3 nights',
+                  pct: 25,
+                  count: 29,
+                  color: '#00A699'
+                },
+                {
+                  nights: '4 nights',
+                  pct: 9,
+                  count: 11,
+                  color: '#E8913A'
+                },
+                {
+                  nights: '5 nights',
+                  pct: 6,
+                  count: 7,
+                  color: '#0EA5E9'
+                },
+                {
+                  nights: '6 nights',
+                  pct: 3,
+                  count: 3,
+                  color: '#007AFF'
+                },
+                {
+                  nights: '7+ nights',
+                  pct: 9,
+                  count: 11,
+                  color: '#D93900'
+                }].
+                map((item, idx) =>
+                <div key={idx} className="flex items-center gap-3">
+                      <span className="text-[12px] text-[#717171] w-[65px] flex-shrink-0">
+                        {item.nights}
+                      </span>
+                      <div className="flex-1 h-[18px] bg-[#F0F0F0] rounded-[3px] overflow-hidden relative">
+                        <div
+                      className="h-full rounded-[3px] flex items-center pl-2"
+                      style={{
+                        width: `${Math.max(item.pct * 2, 8)}%`,
+                        backgroundColor: item.color
+                      }}>
+                      
+                          {item.pct >= 6 &&
+                      <span className="text-[10px] font-semibold text-white">
+                              {item.pct}%
+                            </span>
+                      }
+                        </div>
+                      </div>
+                      <span className="text-[12px] font-medium text-[#222222] w-[24px] text-right flex-shrink-0">
+                        {item.count}
+                      </span>
+                    </div>
+                )}
+                </div>
+              </div>
+
+              {/* Lead Time vs Nightly Rate scatter */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-[15px] font-semibold text-[#222222]">
+                    Lead Time vs Nightly Rate
+                  </h3>
+                  <span className="text-[11px] text-[#B0B0B0]">
+                    Do earlier bookers pay more?
+                  </span>
+                </div>
+                <div className="h-[200px] w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart
+                    data={[
+                    {
+                      range: '0-1d',
+                      rate: 2370,
+                      color: '#8B5CF6'
+                    },
+                    {
+                      range: '2-7d',
+                      rate: 2477,
+                      color: '#E8913A'
+                    },
+                    {
+                      range: '8-14d',
+                      rate: 2814,
+                      color: '#D93900'
+                    },
+                    {
+                      range: '15-30d',
+                      rate: 2762,
+                      color: '#0EA5E9'
+                    },
+                    {
+                      range: '31-60d',
+                      rate: 3065,
+                      color: '#007AFF'
+                    },
+                    {
+                      range: '60+d',
+                      rate: 3010,
+                      color: '#00A699'
+                    }]
+                    }
+                    margin={{
+                      top: 20,
+                      right: 5,
+                      left: -5,
+                      bottom: 0
+                    }}>
+                    
+                      <CartesianGrid
+                      strokeDasharray="3 3"
+                      vertical={false}
+                      stroke="#F0F0F0" />
+                    
+                      <XAxis
+                      dataKey="range"
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{
+                        fontSize: 10,
+                        fill: '#B0B0B0'
+                      }}
+                      dy={10} />
+                    
+                      <YAxis
+                      axisLine={false}
+                      tickLine={false}
+                      tick={{
+                        fontSize: 10,
+                        fill: '#B0B0B0'
+                      }}
+                      tickFormatter={(val) => `R ${val.toLocaleString()}`}
+                      domain={[0, 'auto']} />
+                    
+                      <Tooltip
+                      contentStyle={{
+                        borderRadius: '8px',
+                        border: '1px solid #EBEBEB',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
+                      }}
+                      formatter={(value: number) => [
+                      `R ${value.toLocaleString()}`,
+                      'Avg Rate']
+                      } />
+                    
+                      <Bar
+                      dataKey="rate"
+                      radius={[4, 4, 0, 0]}
+                      label={{
+                        position: 'top',
+                        fontSize: 10,
+                        fill: '#717171',
+                        formatter: (val: number) =>
+                        `R ${val.toLocaleString()}`
+                      }}>
+                      
+                        {[
+                      {
+                        color: '#007AFF'
+                      },
+                      {
+                        color: '#D93900'
+                      },
+                      {
+                        color: '#0EA5E9'
+                      },
+                      {
+                        color: '#00A699'
+                      },
+                      {
+                        color: '#E8913A'
+                      },
+                      {
+                        color: '#8B5CF6'
+                      }].
+                      map((item, index) =>
+                      <Cell key={`lt-${index}`} fill={item.color} />
+                      )}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+                {/* Insight */}
+                <div className="mt-3 p-3 bg-[#FFFBEB] rounded-[8px] flex items-start gap-2.5">
+                  <span className="text-[14px] flex-shrink-0">💡</span>
+                  <p className="text-[12px] text-[#92400E] leading-relaxed">
+                    Short-notice bookings average <strong>R 3,065/night</strong>{' '}
+                    — 29% higher than longer lead-time bookings at{' '}
+                    <strong>R 2,370/night</strong>.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </>
+        }
+
+        {/* CHANNELS TAB */}
+        {activeTab === 'channels' &&
+        <>
+            <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+              <h3 className="text-[15px] font-semibold text-[#222222] mb-2">
+                Booking Channel Mix
+              </h3>
+              <div className="flex items-center">
+                <div className="h-[180px] w-[180px] shrink-0">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                      data={channelMixData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={80}
+                      paddingAngle={2}
+                      dataKey="value"
+                      stroke="none">
+                      
+                        {channelMixData.map((entry, index) =>
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                      )}
+                      </Pie>
+                      <Tooltip
+                      contentStyle={{
+                        borderRadius: '8px',
+                        border: '1px solid #EBEBEB',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
+                      }}
+                      formatter={(value: number) => [`${value}%`, 'Share']} />
+                    
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="flex-1 pl-4 space-y-3">
+                  {channelMixData.map((channel, idx) =>
+                <div
+                  key={idx}
+                  className="flex items-center justify-between">
+                  
+                      <div className="flex items-center gap-2">
+                        <div
+                      className="w-2.5 h-2.5 rounded-sm"
+                      style={{
+                        backgroundColor: channel.color
+                      }}>
+                    </div>
+                        <span className="text-[13px] text-[#717171]">
+                          {channel.name}
+                        </span>
+                      </div>
+                      <span className="text-[14px] font-semibold text-[#222222]">
+                        {channel.value}%
+                      </span>
+                    </div>
+                )}
+                </div>
+              </div>
+            </div>
+          </>
+        }
+
+        {/* REVIEWS TAB */}
+        {activeTab === 'reviews' &&
+        <>
+            {/* KPIs */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+            {
+              label: 'Overall Rating',
+              value: '4.8 ★',
+              detail: '20 reviews total'
+            },
+            {
+              label: 'Total Reviews',
+              value: '20',
+              detail: 'across all properties'
+            },
+            {
+              label: '5-Star Rate',
+              value: '80%',
+              detail: '16 five-star reviews'
+            },
+            {
+              label: 'Properties Rated',
+              value: '1',
+              detail: 'of 1 total'
+            }].
+            map((kpi, idx) =>
+            <div
+              key={idx}
+              className="bg-white rounded-[12px] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+              
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0] mb-1">
+                    {kpi.label}
+                  </div>
+                  <div className="text-[24px] font-bold tracking-[-0.3px] text-[#222222]">
+                    {kpi.value}
+                  </div>
+                  <div className="text-[11px] text-[#B0B0B0] mt-0.5">
+                    {kpi.detail}
+                  </div>
+                </div>
+            )}
+            </div>
+
+            {/* Rating Distribution + Ratings by Property */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Rating Distribution */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                  Rating Distribution
+                </h3>
+                <div className="space-y-3">
+                  {[
+                {
+                  stars: 5,
+                  count: 16,
+                  pct: 80,
+                  color: '#00A699'
+                },
+                {
+                  stars: 4,
+                  count: 4,
+                  pct: 20,
+                  color: '#007AFF'
+                },
+                {
+                  stars: 3,
+                  count: 0,
+                  pct: 0,
+                  color: '#E8913A'
+                },
+                {
+                  stars: 2,
+                  count: 0,
+                  pct: 0,
+                  color: '#D93900'
+                },
+                {
+                  stars: 1,
+                  count: 0,
+                  pct: 0,
+                  color: '#D93900'
+                }].
+                map((item, idx) =>
+                <div key={idx} className="flex items-center gap-3">
+                      <span className="text-[13px] text-[#DDAD4F] w-[60px] flex-shrink-0 tracking-tight">
+                        {'★'.repeat(item.stars)}
+                        {'☆'.repeat(5 - item.stars)}
+                      </span>
+                      <div className="flex-1 h-[18px] bg-[#F0F0F0] rounded-[3px] overflow-hidden">
+                        <div
+                      className="h-full rounded-[3px] flex items-center pl-2"
+                      style={{
+                        width: `${Math.max(item.pct > 0 ? item.pct : 0, item.pct > 0 ? 12 : 2)}%`,
+                        backgroundColor: item.color
+                      }}>
+                      
+                          {item.pct >= 15 &&
+                      <span className="text-[10px] font-semibold text-white">
+                              {item.pct}%
+                            </span>
+                      }
+                        </div>
+                      </div>
+                      <span className="text-[13px] font-medium text-[#222222] w-[20px] text-right flex-shrink-0">
+                        {item.count}
+                      </span>
+                    </div>
+                )}
+                </div>
+              </div>
+
+              {/* Ratings by Property */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                  Ratings by Property
+                </h3>
+                <div className="space-y-4">
+                  {[
+                {
+                  name: 'Camps Bay Villa',
+                  rating: 4.8,
+                  color: '#00A699'
+                },
+                {
+                  name: 'Green Point Apt',
+                  rating: 4.6,
+                  color: '#007AFF'
+                },
+                {
+                  name: 'Sea Point Studio',
+                  rating: 4.5,
+                  color: '#007AFF'
+                }].
+                map((prop, idx) =>
+                <div key={idx}>
+                      <div className="flex justify-between items-center mb-1.5">
+                        <span className="text-[13px] font-medium text-[#222222]">
+                          {prop.name}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-[6px] bg-[#F0F0F0] rounded-full overflow-hidden">
+                          <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${prop.rating / 5 * 100}%`,
+                          backgroundColor: prop.color
+                        }}>
+                      </div>
+                        </div>
+                        <span className="text-[13px] font-semibold text-[#007AFF] flex-shrink-0">
+                          {prop.rating}
+                        </span>
+                      </div>
+                    </div>
+                )}
+                </div>
+              </div>
+            </div>
+
+            {/* Recent Reviews */}
+            <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB] overflow-hidden">
+              <div className="p-5 border-b border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222]">
+                  Recent Reviews
+                </h3>
+              </div>
+              <div className="divide-y divide-[#F0F0F0]">
+                {recentReviews.map((review) => {
+                const colors = [
+                '#00A699',
+                '#007AFF',
+                '#8B5CF6',
+                '#E8913A',
+                '#D93900'];
+
+                const colorIdx = review.guest.charCodeAt(0) % colors.length;
+                const platformColor = review.property.includes('Camps Bay') ?
+                '#FF385C' :
+                review.property.includes('Green') ?
+                '#FF385C' :
+                '#FF385C';
+                return (
+                  <div key={review.id} className="p-5">
+                      <div className="flex justify-between items-start">
+                        <div className="flex items-center gap-3">
+                          <div
+                          className="w-9 h-9 rounded-full flex items-center justify-center text-[13px] font-bold text-white"
+                          style={{
+                            backgroundColor: colors[colorIdx]
+                          }}>
+                          
+                            {review.guest.charAt(0)}
+                          </div>
+                          <div>
+                            <div className="text-[14px] font-semibold text-[#222222]">
+                              {review.guest}
+                            </div>
+                            <div className="text-[12px] text-[#B0B0B0]">
+                              {review.date}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="flex text-[#DDAD4F] text-[13px]">
+                            {'★'.repeat(review.rating)}
+                            {'☆'.repeat(5 - review.rating)}
+                          </div>
+                          <div className="w-5 h-5 rounded-[4px] bg-[#FF385C] flex items-center justify-center flex-shrink-0">
+                            <span className="text-white text-[10px] font-bold">
+                              A
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                      <p className="text-[13px] text-[#717171] leading-relaxed mt-3">
+                        {review.text}
+                      </p>
+                      <div className="text-[12px] text-[#B0B0B0] mt-2 font-medium">
+                        {review.property} · via Airbnb
+                      </div>
+                    </div>);
+
+              })}
+              </div>
+            </div>
+          </>
+        }
+
+        {/* GUESTS TAB */}
+        {activeTab === 'guests' &&
+        <>
+            {/* KPIs */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {[
+            {
+              label: 'Total Guests',
+              value: '118',
+              detail: '453 nights'
+            },
+            {
+              label: 'Countries',
+              value: '14',
+              detail: 'unique origins'
+            },
+            {
+              label: 'Avg Group Size',
+              value: '2',
+              detail: 'guests per booking'
+            },
+            {
+              label: 'Languages',
+              value: '7',
+              detail: 'unique languages'
+            }].
+            map((kpi, idx) =>
+            <div
+              key={idx}
+              className="bg-white rounded-[12px] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+              
+                  <div className="text-[11px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0] mb-1">
+                    {kpi.label}
+                  </div>
+                  <div className="text-[24px] font-bold tracking-[-0.3px] text-[#222222]">
+                    {kpi.value}
+                  </div>
+                  <div className="text-[11px] text-[#B0B0B0] mt-0.5">
+                    {kpi.detail}
+                  </div>
+                </div>
+            )}
+            </div>
+
+            {/* Guest Countries + Guest Languages */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Guest Countries */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                  Guest Countries
+                </h3>
+                <div className="space-y-3">
+                  {[
+                {
+                  country: 'South Africa',
+                  pct: 35,
+                  count: 41,
+                  color: '#007AFF'
+                },
+                {
+                  country: 'Germany',
+                  pct: 26,
+                  count: 31,
+                  color: '#007AFF'
+                },
+                {
+                  country: 'United Kingdom',
+                  pct: 6,
+                  count: 7,
+                  color: '#007AFF'
+                },
+                {
+                  country: 'Netherlands',
+                  pct: 5,
+                  count: 6,
+                  color: '#007AFF'
+                },
+                {
+                  country: 'Saudi Arabia',
+                  pct: 4,
+                  count: 5,
+                  color: '#007AFF'
+                },
+                {
+                  country: 'Russia',
+                  pct: 4,
+                  count: 5,
+                  color: '#007AFF'
+                },
+                {
+                  country: 'United States',
+                  pct: 3,
+                  count: 3,
+                  color: '#007AFF'
+                }].
+                map((item, idx) =>
+                <div key={idx} className="flex items-center gap-3">
+                      <span className="text-[13px] text-[#222222] w-[110px] flex-shrink-0 font-medium">
+                        {item.country}
+                      </span>
+                      <div className="flex-1 flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 flex-1">
+                          {item.pct >= 5 &&
+                      <span className="text-[10px] font-semibold text-white bg-[#007AFF] rounded-[3px] px-1.5 py-[1px] flex-shrink-0">
+                              {item.pct}%
+                            </span>
+                      }
+                          <div className="flex-1 h-[6px] bg-[#F0F0F0] rounded-full overflow-hidden">
+                            <div
+                          className="h-full bg-[#007AFF] rounded-full"
+                          style={{
+                            width: `${item.pct * 2.5}%`
+                          }}>
+                        </div>
+                          </div>
+                        </div>
+                        <span className="text-[13px] font-medium text-[#222222] w-[28px] text-right flex-shrink-0">
+                          {item.count}
+                        </span>
+                      </div>
+                    </div>
+                )}
+                </div>
+              </div>
+
+              {/* Guest Languages */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                  Guest Languages
+                </h3>
+                <div className="flex items-center">
+                  <div className="h-[180px] w-[180px] shrink-0 relative">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                        data={[
+                        {
+                          name: 'en',
+                          value: 62,
+                          color: '#007AFF'
+                        },
+                        {
+                          name: 'de',
+                          value: 27,
+                          color: '#8B5CF6'
+                        },
+                        {
+                          name: 'ru',
+                          value: 4,
+                          color: '#00A699'
+                        },
+                        {
+                          name: 'nl',
+                          value: 3,
+                          color: '#E8913A'
+                        },
+                        {
+                          name: 'Other',
+                          value: 5,
+                          color: '#CBD5E1'
+                        }]
+                        }
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={50}
+                        outerRadius={75}
+                        paddingAngle={2}
+                        dataKey="value"
+                        stroke="none">
+                        
+                          {[
+                        {
+                          color: '#007AFF'
+                        },
+                        {
+                          color: '#8B5CF6'
+                        },
+                        {
+                          color: '#00A699'
+                        },
+                        {
+                          color: '#E8913A'
+                        },
+                        {
+                          color: '#CBD5E1'
+                        }].
+                        map((entry, index) =>
+                        <Cell key={`lang-${index}`} fill={entry.color} />
+                        )}
+                        </Pie>
+                        <Tooltip
+                        contentStyle={{
+                          borderRadius: '8px',
+                          border: '1px solid #EBEBEB',
+                          boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
+                        }}
+                        formatter={(value: number) => [`${value}%`, '']} />
+                      
+                      </PieChart>
+                    </ResponsiveContainer>
+                    {/* Center label */}
+                    <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+                      <span className="text-[22px] font-bold text-[#222222]">
+                        111
+                      </span>
+                      <span className="text-[11px] text-[#B0B0B0]">guests</span>
+                    </div>
+                  </div>
+                  <div className="flex-1 pl-4 space-y-3">
+                    {[
+                  {
+                    code: 'en',
+                    pct: '62%',
+                    color: '#007AFF'
+                  },
+                  {
+                    code: 'de',
+                    pct: '27%',
+                    color: '#8B5CF6'
+                  },
+                  {
+                    code: 'ru',
+                    pct: '4%',
+                    color: '#00A699'
+                  },
+                  {
+                    code: 'nl',
+                    pct: '3%',
+                    color: '#E8913A'
+                  },
+                  {
+                    code: 'Other',
+                    pct: '5%',
+                    color: '#CBD5E1'
+                  }].
+                  map((lang, idx) =>
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between">
+                    
+                        <div className="flex items-center gap-2">
+                          <div
+                        className="w-2.5 h-2.5 rounded-sm"
+                        style={{
+                          backgroundColor: lang.color
+                        }}>
+                      </div>
+                          <span className="text-[13px] font-medium text-[#222222]">
+                            {lang.code}
+                          </span>
+                        </div>
+                        <span className="text-[13px] font-semibold text-[#222222]">
+                          {lang.pct}
+                        </span>
+                      </div>
+                  )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </>
+        }
+
+        {/* SEASONALITY TAB */}
+        {activeTab === 'seasonality' &&
+        <>
+            {/* Occupancy Heatmap */}
+            <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+              <div className="flex justify-between items-center mb-5">
+                <h3 className="text-[15px] font-semibold text-[#222222]">
+                  Occupancy Heatmap — 12-Month View
+                </h3>
+                <div className="flex gap-3 text-[11px] text-[#717171]">
+                  <div className="flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full bg-[#00A699]"></div>
+                    High (≥75%)
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full bg-[#E8913A]"></div>Mid
+                    (50-74%)
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full bg-[#D93900]"></div>Low
+                    (&lt;50%)
+                  </div>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[12px]">
+                  <thead>
+                    <tr>
+                      <th className="text-left p-2 text-[#B0B0B0] font-medium w-[100px]"></th>
+                      {[
+                    'Jan',
+                    'Feb',
+                    'Mar',
+                    'Apr',
+                    'May',
+                    'Jun',
+                    'Jul',
+                    'Aug',
+                    'Sep',
+                    'Oct',
+                    'Nov',
+                    'Dec'].
+                    map((m) =>
+                    <th
+                      key={m}
+                      className="p-2 text-center text-[#B0B0B0] font-medium">
+                      
+                          {m}
+                        </th>
+                    )}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {[
+                  {
+                    name: 'Camps Bay Villa',
+                    data: [90, 89, 65, 40, 42, 33, 6, 97, 100, 87, 80, 74]
+                  },
+                  {
+                    name: 'Green Point Apt',
+                    data: [71, 68, 75, 63, 19, 23, 19, 29, 27, 32, 57, 81]
+                  },
+                  {
+                    name: 'Sea Point Studio',
+                    data: [55, 48, 52, 38, 22, 18, 15, 35, 42, 48, 62, 70]
+                  }].
+                  map((prop, idx) =>
+                  <tr key={idx}>
+                        <td className="p-2 text-[13px] font-medium text-[#222222] whitespace-nowrap">
+                          {prop.name}
+                        </td>
+                        {prop.data.map((val, mIdx) =>
+                    <td key={mIdx} className="p-1.5 text-center">
+                            <div
+                        className={`rounded-[6px] py-1.5 px-1 text-[12px] font-semibold ${val >= 75 ? 'bg-[#00A69915] text-[#00A699]' : val >= 50 ? 'bg-[#E8913A15] text-[#E8913A]' : 'bg-[#D9390015] text-[#D93900]'}`}>
+                        
+                              {val}%
+                            </div>
+                          </td>
+                    )}
+                      </tr>
+                  )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Booking Patterns + Check-in Day */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Booking Patterns — Day of Week */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                  Booking Patterns — Day of Week
+                </h3>
+                <div className="space-y-3">
+                  {[
+                {
+                  day: 'Monday',
+                  pct: 17
+                },
+                {
+                  day: 'Tuesday',
+                  pct: 8
+                },
+                {
+                  day: 'Wednesday',
+                  pct: 9
+                },
+                {
+                  day: 'Thursday',
+                  pct: 15
+                },
+                {
+                  day: 'Friday',
+                  pct: 20
+                },
+                {
+                  day: 'Saturday',
+                  pct: 19
+                },
+                {
+                  day: 'Sunday',
+                  pct: 11
+                }].
+                map((item, idx) =>
+                <div key={idx} className="flex items-center gap-3">
+                      <span className="text-[13px] text-[#222222] w-[80px] flex-shrink-0">
+                        {item.day}
+                      </span>
+                      <div className="flex-1 h-[18px] bg-[#F0F0F0] rounded-[3px] overflow-hidden">
+                        <div
+                      className="h-full rounded-[3px] flex items-center pl-2"
+                      style={{
+                        width: `${Math.max(item.pct * 4, 10)}%`,
+                        backgroundColor: '#007AFF'
+                      }}>
+                      
+                          {item.pct >= 15 &&
+                      <span className="text-[10px] font-semibold text-white">
+                              {item.pct}%
+                            </span>
+                      }
+                        </div>
+                      </div>
+                      <span className="text-[13px] font-semibold text-[#222222] w-[32px] text-right">
+                        {item.pct}%
+                      </span>
+                    </div>
+                )}
+                </div>
+              </div>
+
+              {/* Check-in Day Distribution */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                  Check-in Day Distribution
+                </h3>
+                <div className="space-y-3">
+                  {[
+                {
+                  day: 'Monday',
+                  pct: 17
+                },
+                {
+                  day: 'Tuesday',
+                  pct: 8
+                },
+                {
+                  day: 'Wednesday',
+                  pct: 9
+                },
+                {
+                  day: 'Thursday',
+                  pct: 15
+                },
+                {
+                  day: 'Friday',
+                  pct: 20
+                },
+                {
+                  day: 'Saturday',
+                  pct: 19
+                },
+                {
+                  day: 'Sunday',
+                  pct: 11
+                }].
+                map((item, idx) =>
+                <div key={idx} className="flex items-center gap-3">
+                      <span className="text-[13px] text-[#222222] w-[80px] flex-shrink-0">
+                        {item.day}
+                      </span>
+                      <div className="flex-1 h-[18px] bg-[#F0F0F0] rounded-[3px] overflow-hidden">
+                        <div
+                      className="h-full rounded-[3px] flex items-center pl-2"
+                      style={{
+                        width: `${Math.max(item.pct * 4, 10)}%`,
+                        backgroundColor: '#00A699'
+                      }}>
+                      
+                          {item.pct >= 15 &&
+                      <span className="text-[10px] font-semibold text-white">
+                              {item.pct}%
+                            </span>
+                      }
+                        </div>
+                      </div>
+                      <span className="text-[13px] font-semibold text-[#00A699] w-[32px] text-right">
+                        {item.pct}%
+                      </span>
+                    </div>
+                )}
+                </div>
+              </div>
+            </div>
+
+            {/* Check-out Day + Booking Time of Day */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Check-out Day Distribution */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                  Check-out Day Distribution
+                </h3>
+                <div className="space-y-3">
+                  {[
+                {
+                  day: 'Monday',
+                  pct: 15
+                },
+                {
+                  day: 'Tuesday',
+                  pct: 8
+                },
+                {
+                  day: 'Wednesday',
+                  pct: 12
+                },
+                {
+                  day: 'Thursday',
+                  pct: 17
+                },
+                {
+                  day: 'Friday',
+                  pct: 14
+                },
+                {
+                  day: 'Saturday',
+                  pct: 14
+                },
+                {
+                  day: 'Sunday',
+                  pct: 20
+                }].
+                map((item, idx) =>
+                <div key={idx} className="flex items-center gap-3">
+                      <span className="text-[13px] text-[#222222] w-[80px] flex-shrink-0">
+                        {item.day}
+                      </span>
+                      <div className="flex-1 h-[18px] bg-[#F0F0F0] rounded-[3px] overflow-hidden">
+                        <div
+                      className="h-full rounded-[3px] flex items-center pl-2"
+                      style={{
+                        width: `${Math.max(item.pct * 4, 10)}%`,
+                        backgroundColor: '#8B5CF6'
+                      }}>
+                      
+                          {item.pct >= 15 &&
+                      <span className="text-[10px] font-semibold text-white">
+                              {item.pct}%
+                            </span>
+                      }
+                        </div>
+                      </div>
+                      <span className="text-[13px] font-semibold text-[#222222] w-[32px] text-right">
+                        {item.pct}%
+                      </span>
+                    </div>
+                )}
+                </div>
+              </div>
+
+              {/* Booking Time of Day */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                  Booking Time of Day
+                </h3>
+                <div className="space-y-3">
+                  {[
+                {
+                  time: '12am–3am',
+                  pct: 8
+                },
+                {
+                  time: '3am–6am',
+                  pct: 0
+                },
+                {
+                  time: '6am–9am',
+                  pct: 3
+                },
+                {
+                  time: '9am–12pm',
+                  pct: 15
+                },
+                {
+                  time: '12pm–3pm',
+                  pct: 18
+                },
+                {
+                  time: '3pm–6pm',
+                  pct: 28
+                },
+                {
+                  time: '6pm–9pm',
+                  pct: 11
+                },
+                {
+                  time: '9pm–12am',
+                  pct: 16
+                }].
+                map((item, idx) =>
+                <div key={idx} className="flex items-center gap-3">
+                      <span className="text-[13px] text-[#222222] w-[80px] flex-shrink-0">
+                        {item.time}
+                      </span>
+                      <div className="flex-1 h-[18px] bg-[#F0F0F0] rounded-[3px] overflow-hidden">
+                        <div
+                      className="h-full rounded-[3px] flex items-center pl-2"
+                      style={{
+                        width: `${Math.max(item.pct * 3, item.pct > 0 ? 6 : 2)}%`,
+                        backgroundColor: '#E8913A'
+                      }}>
+                      
+                          {item.pct >= 15 &&
+                      <span className="text-[10px] font-semibold text-white">
+                              {item.pct}%
+                            </span>
+                      }
+                        </div>
+                      </div>
+                      <span className="text-[13px] font-semibold text-[#222222] w-[32px] text-right">
+                        {item.pct}%
+                      </span>
+                    </div>
+                )}
+                </div>
+              </div>
+            </div>
+
+            {/* Avg Stay by Property */}
+            <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB] sm:w-1/2">
+              <div className="flex justify-between items-center mb-4">
+                <h3 className="text-[15px] font-semibold text-[#222222]">
+                  Avg Stay by Property
+                </h3>
+                <span className="text-[11px] text-[#B0B0B0]">
+                  Average length of stay in nights
+                </span>
+              </div>
+              <div className="space-y-4">
+                {[
+              {
+                name: 'Sea Point Studio',
+                nights: 3.1,
+                color: '#00A699'
+              },
+              {
+                name: 'Green Point Apt',
+                nights: 3.3,
+                color: '#00A699'
+              },
+              {
+                name: 'Camps Bay Villa',
+                nights: 4.3,
+                color: '#007AFF'
+              }].
+              map((prop, idx) =>
+              <div key={idx}>
+                    <div className="flex justify-between items-center mb-1.5">
+                      <span className="text-[13px] font-medium text-[#222222]">
+                        {prop.name}
+                      </span>
+                      <span className="text-[13px] font-semibold text-[#222222]">
+                        {prop.nights} nights
+                      </span>
+                    </div>
+                    <div className="h-[22px] bg-[#F0F0F0] rounded-[4px] overflow-hidden">
+                      <div
+                    className="h-full rounded-[4px] flex items-center pl-2.5"
+                    style={{
+                      width: `${prop.nights / 5 * 100}%`,
+                      backgroundColor: prop.color
+                    }}>
+                    
+                        <span className="text-[11px] font-semibold text-white">
+                          {prop.nights}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+              )}
+              </div>
+              {/* Insight */}
+              <div className="mt-4 p-3 bg-[#F0F9FF] rounded-[8px] flex items-start gap-2.5">
+                <span className="text-[14px] flex-shrink-0">📊</span>
+                <p className="text-[12px] text-[#334155] leading-relaxed">
+                  Camps Bay Villa guests stay <strong>31% longer</strong> on
+                  average than Green Point Apt. Consider promoting multi-night
+                  discounts at shorter-stay properties.
+                </p>
+              </div>
+            </div>
+          </>
+        }
+
+        {/* INSIGHTS TAB */}
+        {activeTab === 'insights' &&
+        <>
+            {/* Revenue & Pricing + Occupancy & Demand */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Revenue & Pricing Insights */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                  Revenue & Pricing Insights
+                </h3>
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-[8px] bg-[#FEE2E2] flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#D93900"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round">
+                      
+                        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+                        <polyline points="17 6 23 6 23 12" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="text-[13px] font-semibold text-[#222222]">
+                        Revenue trending down 35%
+                      </div>
+                      <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
+                        Mar 2026 revenue is R 100,607 vs R 154,971 in Feb 2026.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-[8px] bg-[#D1FAE5] flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#00A699"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round">
+                      
+                        <circle cx="12" cy="12" r="10" />
+                        <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                        <line x1="9" y1="9" x2="9.01" y2="9" />
+                        <line x1="15" y1="9" x2="15.01" y2="9" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="text-[13px] font-semibold text-[#222222]">
+                        Top earner: Camps Bay Villa
+                      </div>
+                      <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
+                        Generating R 461,988 at R 2,444/night ADR with 57
+                        bookings.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-[8px] bg-[#DBEAFE] flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#007AFF"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round">
+                      
+                        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+                        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="text-[13px] font-semibold text-[#222222]">
+                        Direct bookings at 7%
+                      </div>
+                      <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
+                        8 direct bookings saving on platform commissions. Keep
+                        promoting your direct booking link.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Occupancy & Demand Insights */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                  Occupancy & Demand Insights
+                </h3>
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-[8px] bg-[#FEF3C7] flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#E8913A"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round">
+                      
+                        <rect
+                        x="3"
+                        y="4"
+                        width="18"
+                        height="18"
+                        rx="2"
+                        ry="2" />
+                      
+                        <line x1="16" y1="2" x2="16" y2="6" />
+                        <line x1="8" y1="2" x2="8" y2="6" />
+                        <line x1="3" y1="10" x2="21" y2="10" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="text-[13px] font-semibold text-[#222222]">
+                        Winter dip approaching (Jun–Aug)
+                      </div>
+                      <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
+                        Based on historical data, expect ~35% occupancy. Plan
+                        promotions for long-stay guests and consider winter
+                        pricing strategy now.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-[8px] bg-[#EDE9FE] flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#8B5CF6"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round">
+                      
+                        <circle cx="12" cy="12" r="10" />
+                        <polyline points="12 6 12 12 16 14" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="text-[13px] font-semibold text-[#222222]">
+                        Lead time shortening
+                      </div>
+                      <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
+                        19% of bookings are same/next-day. Consider a
+                        last-minute pricing strategy.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Guest & Channel + Reviews & Quality */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {/* Guest & Channel Insights */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                  Guest & Channel Insights
+                </h3>
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-[8px] bg-[#D1FAE5] flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#00A699"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round">
+                      
+                        <circle cx="12" cy="12" r="10" />
+                        <line x1="2" y1="12" x2="22" y2="12" />
+                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="text-[13px] font-semibold text-[#222222]">
+                        Top guest market: South Africa
+                      </div>
+                      <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
+                        41 guests from South Africa. Consider tailoring welcome
+                        guides and listing descriptions for this audience.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-[8px] bg-[#FEF3C7] flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#E8913A"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round">
+                      
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                        <line x1="12" y1="9" x2="12" y2="13" />
+                        <line x1="12" y1="17" x2="12.01" y2="17" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="text-[13px] font-semibold text-[#222222]">
+                        Airbnb cancellation rate 19%
+                      </div>
+                      <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
+                        16 of 85 bookings cancelled. Consider stricter
+                        cancellation policy for Airbnb listings.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-[8px] bg-[#FEF3C7] flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#E8913A"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round">
+                      
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                        <line x1="12" y1="9" x2="12" y2="13" />
+                        <line x1="12" y1="17" x2="12.01" y2="17" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="text-[13px] font-semibold text-[#222222]">
+                        Booking.com cancellation rate 23%
+                      </div>
+                      <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
+                        11 of 48 bookings cancelled. Consider stricter
+                        cancellation policy for Booking.com listings.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Reviews & Quality Insights */}
+              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                  Reviews & Quality Insights
+                </h3>
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-[8px] bg-[#DBEAFE] flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="#007AFF"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round">
+                      
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="text-[13px] font-semibold text-[#222222]">
+                        Overall ratings excellent
+                      </div>
+                      <p className="text-[12px] text-[#717171] leading-relaxed mt-0.5">
+                        4.8/5 across 20 reviews. Keep up the great work!
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Revenue Predictions */}
+            <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB] overflow-hidden">
+              <div className="p-5 pb-3">
+                <h3 className="text-[15px] font-semibold text-[#222222]">
+                  Revenue Predictions (3-Month Forecast)
+                </h3>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[12px]">
+                  <thead className="bg-[#F7F7F7] text-[#717171]">
+                    <tr>
+                      <th className="p-3 pl-5 font-semibold uppercase tracking-[0.3px] text-[10px] text-left">
+                        Month
+                      </th>
+                      <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px] text-left">
+                        Predicted Revenue
+                      </th>
+                      <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px] text-left">
+                        Est. Bookings
+                      </th>
+                      <th className="p-3 pr-5 font-semibold uppercase tracking-[0.3px] text-[10px] text-left">
+                        Est. Nights
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#F0F0F0]">
+                    {[
+                  {
+                    month: 'Apr 2026',
+                    revenue: 'R 50,938',
+                    bookings: '~7',
+                    nights: '~23'
+                  },
+                  {
+                    month: 'May 2026',
+                    revenue: 'R 49,748',
+                    bookings: '~9',
+                    nights: '~21'
+                  },
+                  {
+                    month: 'Jun 2026',
+                    revenue: 'R 29,544',
+                    bookings: '~6',
+                    nights: '~13'
+                  }].
+                  map((row, idx) =>
+                  <tr key={idx}>
+                        <td className="p-3 pl-5 text-[13px] font-medium text-[#222222]">
+                          {row.month}
+                          <span className="ml-2 text-[10px] font-semibold text-[#007AFF] bg-[#007AFF10] px-1.5 py-[1px] rounded-[3px]">
+                            forecast
+                          </span>
+                        </td>
+                        <td className="p-3 text-[13px] text-[#222222]">
+                          {row.revenue}
+                        </td>
+                        <td className="p-3 text-[13px] text-[#717171]">
+                          {row.bookings}
+                        </td>
+                        <td className="p-3 pr-5 text-[13px] text-[#717171]">
+                          {row.nights}
+                        </td>
+                      </tr>
+                  )}
+                  </tbody>
+                </table>
+              </div>
+              <div className="px-5 py-3 text-[11px] text-[#B0B0B0] italic">
+                Based on same-month historical data where available, otherwise
+                3-month average.
+              </div>
+            </div>
+
+            {/* Pipeline Summary */}
+            <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+              <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
+                Pipeline Summary
+              </h3>
+              <div className="grid grid-cols-3 gap-3">
+                {[
+              {
+                label: 'Confirmed Future Revenue',
+                value: 'R 38,835'
+              },
+              {
+                label: 'Upcoming Bookings',
+                value: '4'
+              },
+              {
+                label: 'Future Nights Booked',
+                value: '12'
+              }].
+              map((kpi, idx) =>
+              <div key={idx} className="bg-[#F7F7F7] rounded-[10px] p-4">
+                    <div className="text-[11px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0] mb-1">
+                      {kpi.label}
+                    </div>
+                    <div className="text-[22px] font-bold tracking-[-0.3px] text-[#222222]">
+                      {kpi.value}
+                    </div>
+                  </div>
+              )}
+              </div>
+            </div>
+          </>
+        }
+
+        {/* PLACEHOLDER FOR OTHER TABS */}
+        {['patterns', 'market'].includes(activeTab) &&
+        <div className="bg-white rounded-[12px] p-8 text-center shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
+            <div className="w-12 h-12 bg-[#F7F7F7] rounded-full flex items-center justify-center mx-auto mb-4">
+              <span className="text-[20px]">📊</span>
+            </div>
+            <h3 className="text-[15px] font-semibold text-[#222222] mb-2 capitalize">
+              {activeTab} Data
+            </h3>
+            <p className="text-[14px] text-[#717171] max-w-[250px] mx-auto">
+              Detailed {activeTab} analytics and visualizations will appear
+              here.
+            </p>
+          </div>
+        }
+      </div>
+    </div>);
+
+}

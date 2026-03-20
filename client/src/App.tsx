@@ -1,61 +1,104 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
-import { useAuth } from '@/hooks/useAuth';
-import AppLayout from '@/components/AppLayout';
-import LoginPage from '@/pages/LoginPage';
-import DashboardPage from '@/pages/DashboardPage';
-import CalendarPage from '@/pages/CalendarPage';
-import CleanersPage from '@/pages/CleanersPage';
-import AnalyticsPage from '@/pages/AnalyticsPage';
-import PropertiesPage from '@/pages/PropertiesPage';
-import MorePage from '@/pages/MorePage';
-import FinancesPage from '@/pages/FinancesPage';
-import MaintenancePage from '@/pages/MaintenancePage';
-import UsersPage from '@/pages/UsersPage';
-import SettingsPage from '@/pages/SettingsPage';
-import ReviewsPage from '@/pages/ReviewsPage';
-
-function PrivateRoute({ children }: { children: React.ReactNode }) {
-  const { user, loading } = useAuth();
-  if (loading) return <LoadingScreen />;
-  if (!user) return <Navigate to="/login" replace />;
-  return <>{children}</>;
-}
-
-function LoadingScreen() {
+import React, { useMemo, useState } from 'react';
+import { CalendarHeader } from './components/CalendarHeader';
+import { MonthCalendar } from './components/MonthCalendar';
+import { TimelineView } from './components/TimelineView';
+import { TabBar } from './components/TabBar';
+import { BookingDetailSheet } from './components/BookingDetailSheet';
+import { AppHeader } from './components/AppHeader';
+import { DashboardPage } from './components/DashboardPage';
+import { MorePage } from './components/MorePage';
+import { PlaceholderPage } from './components/PlaceholderPage';
+import { AnalyticsPage } from './components/AnalyticsPage';
+import { LoginPage } from './components/LoginPage';
+import { CleanersPage } from './components/CleanersPage';
+import { PropertiesPage } from './components/PropertiesPage';
+import { properties, bookings, Booking } from './data/properties';
+export function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [activeTab, setActiveTab] = useState('home');
+  // Calendar state (existing)
+  const [mode, setMode] = useState<'single' | 'multi'>('single');
+  const [propertyId, setPropertyId] = useState<number>(1);
+  const [channelFilter, setChannelFilter] = useState<string>('all');
+  const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  // Filter bookings based on channel
+  const filteredBookings = useMemo(() => {
+    let filtered = bookings;
+    if (channelFilter !== 'all') {
+      filtered = filtered.filter((b) => b.type === channelFilter);
+    }
+    return filtered;
+  }, [channelFilter]);
+  // For single mode, filter by property as well
+  const singleModeBookings = useMemo(() => {
+    return filteredBookings.filter((b) => b.propId === propertyId);
+  }, [filteredBookings, propertyId]);
+  const getPageTitle = () => {
+    switch (activeTab) {
+      case 'home':
+        return 'Dashboard';
+      case 'cleaners':
+        return 'Cleaners';
+      case 'analytics':
+        return 'Analytics';
+      case 'properties':
+        return 'Properties';
+      case 'more':
+        return 'More';
+      default:
+        return '';
+    }
+  };
+  if (!isLoggedIn) {
+    return <LoginPage onLogin={() => setIsLoggedIn(true)} />;
+  }
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
-    </div>
-  );
-}
+    <div className="flex flex-col h-screen overflow-hidden bg-[#F7F7F7] font-sans text-[#222222] antialiased">
+      {activeTab === 'calendar' ?
+      <CalendarHeader
+        mode={mode}
+        setMode={setMode}
+        propertyId={propertyId}
+        setPropertyId={setPropertyId}
+        channelFilter={channelFilter}
+        setChannelFilter={setChannelFilter} /> :
 
-export default function App() {
-  return (
-    <Routes>
-      <Route path="/login" element={<LoginPage />} />
-      <Route
-        path="/*"
-        element={
-          <PrivateRoute>
-            <AppLayout>
-              <Routes>
-                <Route path="/" element={<DashboardPage />} />
-                <Route path="/calendar" element={<CalendarPage />} />
-                <Route path="/cleaners" element={<CleanersPage />} />
-                <Route path="/analytics" element={<AnalyticsPage />} />
-                <Route path="/properties" element={<PropertiesPage />} />
-                <Route path="/more" element={<MorePage />} />
-                <Route path="/finances" element={<FinancesPage />} />
-                <Route path="/maintenance" element={<MaintenancePage />} />
-                <Route path="/users" element={<UsersPage />} />
-                <Route path="/settings" element={<SettingsPage />} />
-                <Route path="/reviews" element={<ReviewsPage />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </AppLayout>
-          </PrivateRoute>
+
+      <AppHeader title={getPageTitle()} />
+      }
+
+      <main className="flex-1 overflow-y-auto overflow-x-hidden pb-[64px]">
+        {activeTab === 'home' && <DashboardPage />}
+
+        {activeTab === 'calendar' && (
+        mode === 'single' ?
+        <MonthCalendar
+          propertyId={propertyId}
+          bookings={singleModeBookings}
+          onBookingClick={setSelectedBooking} /> :
+
+
+        <TimelineView
+          properties={properties}
+          bookings={filteredBookings}
+          onBookingClick={setSelectedBooking} />)
+
         }
-      />
-    </Routes>
-  );
+
+        {activeTab === 'cleaners' && <CleanersPage />}
+        {activeTab === 'analytics' && <AnalyticsPage />}
+        {activeTab === 'properties' && <PropertiesPage />}
+        {activeTab === 'more' && <MorePage onNavigate={setActiveTab} />}
+      </main>
+
+      <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
+
+      {activeTab === 'calendar' &&
+      <BookingDetailSheet
+        booking={selectedBooking}
+        onClose={() => setSelectedBooking(null)} />
+
+      }
+    </div>);
+
 }

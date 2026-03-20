@@ -1,0 +1,68 @@
+import React from 'react';
+import {
+  Home,
+  Calendar,
+  Sparkles,
+  BarChart2,
+  MoreHorizontal } from
+'lucide-react';
+interface TabBarProps {
+  activeTab: string;
+  onTabChange: (tab: string) => void;
+}
+export function TabBar({ activeTab, onTabChange }: TabBarProps) {
+  const tabs = [
+  {
+    id: 'home',
+    label: 'Home',
+    icon: Home,
+    badge: 3
+  },
+  {
+    id: 'calendar',
+    label: 'Calendar',
+    icon: Calendar
+  },
+  {
+    id: 'cleaners',
+    label: 'Cleaners',
+    icon: Sparkles
+  },
+  {
+    id: 'analytics',
+    label: 'Analytics',
+    icon: BarChart2
+  },
+  {
+    id: 'more',
+    label: 'More',
+    icon: MoreHorizontal
+  }];
+
+  return (
+    <nav className="fixed bottom-0 left-0 right-0 h-[64px] pb-safe bg-white border-t border-[#EBEBEB] flex justify-around z-50">
+      {tabs.map((tab) => {
+        const isActive = activeTab === tab.id;
+        const Icon = tab.icon;
+        return (
+          <a
+            key={tab.id}
+            onClick={() => onTabChange(tab.id)}
+            className={`flex flex-col items-center justify-center gap-1 cursor-pointer flex-1 pt-2 relative transition-colors ${isActive ? 'text-[#FF385C]' : 'text-[#717171] hover:text-[#222222]'}`}>
+            
+            <Icon
+              className="w-[22px] h-[22px]"
+              strokeWidth={isActive ? 2 : 1.5} />
+            
+            <span className="text-[10px]">{tab.label}</span>
+            {tab.badge &&
+            <span className="absolute top-[6px] left-[calc(50%+5px)] bg-[#D93900] text-white text-[10px] font-bold min-w-[16px] h-[16px] rounded-full flex items-center justify-center px-1 border-2 border-white leading-none">
+                {tab.badge}
+              </span>
+            }
+          </a>);
+
+      })}
+    </nav>);
+
+}

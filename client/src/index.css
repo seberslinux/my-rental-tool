@@ -1,39 +1,8 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* @import url() FONT IMPORTS MUST ALWAYS BE AT THE VERY TOP OF THIS FILE, ABOVE THE TAILWIND IMPORTS — DO NOT DELETE THIS COMMENT */
 
-@layer base {
-  body {
-    @apply text-gray-900;
-  }
-}
+/* CRITICAL: THE FOLLOWING TAILWIND IMPORTS MUST NEVER BE DELETED OR REORDERED — DO NOT DELETE THIS COMMENT */
+@import 'tailwindcss/base';
+@import 'tailwindcss/components';
+@import 'tailwindcss/utilities';
 
-@layer components {
-  .btn-primary {
-    @apply bg-primary-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-primary-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
-  }
-  .btn-secondary {
-    @apply bg-white text-gray-700 px-4 py-2 rounded-lg font-medium border border-gray-300 hover:bg-gray-50 transition-colors;
-  }
-  .card {
-    @apply bg-white rounded-xl border border-gray-200 p-5;
-  }
-  .input {
-    @apply w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500;
-  }
-  .badge {
-    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium;
-  }
-  .badge-airbnb {
-    @apply bg-pink-100 text-pink-700;
-  }
-  .badge-booking {
-    @apply bg-blue-100 text-blue-800;
-  }
-  .badge-direct {
-    @apply bg-green-100 text-green-700;
-  }
-  .badge-blocked {
-    @apply bg-gray-100 text-gray-600;
-  }
-}
+/* END TAILWIND IMPORTS — ALL OTHER CSS MUST GO BELOW THIS LINE */
