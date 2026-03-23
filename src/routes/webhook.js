@@ -38,7 +38,7 @@ router.post('/', async (req, res) => {
         `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests)
          VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed', $8)
          ON CONFLICT(smoobu_id) DO UPDATE SET
-           guest_name = EXCLUDED.guest_name, check_in = EXCLUDED.check_in,
+           guest_name = CASE WHEN EXCLUDED.guest_name = '' THEN bookings.guest_name ELSE EXCLUDED.guest_name END, check_in = EXCLUDED.check_in,
            check_out = EXCLUDED.check_out, platform = EXCLUDED.platform,
            total_price = EXCLUDED.total_price, status = 'confirmed',
            num_guests = EXCLUDED.num_guests`,

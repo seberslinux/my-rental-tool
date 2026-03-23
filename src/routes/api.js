@@ -75,7 +75,7 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
           `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, currency, modified_at)
            VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
            ON CONFLICT(smoobu_id) DO UPDATE SET
-             guest_name = excluded.guest_name,
+             guest_name = CASE WHEN excluded.guest_name = '' THEN bookings.guest_name ELSE excluded.guest_name END,
              check_in = excluded.check_in,
              check_out = excluded.check_out,
              platform = excluded.platform,
