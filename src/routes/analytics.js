@@ -512,7 +512,7 @@ router.get('/data', async (req, res) => {
     const avgBookings = Math.round(lastThree.reduce((sum, r) => sum + r.bookings, 0) / 3);
     const avgNights = Math.round(lastThree.reduce((sum, r) => sum + r.nights, 0) / 3);
 
-    for (let i = 1; i <= 3; i++) {
+    for (let i = 1; i <= 4; i++) {
       const futureDate = new Date(today);
       futureDate.setMonth(futureDate.getMonth() + i);
       const month = futureDate.toISOString().substring(0, 7);

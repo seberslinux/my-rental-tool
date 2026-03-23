@@ -16,7 +16,7 @@ function fmtMonthLabel(ym: string): string {
 }
 
 export let overviewKPIs: { label: string; value: string; trend: string; trendDetail: string; isPositive: boolean }[] = [];
-export let revenueData: { month: string; current: number; previous: number }[] = [];
+export let revenueData: { month: string; current: number; previous: number; forecast?: number | null }[] = [];
 export let revenueByProperty: { name: string; revenue: number; percentage: number }[] = [];
 export let propertyPerformance: { name: string; revenue: string; occupancy: number; adr: string; avgStay: string; bookings: number; rating: string; topPlatform: string }[] = [];
 export let channelMixData: { name: string; value: number; color: string }[] = [];
@@ -102,11 +102,28 @@ export async function loadAnalyticsData(propertyId: string = 'all', period: stri
         priorTimeline[currentKey] = Math.round(m.total || 0);
       }
     }
-    revenueData = (d.revenue_timeline || []).map((m: any) => ({
+    const currentTimeline = (d.revenue_timeline || []).map((m: any) => ({
       month: fmtMonthLabel(m.month),
       current: Math.round(m.total || 0),
       previous: priorTimeline[m.month] || 0,
+      forecast: null as number | null,
     }));
+
+    // Append forecast months (bridge last actual into forecast)
+    const predictions: any[] = d.predictions || [];
+    if (predictions.length > 0 && currentTimeline.length > 0) {
+      // Set forecast on last actual month for a seamless line connection
+      currentTimeline[currentTimeline.length - 1].forecast = currentTimeline[currentTimeline.length - 1].current;
+    }
+    for (const p of predictions) {
+      currentTimeline.push({
+        month: fmtMonthLabel(p.month),
+        current: 0,
+        previous: priorTimeline[p.month] || 0,
+        forecast: Math.round(p.predicted_revenue || 0),
+      });
+    }
+    revenueData = currentTimeline;
 
     // --- Revenue by property ---
     const propRevEntries = Object.values(d.revenue_by_property || {}) as any[];

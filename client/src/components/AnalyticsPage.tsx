@@ -678,8 +678,8 @@ export function AnalyticsPage() {
                     <LineChart
                     data={revenueData.map((m) => ({
                       month: m.month,
-                      actual: m.current,
-                      forecast: null,
+                      actual: m.current || null,
+                      forecast: m.forecast,
                     }))}
                     margin={{
                       top: 5,
