@@ -31,11 +31,15 @@ export async function setPropertyFilter(propertyId: number): Promise<void> {
 }
 
 // Holidays are static — no API needed
-export const upcomingHolidays = [
-  { id: 1, title: 'Human Rights Day', subtitle: 'Mar 21 · South Africa · expect higher demand' },
-  { id: 2, title: 'Good Friday', subtitle: 'Apr 18 · International · long weekend' },
-  { id: 3, title: 'Easter Weekend', subtitle: 'Apr 18–21 · Europe + SA · peak bookings' },
+const allHolidays = [
+  { id: 1, title: 'Human Rights Day', subtitle: 'Mar 21 · South Africa · expect higher demand', date: '2026-03-21' },
+  { id: 2, title: 'Good Friday', subtitle: 'Apr 18 · International · long weekend', date: '2026-04-18' },
+  { id: 3, title: 'Easter Weekend', subtitle: 'Apr 18–21 · Europe + SA · peak bookings', date: '2026-04-21' },
+  { id: 4, title: 'Freedom Day', subtitle: 'Apr 27 · South Africa · public holiday', date: '2026-04-27' },
+  { id: 5, title: 'Workers\' Day', subtitle: 'May 1 · South Africa · public holiday', date: '2026-05-01' },
+  { id: 6, title: 'Youth Day', subtitle: 'Jun 16 · South Africa · public holiday', date: '2026-06-16' },
 ];
+export const upcomingHolidays = allHolidays.filter((h) => h.date >= new Date().toISOString().split('T')[0]);
 
 function fmtDate(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00');
