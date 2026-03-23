@@ -84,6 +84,7 @@ export async function loadDashboardData(): Promise<void> {
 
     const today = new Date().toISOString().split('T')[0];
     let allBookings: any[] = [];
+    let scopedBookings: any[] = [];
     let displayCurrency = 'ZAR';
 
     if (bookingsRes.ok) {
@@ -92,7 +93,7 @@ export async function loadDashboardData(): Promise<void> {
       displayCurrency = bData.display_currency || 'ZAR';
 
       // Apply property filter
-      const scopedBookings = activePropertyFilter > 0
+      scopedBookings = activePropertyFilter > 0
         ? rawBookings.filter((b: any) => b.property_id === activePropertyFilter)
         : rawBookings;
 
@@ -145,6 +146,29 @@ export async function loadDashboardData(): Promise<void> {
       ? Math.round(stats.occupancy.reduce((s: number, o: any) => s + o.occupancy_rate, 0) / stats.occupancy.length)
       : 0;
 
+    // Compute prior 30-day occupancy from bookings
+    const priorOccDays = 30;
+    const priorOccStart = sixtyDaysAgoStr;
+    const priorOccEnd = thirtyDaysAgoStr;
+    let priorBookedNights = 0;
+    const occProps = activePropertyFilter > 0
+      ? allProperties.filter((p) => p.id === activePropertyFilter)
+      : allProperties;
+    for (const p of occProps) {
+      const propBookings = realBookings.filter((b: any) =>
+        b.property_id === p.id && b.check_out >= priorOccStart && b.check_in <= priorOccEnd
+      );
+      for (const b of propBookings) {
+        const start = new Date(Math.max(new Date(b.check_in).getTime(), new Date(priorOccStart).getTime()));
+        const end = new Date(Math.min(new Date(b.check_out).getTime(), new Date(priorOccEnd).getTime()));
+        priorBookedNights += Math.max(0, Math.round((end.getTime() - start.getTime()) / 86400000));
+      }
+    }
+    const priorOccupancy = occProps.length > 0
+      ? Math.round((priorBookedNights / (priorOccDays * occProps.length)) * 100)
+      : 0;
+    const occChange = priorOccupancy > 0 ? Math.round(((avgOccupancy - priorOccupancy) / priorOccupancy) * 100) : 0;
+
     const avgRate = currentPeriod.length > 0
       ? Math.round(currentPeriod.reduce((s: number, b: any) => s + (b.price_per_night || 0), 0) / currentPeriod.length)
       : 0;
@@ -160,7 +184,7 @@ export async function loadDashboardData(): Promise<void> {
 
     kpis = [
       { label: 'Revenue', value: fmtMoney(totalRevenue), trend: fmtChange(revChange), isPositive: revChange >= 0, period: 'Last 30 days' },
-      { label: 'Occupancy', value: `${avgOccupancy}%`, trend: '', isPositive: avgOccupancy >= 50, period: 'Next 30 days' },
+      { label: 'Occupancy', value: `${avgOccupancy}%`, trend: fmtChange(occChange), isPositive: occChange >= 0, period: 'Next 30 days' },
       { label: 'Avg Rate', value: fmtMoney(avgRate), trend: fmtChange(rateChange), isPositive: rateChange >= 0, period: 'Last 30 days' },
     ];
 
@@ -219,21 +243,36 @@ export async function loadDashboardData(): Promise<void> {
       });
     });
 
-    // Add vacant properties
+    // Add vacant properties (check if blocked or genuinely empty)
+    // Include blocked bookings for this check
+    const allBookingsIncBlocked = scopedBookings.filter((b: any) => b.status !== 'cancelled');
     visibleProps.forEach((p) => {
       if (!stayingPropIds.has(p.id)) {
-        // Find next check-in for this property
+        // Check if currently blocked
+        const activeBlock = allBookingsIncBlocked.find((b: any) =>
+          b.property_id === p.id && b.check_in <= today && b.check_out > today
+          && (b.platform || '').toLowerCase().includes('block')
+        );
+        // Find next real check-in
         const nextCheckIn = allBookings.find((b: any) =>
           b.property_id === p.id && b.check_in > today && !((b.platform || '').toLowerCase().includes('block'))
         );
+        const reason = activeBlock ? 'Blocked' : 'Empty';
+        const rate = p.base ? fmtMoney(p.base) + '/night' : '';
+        const metaParts: string[] = [];
+        if (activeBlock) metaParts.push(`Until ${fmtDate(activeBlock.check_out)}`);
+        if (nextCheckIn) metaParts.push(`Next check-in ${fmtDate(nextCheckIn.check_in)}`);
+        if (!activeBlock && !nextCheckIn) metaParts.push('No upcoming bookings');
+        if (rate) metaParts.push(rate);
+
         stayItems.push({
           id: -p.id,
           property: p.name,
           platform: '',
-          guestName: 'Empty',
-          meta: nextCheckIn ? `Next check-in ${fmtDate(nextCheckIn.check_in)}` : 'No upcoming bookings',
+          guestName: reason,
+          meta: metaParts.join(' · '),
           isVacant: true,
-          statusText: nextCheckIn ? `Check-in ${relativeDay(nextCheckIn.check_in)}` : 'Available',
+          statusText: activeBlock ? 'Blocked' : (nextCheckIn ? `Check-in ${relativeDay(nextCheckIn.check_in)}` : 'Available'),
         });
       }
     });
