@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   LineChart,
   Line,
@@ -28,7 +28,8 @@ import {
   checkoutDowStats,
   hourDistribution,
   occupancyHeatmap,
-  recentReviews } from
+  recentReviews,
+  loadAnalyticsData } from
 '../data/analytics';
 import { properties } from '../data/properties';
 const TABS = [
@@ -80,6 +81,19 @@ export function AnalyticsPage() {
   const [activeTab, setActiveTab] = useState('overview');
   const [activePeriod, setActivePeriod] = useState('1Y');
   const [activeProperty, setActiveProperty] = useState('All Properties');
+  const [version, setVersion] = useState(0);
+
+  const refreshData = useCallback(async () => {
+    const prop = properties.find((p) => p.name === activeProperty);
+    const propertyId = prop ? String(prop.id) : 'all';
+    await loadAnalyticsData(propertyId, activePeriod);
+    setVersion((v) => v + 1);
+  }, [activeProperty, activePeriod]);
+
+  useEffect(() => {
+    refreshData();
+  }, [refreshData]);
+
   return (
     <div className="p-4 bg-[#F7F7F7] min-h-full pb-8">
       {/* Global Filters: Property + Period */}

@@ -37,16 +37,29 @@ const CHANNEL_COLORS: Record<string, string> = {
   'VRBO': '#3B5998',
 };
 
-export async function loadAnalyticsData(): Promise<void> {
+export function getDateRange(period: string): { from: string; to: string } {
+  const now = new Date();
+  const to = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  let fromDate: Date;
+  switch (period) {
+    case '30D': fromDate = new Date(now.getTime() - 30 * 86400000); break;
+    case '90D': fromDate = new Date(now.getTime() - 90 * 86400000); break;
+    case '6M': fromDate = new Date(now.getFullYear(), now.getMonth() - 6, 1); break;
+    case 'YTD': fromDate = new Date(now.getFullYear(), 0, 1); break;
+    case '1Y':
+    default: fromDate = new Date(now.getFullYear() - 1, now.getMonth(), 1); break;
+  }
+  const from = `${fromDate.getFullYear()}-${String(fromDate.getMonth() + 1).padStart(2, '0')}`;
+  return { from, to };
+}
+
+export async function loadAnalyticsData(propertyId: string = 'all', period: string = '1Y'): Promise<void> {
   try {
-    // Fetch last 12 months of data
     const now = new Date();
-    const fromDate = new Date(now.getFullYear() - 1, now.getMonth(), 1);
-    const from = `${fromDate.getFullYear()}-${String(fromDate.getMonth() + 1).padStart(2, '0')}`;
-    const to = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const { from, to } = getDateRange(period);
 
     const [dataRes, reviewsRes] = await Promise.all([
-      fetch(`/api/analytics/data?property_id=all&from=${from}&to=${to}`, { credentials: 'same-origin' }),
+      fetch(`/api/analytics/data?property_id=${encodeURIComponent(propertyId)}&from=${from}&to=${to}`, { credentials: 'same-origin' }),
       fetch('/api/analytics/reviews', { credentials: 'same-origin' }),
     ]);
 
