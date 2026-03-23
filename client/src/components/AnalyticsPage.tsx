@@ -23,6 +23,11 @@ import {
   occupancyTrendData,
   rateTrendData,
   guestCountries,
+  guestLanguages,
+  dowStats,
+  checkoutDowStats,
+  hourDistribution,
+  occupancyHeatmap,
   recentReviews } from
 '../data/analytics';
 import { properties } from '../data/properties';
@@ -1494,7 +1499,34 @@ export function AnalyticsPage() {
                 <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
                   Guest Languages
                 </h3>
-                <div className="text-[13px] text-[#B0B0B0] text-center py-8">No language data available</div>
+                <div className="space-y-3">
+                  {guestLanguages.map((item, idx) =>
+                <div key={idx} className="flex items-center gap-3">
+                      <span className="text-[13px] text-[#222222] w-[110px] flex-shrink-0 font-medium">
+                        {item.language}
+                      </span>
+                      <div className="flex-1 flex items-center gap-2">
+                        <div className="flex items-center gap-1.5 flex-1">
+                          {item.percentage >= 5 &&
+                      <span className="text-[10px] font-semibold text-white bg-[#00A699] rounded-[3px] px-1.5 py-[1px] flex-shrink-0">
+                              {item.percentage}%
+                            </span>
+                      }
+                          <div className="flex-1 h-[6px] bg-[#F0F0F0] rounded-full overflow-hidden">
+                            <div
+                          className="h-full bg-[#00A699] rounded-full"
+                          style={{ width: `${item.percentage * 2.5}%` }}>
+                        </div>
+                          </div>
+                        </div>
+                        <span className="text-[13px] font-medium text-[#222222] w-[28px] text-right flex-shrink-0">
+                          {item.percentage}%
+                        </span>
+                      </div>
+                    </div>
+                )}
+                {guestLanguages.length === 0 && <div className="text-[13px] text-[#B0B0B0] text-center py-4">No language data available</div>}
+                </div>
               </div>
             </div>
           </>
@@ -1529,42 +1561,40 @@ export function AnalyticsPage() {
                   <thead>
                     <tr>
                       <th className="text-left p-2 text-[#B0B0B0] font-medium w-[100px]"></th>
-                      {[
-                    'Jan',
-                    'Feb',
-                    'Mar',
-                    'Apr',
-                    'May',
-                    'Jun',
-                    'Jul',
-                    'Aug',
-                    'Sep',
-                    'Oct',
-                    'Nov',
-                    'Dec'].
-                    map((m) =>
+                      {(() => {
+                    const months: string[] = [];
+                    const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                    const now = new Date();
+                    for (let i = 0; i < 12; i++) {
+                      const d = new Date(now.getFullYear(), now.getMonth() - 11 + i, 1);
+                      months.push(MONTH_NAMES[d.getMonth()]);
+                    }
+                    return months;
+                  })().map((m, i) =>
                     <th
-                      key={m}
+                      key={i}
                       className="p-2 text-center text-[#B0B0B0] font-medium">
-                      
                           {m}
                         </th>
                     )}
                     </tr>
                   </thead>
                   <tbody>
-                    {propertyPerformance.length > 0 ? propertyPerformance.map((prop, idx) =>
+                    {occupancyHeatmap.length > 0 ? occupancyHeatmap.map((prop, idx) =>
                   <tr key={idx}>
                         <td className="p-2 text-[13px] font-medium text-[#222222] whitespace-nowrap">
-                          {prop.name}
+                          {prop.property}
                         </td>
-                        {[...Array(12)].map((_, mIdx) =>
-                    <td key={mIdx} className="p-1.5 text-center">
-                            <div className="rounded-[6px] py-1.5 px-1 text-[12px] font-semibold bg-[#F0F0F0] text-[#B0B0B0]">
-                              --
+                        {prop.months.map((m, mIdx) => {
+                      const bg = m.rate >= 75 ? 'bg-[#00A699] text-white' : m.rate >= 50 ? 'bg-[#FFF3E0] text-[#E8913A]' : m.rate > 0 ? 'bg-[#FEF2F2] text-[#D93900]' : 'bg-[#F0F0F0] text-[#B0B0B0]';
+                      return (
+                        <td key={mIdx} className="p-1.5 text-center">
+                            <div className={`rounded-[6px] py-1.5 px-1 text-[12px] font-semibold ${bg}`}>
+                              {m.rate > 0 ? `${m.rate}%` : '--'}
                             </div>
-                          </td>
-                    )}
+                          </td>);
+
+                    })}
                       </tr>
                   ) : <tr><td colSpan={13} className="p-4 text-center text-[13px] text-[#B0B0B0]">No heatmap data available</td></tr>}
                   </tbody>
@@ -1574,39 +1604,63 @@ export function AnalyticsPage() {
 
             {/* Booking Patterns + Check-in Day */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {/* Booking Patterns — Day of Week */}
-              <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
-                <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
-                  Booking Patterns — Day of Week
-                </h3>
-                <div className="text-[13px] text-[#B0B0B0] text-center py-8">No booking pattern data available</div>
-              </div>
-
               {/* Check-in Day Distribution */}
               <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
                 <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
                   Check-in Day Distribution
                 </h3>
+                {dowStats.length > 0 ?
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={dowStats}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" />
+                    <XAxis dataKey="day" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#00A699" radius={[4,4,0,0]} />
+                  </BarChart>
+                </ResponsiveContainer> :
                 <div className="text-[13px] text-[#B0B0B0] text-center py-8">No check-in pattern data available</div>
+                }
               </div>
-            </div>
 
-            {/* Check-out Day + Booking Time of Day */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               {/* Check-out Day Distribution */}
               <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
                 <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
                   Check-out Day Distribution
                 </h3>
+                {checkoutDowStats.length > 0 ?
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={checkoutDowStats}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" />
+                    <XAxis dataKey="day" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#E8913A" radius={[4,4,0,0]} />
+                  </BarChart>
+                </ResponsiveContainer> :
                 <div className="text-[13px] text-[#B0B0B0] text-center py-8">No check-out pattern data available</div>
+                }
               </div>
+            </div>
 
-              {/* Booking Time of Day */}
+            {/* Booking Time of Day */}
+            <div className="grid grid-cols-1 gap-4">
               <div className="bg-white rounded-[12px] p-5 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB]">
                 <h3 className="text-[15px] font-semibold text-[#222222] mb-4">
-                  Booking Time of Day
+                  Booking Time of Day (SAST)
                 </h3>
+                {hourDistribution.length > 0 ?
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={hourDistribution}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#F0F0F0" />
+                    <XAxis dataKey="hour" tick={{ fontSize: 10 }} interval={2} />
+                    <YAxis tick={{ fontSize: 12 }} />
+                    <Tooltip />
+                    <Bar dataKey="count" fill="#007AFF" radius={[4,4,0,0]} />
+                  </BarChart>
+                </ResponsiveContainer> :
                 <div className="text-[13px] text-[#B0B0B0] text-center py-8">No booking time data available</div>
+                }
               </div>
             </div>
 

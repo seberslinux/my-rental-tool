@@ -23,6 +23,11 @@ export let channelMixData: { name: string; value: number; color: string }[] = []
 export let occupancyTrendData: { month: string; rate: number }[] = [];
 export let rateTrendData: { month: string; adr: number; revpar: number }[] = [];
 export let guestCountries: { country: string; percentage: number }[] = [];
+export let guestLanguages: { language: string; percentage: number }[] = [];
+export let dowStats: { day: string; count: number }[] = [];
+export let checkoutDowStats: { day: string; count: number }[] = [];
+export let hourDistribution: { hour: string; count: number }[] = [];
+export let occupancyHeatmap: { property: string; months: { month: string; rate: number }[] }[] = [];
 export let recentReviews: { id: number; guest: string; property: string; rating: number; date: string; text: string }[] = [];
 
 const CHANNEL_COLORS: Record<string, string> = {
@@ -149,16 +154,69 @@ export async function loadAnalyticsData(): Promise<void> {
       };
     });
 
-    // --- Guest countries (from API if available, else empty) ---
-    if (d.guest_countries && d.guest_countries.length > 0) {
-      const totalGuests = d.guest_countries.reduce((s: number, g: any) => s + (g.count || 0), 0);
-      guestCountries = d.guest_countries.map((g: any) => ({
+    // --- Guest countries ---
+    const topCountries = d.guest_demographics?.top_countries || d.guest_countries || [];
+    if (topCountries.length > 0) {
+      const totalGuests = topCountries.reduce((s: number, g: any) => s + (g.count || 0), 0);
+      guestCountries = topCountries.map((g: any) => ({
         country: g.country || 'Unknown',
         percentage: totalGuests > 0 ? Math.round((g.count / totalGuests) * 100) : 0,
       }));
     } else {
       guestCountries = [];
     }
+
+    // --- Guest languages ---
+    const topLanguages = d.guest_demographics?.top_languages || [];
+    if (topLanguages.length > 0) {
+      const totalLang = topLanguages.reduce((s: number, g: any) => s + (g.count || 0), 0);
+      guestLanguages = topLanguages.map((g: any) => ({
+        language: g.language || 'Unknown',
+        percentage: totalLang > 0 ? Math.round((g.count / totalLang) * 100) : 0,
+      }));
+    } else {
+      guestLanguages = [];
+    }
+
+    // --- Day of week stats (check-in) ---
+    const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const rawDow = d.dow_stats || [];
+    dowStats = rawDow.map((s: any) => ({
+      day: DAY_NAMES[s.day] || String(s.day),
+      count: s.bookings_starting || 0,
+    }));
+
+    // --- Check-out day distribution ---
+    const rawCoDow = d.checkout_dow_stats || [];
+    checkoutDowStats = rawCoDow.map((s: any) => ({
+      day: DAY_NAMES[s.day] || String(s.day),
+      count: s.count || 0,
+    }));
+
+    // --- Booking time of day ---
+    const rawHours = d.hour_distribution || [];
+    hourDistribution = rawHours.map((h: any) => ({
+      hour: `${String(h.hour).padStart(2, '0')}:00`,
+      count: h.count || 0,
+    }));
+
+    // --- Occupancy heatmap (per property per month) ---
+    const occTimeline: any[] = d.occupancy_timeline || [];
+    const propMap: Record<string, { property: string; months: Record<string, number> }> = {};
+    for (const o of occTimeline) {
+      const key = o.property_id || o.property;
+      if (!propMap[key]) propMap[key] = { property: o.property, months: {} };
+      propMap[key].months[o.month] = o.occupancy_rate || 0;
+    }
+    occupancyHeatmap = Object.values(propMap).map((p) => {
+      const months: { month: string; rate: number }[] = [];
+      for (let i = 0; i < 12; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() - 11 + i, 1);
+        const ym = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        months.push({ month: ym, rate: p.months[ym] || 0 });
+      }
+      return { property: p.property, months };
+    });
 
     // --- Reviews ---
     if (reviewsRes.ok) {
