@@ -37,7 +37,9 @@ function fmtDate(dateStr: string): string {
 
 function fmtMoney(amount: number): string {
   if (!amount) return 'R 0';
-  return amount >= 1000 ? `R ${(amount / 1000).toFixed(1)}K` : `R ${amount}`;
+  if (amount >= 1000000) return `R ${(amount / 1000000).toFixed(1)}M`;
+  if (amount >= 1000) return `R ${(amount / 1000).toFixed(1)}K`;
+  return `R ${amount}`;
 }
 
 function platformLabel(p: string): string {
