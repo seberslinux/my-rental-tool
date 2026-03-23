@@ -1,6 +1,8 @@
+import { properties as allProperties } from './properties';
+
 // Dashboard data — populated by loadDashboardData() from the real API
 
-export let kpis: { label: string; value: string; trend: string; isPositive: boolean }[] = [];
+export let kpis: { label: string; value: string; trend: string; isPositive: boolean; period: string }[] = [];
 
 export let needsAttention: { id: number; title: string; subtitle: string; dotColor: string }[] = [];
 
@@ -102,7 +104,7 @@ export async function loadDashboardData(): Promise<void> {
         .slice(0, 5)
         .map((b: any) => ({
           id: b.id,
-          guestName: b.guest_name || 'Unknown',
+          guestName: b.guest_name || `Guest · ${platformLabel(b.platform)}`,
           property: b.property_name || `Property ${b.property_id}`,
           checkIn: fmtDate(b.check_in),
           checkOut: fmtDate(b.check_out),
@@ -123,20 +125,39 @@ export async function loadDashboardData(): Promise<void> {
       }
     }
 
-    // --- KPIs ---
+    // --- KPIs (current 30 days vs prior 30 days) ---
     const realBookings = allBookings.filter((b: any) => !(b.platform || '').toLowerCase().includes('block'));
-    const totalRevenue = realBookings.reduce((s: number, b: any) => s + (b.total_price || 0), 0);
+    const thirtyDaysAgoStr = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
+    const sixtyDaysAgoStr = new Date(Date.now() - 60 * 86400000).toISOString().split('T')[0];
+
+    const currentPeriod = realBookings.filter((b: any) => b.check_in >= thirtyDaysAgoStr);
+    const priorPeriod = realBookings.filter((b: any) => b.check_in >= sixtyDaysAgoStr && b.check_in < thirtyDaysAgoStr);
+
+    const totalRevenue = currentPeriod.reduce((s: number, b: any) => s + (b.total_price || 0), 0);
+    const priorRevenue = priorPeriod.reduce((s: number, b: any) => s + (b.total_price || 0), 0);
+    const revChange = priorRevenue > 0 ? Math.round(((totalRevenue - priorRevenue) / priorRevenue) * 100) : 0;
+
     const avgOccupancy = stats.occupancy.length > 0
       ? Math.round(stats.occupancy.reduce((s: number, o: any) => s + o.occupancy_rate, 0) / stats.occupancy.length)
       : 0;
-    const avgRate = realBookings.length > 0
-      ? Math.round(realBookings.reduce((s: number, b: any) => s + (b.price_per_night || 0), 0) / realBookings.length)
+
+    const avgRate = currentPeriod.length > 0
+      ? Math.round(currentPeriod.reduce((s: number, b: any) => s + (b.price_per_night || 0), 0) / currentPeriod.length)
       : 0;
+    const priorAvgRate = priorPeriod.length > 0
+      ? Math.round(priorPeriod.reduce((s: number, b: any) => s + (b.price_per_night || 0), 0) / priorPeriod.length)
+      : 0;
+    const rateChange = priorAvgRate > 0 ? Math.round(((avgRate - priorAvgRate) / priorAvgRate) * 100) : 0;
+
+    function fmtChange(pct: number): string {
+      if (pct === 0) return '';
+      return `${pct > 0 ? '+' : ''}${pct}% vs prior 30d`;
+    }
 
     kpis = [
-      { label: 'Revenue', value: fmtMoney(totalRevenue), trend: '', isPositive: true },
-      { label: 'Occupancy', value: `${avgOccupancy}%`, trend: '', isPositive: avgOccupancy >= 50 },
-      { label: 'Avg Rate', value: fmtMoney(avgRate), trend: '', isPositive: true },
+      { label: 'Revenue', value: fmtMoney(totalRevenue), trend: fmtChange(revChange), isPositive: revChange >= 0, period: 'Last 30 days' },
+      { label: 'Occupancy', value: `${avgOccupancy}%`, trend: '', isPositive: avgOccupancy >= 50, period: 'Next 30 days' },
+      { label: 'Avg Rate', value: fmtMoney(avgRate), trend: fmtChange(rateChange), isPositive: rateChange >= 0, period: 'Last 30 days' },
     ];
 
     // --- Needs Attention ---
@@ -166,21 +187,22 @@ export async function loadDashboardData(): Promise<void> {
 
     needsAttention = attentionItems.slice(0, 5);
 
-    // --- Currently Staying ---
+    // --- Currently Staying (show all properties) ---
     const stayingBookings = allBookings.filter((b: any) =>
       b.check_in <= today && b.check_out > today && !((b.platform || '').toLowerCase().includes('block'))
     );
 
-    // Find properties with no current guest
     const stayingPropIds = new Set(stayingBookings.map((b: any) => b.property_id));
 
-    // We'll need property names — build from bookings or fetch
-    const propNames: Record<number, string> = {};
-    allBookings.forEach((b: any) => { if (b.property_name) propNames[b.property_id] = b.property_name; });
+    // Determine which properties to show
+    const visibleProps = activePropertyFilter > 0
+      ? allProperties.filter((p) => p.id === activePropertyFilter)
+      : allProperties;
 
     const stayItems: typeof currentlyStaying = [];
+
+    // Add occupied properties
     stayingBookings.forEach((b: any) => {
-      const nights = Math.ceil((new Date(b.check_out).getTime() - new Date(b.check_in).getTime()) / 86400000);
       stayItems.push({
         id: b.id,
         property: b.property_name || `Property ${b.property_id}`,
@@ -191,6 +213,25 @@ export async function loadDashboardData(): Promise<void> {
         total: b.total_price ? `${fmtMoney(b.total_price)} total` : undefined,
         isVacant: false,
       });
+    });
+
+    // Add vacant properties
+    visibleProps.forEach((p) => {
+      if (!stayingPropIds.has(p.id)) {
+        // Find next check-in for this property
+        const nextCheckIn = allBookings.find((b: any) =>
+          b.property_id === p.id && b.check_in > today && !((b.platform || '').toLowerCase().includes('block'))
+        );
+        stayItems.push({
+          id: -p.id,
+          property: p.name,
+          platform: '',
+          guestName: 'Empty',
+          meta: nextCheckIn ? `Next check-in ${fmtDate(nextCheckIn.check_in)}` : 'No upcoming bookings',
+          isVacant: true,
+          statusText: nextCheckIn ? `Check-in ${relativeDay(nextCheckIn.check_in)}` : 'Available',
+        });
+      }
     });
 
     currentlyStaying = stayItems;

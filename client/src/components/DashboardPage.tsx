@@ -18,17 +18,21 @@ export function DashboardPage() {
         <div
           key={idx}
           className="flex-1 bg-white rounded-[10px] p-3 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] min-w-0">
-          
+
             <div className="text-[11px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0] mb-1">
               {kpi.label}
             </div>
             <div className="text-[20px] font-bold tracking-[-0.3px] text-[#222222] truncate">
               {kpi.value}
             </div>
+            {kpi.trend &&
             <div
             className={`text-[11px] font-medium mt-0.5 ${kpi.isPositive ? 'text-[#00A699]' : 'text-[#D93900]'}`}>
-            
               {kpi.trend}
+            </div>
+            }
+            <div className="text-[10px] text-[#B0B0B0] mt-0.5">
+              {kpi.period}
             </div>
           </div>
         )}
