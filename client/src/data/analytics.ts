@@ -58,13 +58,21 @@ export async function loadAnalyticsData(propertyId: string = 'all', period: stri
     const now = new Date();
     const { from, to } = getDateRange(period);
 
-    const [dataRes, reviewsRes] = await Promise.all([
+    // Also fetch prior year for comparison
+    const fromDate = new Date(from + '-01');
+    const priorFrom = `${fromDate.getFullYear() - 1}-${String(fromDate.getMonth() + 1).padStart(2, '0')}`;
+    const toDate = new Date(to + '-01');
+    const priorTo = `${toDate.getFullYear() - 1}-${String(toDate.getMonth() + 1).padStart(2, '0')}`;
+
+    const [dataRes, priorRes, reviewsRes] = await Promise.all([
       fetch(`/api/analytics/data?property_id=${encodeURIComponent(propertyId)}&from=${from}&to=${to}`, { credentials: 'same-origin' }),
+      fetch(`/api/analytics/data?property_id=${encodeURIComponent(propertyId)}&from=${priorFrom}&to=${priorTo}`, { credentials: 'same-origin' }),
       fetch('/api/analytics/reviews', { credentials: 'same-origin' }),
     ]);
 
     if (!dataRes.ok) return;
     const d = await dataRes.json();
+    const priorData = priorRes.ok ? await priorRes.json() : null;
 
     // --- Overview KPIs ---
     const totalRevenue = (d.revenue_timeline || []).reduce((s: number, m: any) => s + (m.total || 0), 0);
@@ -84,11 +92,20 @@ export async function loadAnalyticsData(propertyId: string = 'all', period: stri
       { label: 'Total Bookings', value: String(totalBookings), trend: '', trendDetail: 'confirmed', isPositive: true },
     ];
 
-    // --- Revenue timeline (current only, no previous year data from API) ---
+    // --- Revenue timeline (current + prior year) ---
+    const priorTimeline: Record<string, number> = {};
+    if (priorData?.revenue_timeline) {
+      for (const m of priorData.revenue_timeline) {
+        // Map prior year month to current year equivalent (e.g. 2024-03 -> 2025-03)
+        const [y, mo] = m.month.split('-');
+        const currentKey = `${Number(y) + 1}-${mo}`;
+        priorTimeline[currentKey] = Math.round(m.total || 0);
+      }
+    }
     revenueData = (d.revenue_timeline || []).map((m: any) => ({
       month: fmtMonthLabel(m.month),
       current: Math.round(m.total || 0),
-      previous: 0,
+      previous: priorTimeline[m.month] || 0,
     }));
 
     // --- Revenue by property ---
