@@ -75,49 +75,31 @@ export function DashboardPage() {
           Currently Staying
         </div>
         <div className="flex flex-col gap-2">
-          {currentlyStaying.map((guest) => {
-            if (guest.isVacant) {
-              return (
-                <div
-                  key={guest.id}
-                  className="rounded-[12px] p-4 border-[1.5px] border-dashed border-[#EBEBEB] bg-transparent">
-                  
-                  <div className="flex justify-between items-center mb-2">
-                    <div className="text-[12px] font-semibold text-[#717171] tracking-[0.2px]">
-                      {guest.property}
-                    </div>
-                    <span className="text-[11px] font-semibold px-2 py-[3px] rounded-[6px] tracking-[0.1px] bg-[#F7F7F7] text-[#B0B0B0] border border-[#EBEBEB]">
-                      Vacant
-                    </span>
-                  </div>
-                  <div className="text-[15px] font-normal text-[#717171] mb-[2px]">
-                    {guest.guestName}
-                  </div>
-                  <div className="text-[14px] text-[#717171] leading-[1.4]">
-                    {guest.meta}
-                  </div>
-                  <div className="inline-flex items-center gap-[5px] text-[13px] font-semibold tracking-[-0.08px] px-2.5 py-1 rounded-full mt-2 bg-[#FFF8F0] text-[#E8913A]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#E8913A]"></span>
-                    {guest.statusText}
-                  </div>
-                </div>);
+          {currentlyStaying.map((guest) => (
+            <div
+              key={guest.id}
+              className="bg-white rounded-[12px] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)]">
 
-            }
-            return (
-              <div
-                key={guest.id}
-                className="bg-white rounded-[12px] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] active:bg-[#FAFAFA]">
-                
-                <div className="flex justify-between items-center mb-2">
-                  <div className="text-[12px] font-semibold text-[#717171] tracking-[0.2px]">
-                    {guest.property}
-                  </div>
-                  <span
-                    className={`text-[11px] font-semibold px-2 py-[3px] rounded-[6px] tracking-[0.1px] ${guest.platform === 'Airbnb' ? 'bg-[#FF385C14] text-[#E31C5F]' : 'bg-[#003B9510] text-[#003B95]'}`}>
-                    
-                    {guest.platform}
-                  </span>
+              <div className="flex justify-between items-center mb-2">
+                <div className="text-[12px] font-semibold text-[#717171] tracking-[0.2px]">
+                  {guest.property}
                 </div>
+                {guest.isVacant ?
+                <span className="text-[11px] font-semibold px-2 py-[3px] rounded-[6px] tracking-[0.1px] bg-[#F7F7F7] text-[#B0B0B0]">
+                  Empty
+                </span> :
+                <span
+                  className={`text-[11px] font-semibold px-2 py-[3px] rounded-[6px] tracking-[0.1px] ${guest.platform === 'Airbnb' ? 'bg-[#FF385C14] text-[#E31C5F]' : 'bg-[#003B9510] text-[#003B95]'}`}>
+                  {guest.platform}
+                </span>
+                }
+              </div>
+
+              {guest.isVacant ?
+              <div className="text-[14px] text-[#717171]">
+                {guest.meta}
+              </div> :
+              <>
                 <div className="text-[18px] font-semibold tracking-[-0.3px] mb-[2px]">
                   {guest.guestName}
                 </div>
@@ -135,9 +117,10 @@ export function DashboardPage() {
                     {guest.total}
                   </div>
                 </div>
-              </div>);
-
-          })}
+              </>
+              }
+            </div>
+          ))}
         </div>
       </div>
 
