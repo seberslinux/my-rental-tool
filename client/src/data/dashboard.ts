@@ -99,7 +99,7 @@ export async function loadDashboardData(): Promise<void> {
       // Recent cancellations (last 30 days)
       const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
       recentCancellations = cancelledBookings
-        .filter((b: any) => b.check_in >= thirtyDaysAgo)
+        .filter((b: any) => b.check_in >= thirtyDaysAgo && !(b.platform || '').toLowerCase().includes('block'))
         .sort((a: any, b: any) => (b.modified_at || b.created_at || '').localeCompare(a.modified_at || a.created_at || ''))
         .slice(0, 5)
         .map((b: any) => ({
