@@ -70,7 +70,7 @@ router.post('/', async (req, res) => {
       const booking = await getOne('SELECT * FROM bookings WHERE smoobu_id = $1', [smoobuId]);
 
       if (booking) {
-        await run("UPDATE bookings SET status = 'cancelled' WHERE id = $1", [booking.id]);
+        await run("UPDATE bookings SET status = 'cancelled', modified_at = NOW() WHERE id = $1", [booking.id]);
         await unassignCleanerFromBooking(booking.id);
 
         // Unblock any dates that were blocked due to this booking's checkout

@@ -10,11 +10,18 @@ export let currentlyStaying: {
   statusText?: string; statusType?: string;
 }[] = [];
 
-export let nextUp: { id: number; type: string; label: string; name: string; detail: string; isLast?: boolean }[] = [];
+export let nextUp: { id: number; type: string; label: string; name: string; detail: string; isLast?: boolean; sortDate?: string }[] = [];
 
 export let cleaningJobs: { id: number; title: string; subtitle: string; status: string; buttonText: string; isProblem: boolean }[] = [];
 
-export let recentCancellations: { id: number; guestName: string; property: string; checkIn: string; checkOut: string; platform: string }[] = [];
+export let recentCancellations: { id: number; guestName: string; property: string; checkIn: string; checkOut: string; platform: string; cancelledAt: string }[] = [];
+
+let activePropertyFilter = 0; // 0 = all properties
+
+export function setPropertyFilter(propertyId: number): void {
+  activePropertyFilter = propertyId;
+  loadDashboardData();
+}
 
 // Holidays are static — no API needed
 export const upcomingHolidays = [
@@ -71,15 +78,20 @@ export async function loadDashboardData(): Promise<void> {
       const rawBookings: any[] = bData.bookings || bData;
       displayCurrency = bData.display_currency || 'ZAR';
 
+      // Apply property filter
+      const scopedBookings = activePropertyFilter > 0
+        ? rawBookings.filter((b: any) => b.property_id === activePropertyFilter)
+        : rawBookings;
+
       // Separate cancelled from active bookings
-      const cancelledBookings = rawBookings.filter((b: any) => b.status === 'cancelled');
-      allBookings = rawBookings.filter((b: any) => b.status !== 'cancelled');
+      const cancelledBookings = scopedBookings.filter((b: any) => b.status === 'cancelled');
+      allBookings = scopedBookings.filter((b: any) => b.status !== 'cancelled');
 
       // Recent cancellations (last 30 days)
       const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
       recentCancellations = cancelledBookings
         .filter((b: any) => b.check_in >= thirtyDaysAgo)
-        .sort((a: any, b: any) => b.check_in.localeCompare(a.check_in))
+        .sort((a: any, b: any) => (b.modified_at || b.created_at || '').localeCompare(a.modified_at || a.created_at || ''))
         .slice(0, 5)
         .map((b: any) => ({
           id: b.id,
@@ -88,12 +100,20 @@ export async function loadDashboardData(): Promise<void> {
           checkIn: fmtDate(b.check_in),
           checkOut: fmtDate(b.check_out),
           platform: platformLabel(b.platform),
+          cancelledAt: b.modified_at || b.created_at || '',
         }));
     }
 
     let stats: any = { occupancy: [], gaps: [], pending_cleaning_jobs: [], upcoming_checkouts: [] };
     if (statsRes.ok) {
       stats = await statsRes.json();
+      // Apply property filter to stats
+      if (activePropertyFilter > 0) {
+        stats.occupancy = (stats.occupancy || []).filter((o: any) => o.property_id === activePropertyFilter);
+        stats.gaps = (stats.gaps || []).filter((g: any) => g.property_id === activePropertyFilter);
+        stats.pending_cleaning_jobs = (stats.pending_cleaning_jobs || []).filter((j: any) => j.property_id === activePropertyFilter);
+        stats.upcoming_checkouts = (stats.upcoming_checkouts || []).filter((c: any) => c.property_id === activePropertyFilter);
+      }
     }
 
     // --- KPIs ---
@@ -187,6 +207,7 @@ export async function loadDashboardData(): Promise<void> {
         label: `Check-out · ${relativeDay(b.check_out)}`,
         name: b.guest_name,
         detail: b.property_name || `Property ${b.property_id}`,
+        sortDate: b.check_out,
       });
     });
 
@@ -205,14 +226,12 @@ export async function loadDashboardData(): Promise<void> {
         label: `Check-in · ${relativeDay(b.check_in)}`,
         name: b.guest_name,
         detail: `${b.property_name || ''} · ${b.num_guests || '?'} guests`,
+        sortDate: b.check_in,
       });
     });
 
-    // Sort by date, mark last
-    nextItems.sort((a, b) => {
-      const dateA = a.label; const dateB = b.label;
-      return dateA.localeCompare(dateB);
-    });
+    // Sort chronologically by actual date
+    nextItems.sort((a, b) => (a.sortDate || '').localeCompare(b.sortDate || ''));
     if (nextItems.length > 0) {
       nextItems[nextItems.length - 1].isLast = true;
     }

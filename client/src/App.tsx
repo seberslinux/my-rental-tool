@@ -13,7 +13,7 @@ import { CleanersPage } from './components/CleanersPage';
 import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
 import { properties, bookings, Booking, loadCalendarData } from './data/properties';
-import { loadDashboardData } from './data/dashboard';
+import { loadDashboardData, setPropertyFilter } from './data/dashboard';
 import { loadAnalyticsData } from './data/analytics';
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -25,6 +25,7 @@ export function App() {
   const [propertyId, setPropertyId] = useState<number>(0);
   const [channelFilter, setChannelFilter] = useState<string>('all');
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
+  const [dashboardPropertyFilter, setDashboardPropertyFilter] = useState<number>(0);
 
   // Check auth on mount
   useEffect(() => {
@@ -70,7 +71,7 @@ export function App() {
   const getPageTitle = () => {
     switch (activeTab) {
       case 'home':
-        return 'Dashboard';
+        return 'My Rentals';
       case 'cleaners':
         return 'Cleaners';
       case 'analytics':
@@ -110,7 +111,13 @@ export function App() {
         setChannelFilter={setChannelFilter} /> :
 
 
-      <AppHeader title={getPageTitle()} />
+      <AppHeader
+        title={getPageTitle()}
+        propertyFilter={activeTab === 'home' ? {
+          properties: properties.map((p) => ({ id: p.id, name: p.name })),
+          selected: dashboardPropertyFilter,
+          onChange: (id) => { setDashboardPropertyFilter(id); setPropertyFilter(id); },
+        } : undefined} />
       }
 
       <main className="flex-1 overflow-y-auto overflow-x-hidden pb-[64px]">

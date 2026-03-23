@@ -63,6 +63,7 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
         const checkIn = b.arrival || b.arrivalDate;
         const checkOut = b.departure || b.departureDate;
         const createdAt = b['created-at'] || b.createdAt || '';
+        const modifiedAt = b['modified-at'] || b.modifiedAt || '';
         const los = Math.max(1, Math.round((new Date(checkOut) - new Date(checkIn)) / (24 * 60 * 60 * 1000)));
         const price = b.price || 0;
         const ppn = los > 0 ? Math.round((price / los) * 100) / 100 : 0;
@@ -71,8 +72,8 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
         const currency = detectCurrency(b) || propCurrencyMap[aptId] || 'ZAR';
 
         await client.query(
-          `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, currency)
-           VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, currency, modified_at)
+           VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
            ON CONFLICT(smoobu_id) DO UPDATE SET
              guest_name = excluded.guest_name,
              check_in = excluded.check_in,
@@ -85,7 +86,8 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
              lead_time_days = excluded.lead_time_days,
              length_of_stay = excluded.length_of_stay,
              price_per_night = excluded.price_per_night,
-             currency = excluded.currency`,
+             currency = excluded.currency,
+             modified_at = excluded.modified_at`,
           [
             b.id,
             aptId,
@@ -100,7 +102,8 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
             leadTime,
             los,
             ppn,
-            currency
+            currency,
+            modifiedAt
           ]
         );
       }

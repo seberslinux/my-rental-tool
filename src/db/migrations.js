@@ -323,6 +323,7 @@ async function runMigrations() {
     ['children', 'INTEGER DEFAULT 0'],
     ['guest_country', "TEXT DEFAULT ''"],
     ['currency', "TEXT DEFAULT 'ZAR'"],
+    ['modified_at', "TEXT DEFAULT ''"],
   ]);
 
   await alterColumns('properties', [

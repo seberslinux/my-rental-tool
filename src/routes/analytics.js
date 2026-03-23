@@ -133,6 +133,7 @@ router.post('/sync-history', async (req, res) => {
         const checkIn = b.arrival || b.arrivalDate;
         const checkOut = b.departure || b.departureDate;
         const createdAt = b['created-at'] || b.createdAt || '';
+        const modifiedAt = b['modified-at'] || b.modifiedAt || '';
         const los = Math.max(1, Math.round((new Date(checkOut) - new Date(checkIn)) / (24 * 60 * 60 * 1000)));
         const price = b.price || 0;
         const ppn = los > 0 ? Math.round((price / los) * 100) / 100 : 0;
@@ -148,8 +149,8 @@ router.post('/sync-history', async (req, res) => {
         const currency = detectCurrency(b) || propCurrencyMap[aptId] || 'ZAR';
 
         await client.query(
-          `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, commission, language, children, guest_country, currency)
-           VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+          `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, commission, language, children, guest_country, currency, modified_at)
+           VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
            ON CONFLICT(smoobu_id) DO UPDATE SET
              guest_name = EXCLUDED.guest_name, check_in = EXCLUDED.check_in,
              check_out = EXCLUDED.check_out, platform = EXCLUDED.platform,
@@ -158,7 +159,8 @@ router.post('/sync-history', async (req, res) => {
              lead_time_days = EXCLUDED.lead_time_days, length_of_stay = EXCLUDED.length_of_stay,
              price_per_night = EXCLUDED.price_per_night, commission = EXCLUDED.commission,
              language = EXCLUDED.language, children = EXCLUDED.children,
-             guest_country = EXCLUDED.guest_country, currency = EXCLUDED.currency`,
+             guest_country = EXCLUDED.guest_country, currency = EXCLUDED.currency,
+             modified_at = EXCLUDED.modified_at`,
           [
             b.id,
             aptId,
@@ -167,7 +169,8 @@ router.post('/sync-history', async (req, res) => {
             b.type === 'cancellation' ? 'cancelled' : 'confirmed',
             b['adults'] || b.adults || 1,
             createdAt, leadTime, los, ppn,
-            commission, language, children, guestCountry, currency
+            commission, language, children, guestCountry, currency,
+            modifiedAt
           ]
         );
       }
