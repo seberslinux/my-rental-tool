@@ -85,8 +85,8 @@ export function DashboardPage() {
                   {guest.property}
                 </div>
                 {guest.isVacant ?
-                <span className="text-[11px] font-semibold px-2 py-[3px] rounded-[6px] tracking-[0.1px] bg-[#F7F7F7] text-[#B0B0B0]">
-                  Empty
+                <span className={`text-[11px] font-semibold px-2 py-[3px] rounded-[6px] tracking-[0.1px] ${guest.guestName === 'Blocked' ? 'bg-[#FEF2F2] text-[#DC2626]' : 'bg-[#F7F7F7] text-[#B0B0B0]'}`}>
+                  {guest.guestName}
                 </span> :
                 <span
                   className={`text-[11px] font-semibold px-2 py-[3px] rounded-[6px] tracking-[0.1px] ${guest.platform === 'Airbnb' ? 'bg-[#FF385C14] text-[#E31C5F]' : 'bg-[#003B9510] text-[#003B95]'}`}>
