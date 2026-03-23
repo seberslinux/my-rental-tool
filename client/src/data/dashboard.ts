@@ -17,10 +17,15 @@ export let cleaningJobs: { id: number; title: string; subtitle: string; status: 
 export let recentCancellations: { id: number; guestName: string; property: string; checkIn: string; checkOut: string; platform: string; cancelledAt: string }[] = [];
 
 let activePropertyFilter = 0; // 0 = all properties
+let onDataChanged: (() => void) | null = null;
 
-export function setPropertyFilter(propertyId: number): void {
+export function setOnDataChanged(cb: () => void): void {
+  onDataChanged = cb;
+}
+
+export async function setPropertyFilter(propertyId: number): Promise<void> {
   activePropertyFilter = propertyId;
-  loadDashboardData();
+  await loadDashboardData();
 }
 
 // Holidays are static — no API needed
@@ -253,6 +258,8 @@ export async function loadDashboardData(): Promise<void> {
       });
     });
     cleaningJobs = jobItems;
+
+    if (onDataChanged) onDataChanged();
 
   } catch (err) {
     console.error('Failed to load dashboard data:', err);

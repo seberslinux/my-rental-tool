@@ -13,7 +13,7 @@ import { CleanersPage } from './components/CleanersPage';
 import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
 import { properties, bookings, Booking, loadCalendarData } from './data/properties';
-import { loadDashboardData, setPropertyFilter } from './data/dashboard';
+import { loadDashboardData, setPropertyFilter, setOnDataChanged } from './data/dashboard';
 import { loadAnalyticsData } from './data/analytics';
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -26,6 +26,12 @@ export function App() {
   const [channelFilter, setChannelFilter] = useState<string>('all');
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
   const [dashboardPropertyFilter, setDashboardPropertyFilter] = useState<number>(0);
+  const [dashboardVersion, setDashboardVersion] = useState(0);
+
+  // Subscribe to dashboard data changes for re-renders
+  useEffect(() => {
+    setOnDataChanged(() => setDashboardVersion((v) => v + 1));
+  }, []);
 
   // Check auth on mount
   useEffect(() => {
@@ -117,11 +123,15 @@ export function App() {
           properties: properties.map((p) => ({ id: p.id, name: p.name })),
           selected: dashboardPropertyFilter,
           onChange: (id) => { setDashboardPropertyFilter(id); setPropertyFilter(id); },
-        } : undefined} />
+        } : undefined}
+        onRefresh={async () => {
+          await fetch('/api/sync/bookings', { method: 'POST', credentials: 'same-origin' });
+          await loadData();
+        }} />
       }
 
       <main className="flex-1 overflow-y-auto overflow-x-hidden pb-[64px]">
-        {activeTab === 'home' && <DashboardPage />}
+        {activeTab === 'home' && <DashboardPage key={dashboardVersion} />}
 
         {activeTab === 'calendar' && (
         mode === 'single' ?

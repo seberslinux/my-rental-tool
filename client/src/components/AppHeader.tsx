@@ -7,12 +7,18 @@ interface AppHeaderProps {
     selected: number;
     onChange: (id: number) => void;
   };
+  onRefresh?: () => Promise<void>;
 }
-export function AppHeader({ title, propertyFilter }: AppHeaderProps) {
+export function AppHeader({ title, propertyFilter, onRefresh }: AppHeaderProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
+    if (isRefreshing) return;
     setIsRefreshing(true);
-    setTimeout(() => setIsRefreshing(false), 500);
+    try {
+      if (onRefresh) await onRefresh();
+    } finally {
+      setIsRefreshing(false);
+    }
   };
   return (
     <div className="bg-white px-4 py-3 border-b border-[#EBEBEB] sticky top-0 z-20">
