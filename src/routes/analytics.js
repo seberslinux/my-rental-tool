@@ -187,6 +187,76 @@ router.post('/sync-history', async (req, res) => {
   }
 });
 
+// CSV export: revenue per property per month
+router.get('/export-csv', async (req, res) => {
+  try {
+    const propIds = scopedPropertyIds(req);
+    let bookingFilters = '';
+    const bookingParams = [];
+    bookingFilters += addPropertyFilter(propIds, 'b.property_id', bookingParams);
+
+    const bookings = await getAll(
+      `SELECT b.*, p.name as property_name,
+              p.commission_airbnb, p.commission_booking, p.commission_vrbo,
+              p.bank_charge_airbnb, p.bank_charge_booking, p.bank_charge_vrbo,
+              p.vat_rate
+       FROM bookings b JOIN properties p ON b.property_id = p.id
+       WHERE b.status = 'confirmed'
+         AND b.platform NOT IN ('Blocked channel', 'Blocked channel auto')
+         ${bookingFilters}
+       ORDER BY p.name ASC, b.check_in ASC`,
+      bookingParams
+    );
+
+    const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
+    const displayCurrency = await getDisplayCurrency();
+    await bulkConvert(bookings, displayCurrency);
+
+    // Aggregate by property + month
+    const rows = {};
+    for (const b of bookings) {
+      const month = b.check_in.substring(0, 7);
+      const key = `${b.property_name}|${month}`;
+      if (!rows[key]) rows[key] = { property: b.property_name, month, gross: 0, commission: 0, bank_charges: 0, vat: 0, bookings: 0, nights: 0 };
+      const rev = b.converted_total_price || 0;
+      rows[key].gross += rev;
+      rows[key].bookings += 1;
+      rows[key].nights += b.length_of_stay || 1;
+
+      // Commission
+      const platform = (b.platform || '').toLowerCase();
+      let commRate = 0;
+      let bankRate = 0;
+      if (platform.includes('airbnb')) { commRate = b.commission_airbnb || 18; bankRate = b.bank_charge_airbnb || 0; }
+      else if (platform.includes('booking')) { commRate = b.commission_booking || 15; bankRate = b.bank_charge_booking || 2.1; }
+      else if (platform.includes('vrbo')) { commRate = b.commission_vrbo || 8; bankRate = b.bank_charge_vrbo || 0; }
+      rows[key].commission += Math.round(rev * commRate / 100);
+      rows[key].bank_charges += Math.round(rev * bankRate / 100);
+
+      // VAT
+      const vatRate = b.vat_rate || 0;
+      if (vatRate > 0 && platform.includes('booking')) {
+        rows[key].vat += Math.round(rev - rev / (1 + vatRate / 100));
+      }
+    }
+
+    // Build CSV
+    const lines = ['Property,Month,Gross Revenue,Commission,Bank Charges,VAT,Net Revenue,Bookings,Nights,ADR'];
+    for (const r of Object.values(rows).sort((a, b) => a.property.localeCompare(b.property) || a.month.localeCompare(b.month))) {
+      const net = Math.round(r.gross - r.commission - r.bank_charges - r.vat);
+      const adr = r.nights > 0 ? Math.round(r.gross / r.nights) : 0;
+      lines.push(`${r.property},${r.month},${Math.round(r.gross)},${Math.round(r.commission)},${Math.round(r.bank_charges)},${Math.round(r.vat)},${net},${r.bookings},${r.nights},${adr}`);
+    }
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="revenue-export.csv"');
+    res.send(lines.join('\n'));
+  } catch (err) {
+    console.error('CSV export failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get full analytics data
 router.get('/data', async (req, res) => {
   const propIds = scopedPropertyIds(req);
