@@ -667,7 +667,7 @@ export function AnalyticsPage() {
                       {[...revenueData].sort((a, b) => (b.paid + b.booked) - (a.paid + a.booked)).slice(0, 6).map((row, idx) =>
                     <tr key={idx}>
                           <td className="p-3 pl-5 text-[13px] font-medium text-[#222222]">
-                            {row.month}
+                            {row.monthFull}
                           </td>
                           <td className="p-3 text-[13px] text-[#222222]">
                             R {(row.paid + row.booked).toLocaleString()}

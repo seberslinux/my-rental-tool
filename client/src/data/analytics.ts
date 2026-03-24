@@ -15,8 +15,14 @@ function fmtMonthLabel(ym: string): string {
   return mi === 0 ? `${months[mi]} '${shortYear}` : months[mi];
 }
 
+function fmtMonthFull(ym: string): string {
+  const [y, m] = ym.split('-');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return `${months[parseInt(m, 10) - 1]} ${y}`;
+}
+
 export let overviewKPIs: { label: string; value: string; trend: string; trendDetail: string; isPositive: boolean }[] = [];
-export let revenueData: { month: string; paid: number; booked: number; forecast: number; previous: number; bookings: number; nights: number; isForecastOnly?: boolean }[] = [];
+export let revenueData: { month: string; monthFull: string; paid: number; booked: number; forecast: number; previous: number; bookings: number; nights: number; isForecastOnly?: boolean }[] = [];
 export let revenueByProperty: { name: string; revenue: number; percentage: number }[] = [];
 export let propertyPerformance: { name: string; revenue: string; occupancy: number; adr: string; avgStay: string; bookings: number; rating: string; topPlatform: string }[] = [];
 export let channelMixData: { name: string; value: number; color: string }[] = [];
@@ -120,6 +126,7 @@ export async function loadAnalyticsData(propertyId: string = 'all', period: stri
       const forecastGap = predicted > actual ? predicted - actual : 0;
       timeline.push({
         month: fmtMonthLabel(m.month),
+        monthFull: fmtMonthFull(m.month),
         paid,
         booked,
         forecast: forecastGap,
@@ -135,6 +142,7 @@ export async function loadAnalyticsData(propertyId: string = 'all', period: stri
       if (!existing) {
         timeline.push({
           month: fmtMonthLabel(p.month),
+          monthFull: fmtMonthFull(p.month),
           paid: 0,
           booked: 0,
           forecast: Math.round(p.predicted_revenue || 0),
