@@ -268,21 +268,20 @@ router.get('/data', async (req, res) => {
   }
   if (futureConfirmedBookings.length > 0) await bulkConvert(futureConfirmedBookings, displayCurrency);
 
-  // --- Revenue by month (with type: confirmed/booked) ---
-  const currentMonth = todayStr.substring(0, 7);
+  // --- Revenue by month (split into paid vs booked) ---
+  const allBookingsCombined = [...allBookings, ...futureConfirmedBookings];
   const revenueByMonth = {};
-  for (const b of allBookings) {
+  for (const b of allBookingsCombined) {
     const month = b.check_in.substring(0, 7); // YYYY-MM
-    if (!revenueByMonth[month]) revenueByMonth[month] = { month, total: 0, bookings: 0, nights: 0, type: month <= currentMonth ? 'confirmed' : 'booked' };
-    revenueByMonth[month].total += b.converted_total_price || 0;
-    revenueByMonth[month].bookings += 1;
-    revenueByMonth[month].nights += b.length_of_stay || 1;
-  }
-  // Add future confirmed bookings
-  for (const b of futureConfirmedBookings) {
-    const month = b.check_in.substring(0, 7);
-    if (!revenueByMonth[month]) revenueByMonth[month] = { month, total: 0, bookings: 0, nights: 0, type: 'booked' };
-    revenueByMonth[month].total += b.converted_total_price || 0;
+    if (!revenueByMonth[month]) revenueByMonth[month] = { month, total: 0, paid: 0, booked: 0, bookings: 0, nights: 0 };
+    const rev = b.converted_total_price || 0;
+    revenueByMonth[month].total += rev;
+    // Paid = checkout is in the past; Booked = checkout is still in the future
+    if (b.check_out <= todayStr) {
+      revenueByMonth[month].paid += rev;
+    } else {
+      revenueByMonth[month].booked += rev;
+    }
     revenueByMonth[month].bookings += 1;
     revenueByMonth[month].nights += b.length_of_stay || 1;
   }
@@ -295,7 +294,7 @@ router.get('/data', async (req, res) => {
     while (y < endY || (y === endY && m <= endM)) {
       const key = `${y}-${String(m).padStart(2, '0')}`;
       if (!revenueByMonth[key]) {
-        revenueByMonth[key] = { month: key, total: 0, bookings: 0, nights: 0, type: key <= currentMonth ? 'confirmed' : 'booked' };
+        revenueByMonth[key] = { month: key, total: 0, paid: 0, booked: 0, bookings: 0, nights: 0 };
       }
       m++;
       if (m > 12) { m = 1; y++; }

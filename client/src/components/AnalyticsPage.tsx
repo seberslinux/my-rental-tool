@@ -4,6 +4,7 @@ import {
   Line,
   BarChart,
   Bar,
+  ComposedChart,
   PieChart,
   Pie,
   Cell,
@@ -196,15 +197,15 @@ export function AnalyticsPage() {
                 </h3>
                 <div className="flex gap-4 text-[11px] text-[#717171]">
                   <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-[#007AFF]"></div>
-                    Confirmed
+                    <div className="w-2 h-2 rounded-[2px] bg-[#007AFF]"></div>
+                    Paid
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-[#E8913A]"></div>
+                    <div className="w-2 h-2 rounded-[2px] bg-[#E8913A]"></div>
                     Booked
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-[#00A699]"></div>
+                    <div className="w-2 h-2 rounded-[2px] bg-[#00A699] opacity-50"></div>
                     Forecast
                   </div>
                   <div className="flex items-center gap-1.5">
@@ -213,41 +214,31 @@ export function AnalyticsPage() {
                   </div>
                 </div>
               </div>
-              <div className="h-[200px] w-full">
+              <div className="h-[220px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart
+                  <ComposedChart
                   data={revenueData}
-                  margin={{
-                    top: 5,
-                    right: 5,
-                    left: -15,
-                    bottom: 0
-                  }}>
-                  
+                  margin={{ top: 5, right: 5, left: -15, bottom: 0 }}
+                  barCategoryGap="20%">
+
                     <CartesianGrid
                     strokeDasharray="3 3"
                     vertical={false}
                     stroke="#F0F0F0" />
-                  
+
                     <XAxis
                     dataKey="month"
                     axisLine={false}
                     tickLine={false}
-                    tick={{
-                      fontSize: 11,
-                      fill: '#B0B0B0'
-                    }}
+                    tick={{ fontSize: 11, fill: '#B0B0B0' }}
                     dy={10} />
-                  
+
                     <YAxis
                     axisLine={false}
                     tickLine={false}
-                    tick={{
-                      fontSize: 11,
-                      fill: '#B0B0B0'
-                    }}
-                    tickFormatter={(val) => `R ${val / 1000}k`} />
-                  
+                    tick={{ fontSize: 11, fill: '#B0B0B0' }}
+                    tickFormatter={(val) => val >= 1000000 ? `R ${val / 1000000}M` : `R ${val / 1000}k`} />
+
                     <Tooltip
                     contentStyle={{
                       borderRadius: '8px',
@@ -255,47 +246,17 @@ export function AnalyticsPage() {
                       boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
                       fontSize: 13
                     }}
-                    formatter={(value: number) => [
-                    `R ${value.toLocaleString()}`,
-                    '']
-                    } />
-                  
-                    <Line
-                    type="monotone"
-                    dataKey="previous"
-                    stroke="#CBD5E1"
-                    strokeWidth={2}
-                    strokeDasharray="6 4"
-                    dot={false}
-                    connectNulls={false} />
+                    formatter={(value: number, name: string) => [
+                      `R ${value.toLocaleString()}`,
+                      name === 'paid' ? 'Paid' : name === 'booked' ? 'Booked' : name === 'forecast' ? 'Forecast' : 'Last Year'
+                    ]} />
 
-                    <Line
-                    type="monotone"
-                    dataKey="confirmed"
-                    stroke="#007AFF"
-                    strokeWidth={2.5}
-                    dot={{ r: 3, fill: '#007AFF', strokeWidth: 0 }}
-                    activeDot={{ r: 5 }}
-                    connectNulls={false} />
+                    <Bar dataKey="paid" stackId="revenue" fill="#007AFF" radius={[0,0,0,0]} />
+                    <Bar dataKey="booked" stackId="revenue" fill="#E8913A" radius={[0,0,0,0]} />
+                    <Bar dataKey="forecast" stackId="revenue" fill="#00A699" fillOpacity={0.4} radius={[4,4,0,0]} />
+                    <Line type="monotone" dataKey="previous" stroke="#CBD5E1" strokeWidth={2} strokeDasharray="6 4" dot={false} />
 
-                    <Line
-                    type="monotone"
-                    dataKey="booked"
-                    stroke="#E8913A"
-                    strokeWidth={2.5}
-                    dot={{ r: 3, fill: '#E8913A', strokeWidth: 0 }}
-                    connectNulls={false} />
-
-                    <Line
-                    type="monotone"
-                    dataKey="forecast"
-                    stroke="#00A699"
-                    strokeWidth={2}
-                    strokeDasharray="6 4"
-                    dot={{ r: 3, fill: '#00A699', strokeWidth: 2, stroke: '#fff' }}
-                    connectNulls={false} />
-
-                  </LineChart>
+                  </ComposedChart>
                 </ResponsiveContainer>
               </div>
             </div>
@@ -416,7 +377,7 @@ export function AnalyticsPage() {
             {/* Revenue KPIs */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {(() => {
-                const totalRev = revenueData.reduce((s, m) => s + m.current, 0);
+                const totalRev = revenueData.reduce((s, m) => s + (m.paid + m.booked), 0);
                 const totalBookings = propertyPerformance.reduce((s, p) => s + p.bookings, 0);
                 const avgBookingVal = totalBookings > 0 ? Math.round(totalRev / totalBookings) : 0;
                 return [
@@ -517,7 +478,7 @@ export function AnalyticsPage() {
                         (d) => d.month === label
                       );
                       const prevMonth =
-                      idx > 0 ? revenueData[idx - 1].current : null;
+                      idx > 0 ? (revenueData[idx - 1].paid + revenueData[idx - 1].booked) : null;
                       const growth =
                       prevMonth && current ?
                       (current - prevMonth) / prevMonth * 100 :
@@ -685,102 +646,41 @@ export function AnalyticsPage() {
                   </div>
                   <div className="flex gap-4 text-[11px] text-[#717171]">
                     <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-[#007AFF]"></div>
-                      Confirmed
+                      <div className="w-2 h-2 rounded-[2px] bg-[#007AFF]"></div>
+                      Paid
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-[#E8913A]"></div>
+                      <div className="w-2 h-2 rounded-[2px] bg-[#E8913A]"></div>
                       Booked
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <div className="w-2 h-2 rounded-full bg-[#00A699]"></div>
+                      <div className="w-2 h-2 rounded-[2px] bg-[#00A699] opacity-50"></div>
                       Forecast
                     </div>
                   </div>
                 </div>
                 <div className="h-[220px] w-full mt-3">
                   <ResponsiveContainer width="100%" height="100%">
-                    <LineChart
-                    data={revenueData.map((m) => ({
-                      month: m.month,
-                      confirmed: m.confirmed,
-                      booked: m.booked,
-                      forecast: m.forecast,
-                    }))}
-                    margin={{
-                      top: 5,
-                      right: 5,
-                      left: -15,
-                      bottom: 0
-                    }}>
-                    
-                      <CartesianGrid
-                      strokeDasharray="3 3"
-                      vertical={false}
-                      stroke="#F0F0F0" />
-                    
-                      <XAxis
-                      dataKey="month"
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{
-                        fontSize: 11,
-                        fill: '#B0B0B0'
-                      }}
-                      dy={10} />
-                    
-                      <YAxis
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{
-                        fontSize: 11,
-                        fill: '#B0B0B0'
-                      }}
-                      tickFormatter={(val) => `R ${val / 1000}k`} />
-                    
-                      <Tooltip
-                      contentStyle={{
-                        borderRadius: '8px',
-                        border: '1px solid #EBEBEB',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.08)'
-                      }}
-                      formatter={(value: number | null) =>
-                      value ?
-                      [`R ${value.toLocaleString()}`, ''] :
-                      ['-', '']
-                      } />
-                    
-                      <Line
-                      type="monotone"
-                      dataKey="confirmed"
-                      stroke="#007AFF"
-                      strokeWidth={2.5}
-                      dot={{ r: 3, fill: '#007AFF', strokeWidth: 0 }}
-                      connectNulls={false} />
+                    <BarChart
+                    data={revenueData.slice(-8)}
+                    margin={{ top: 5, right: 5, left: -15, bottom: 0 }}
+                    barCategoryGap="20%">
 
-                      <Line
-                      type="monotone"
-                      dataKey="booked"
-                      stroke="#E8913A"
-                      strokeWidth={2.5}
-                      dot={{ r: 3, fill: '#E8913A', strokeWidth: 0 }}
-                      connectNulls={false} />
-                    
-                      <Line
-                      type="monotone"
-                      dataKey="forecast"
-                      stroke="#00A699"
-                      strokeWidth={2}
-                      strokeDasharray="6 4"
-                      dot={{
-                        r: 3,
-                        fill: '#00A699',
-                        strokeWidth: 2,
-                        stroke: '#fff'
-                      }}
-                      connectNulls={false} />
-                    
-                    </LineChart>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F0F0F0" />
+                      <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#B0B0B0' }} dy={10} />
+                      <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#B0B0B0' }} tickFormatter={(val) => val >= 1000000 ? `R ${val / 1000000}M` : `R ${val / 1000}k`} />
+                      <Tooltip
+                      contentStyle={{ borderRadius: '8px', border: '1px solid #EBEBEB', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}
+                      formatter={(value: number, name: string) => [
+                        `R ${value.toLocaleString()}`,
+                        name === 'paid' ? 'Paid' : name === 'booked' ? 'Booked' : 'Forecast'
+                      ]} />
+
+                      <Bar dataKey="paid" stackId="revenue" fill="#007AFF" />
+                      <Bar dataKey="booked" stackId="revenue" fill="#E8913A" />
+                      <Bar dataKey="forecast" stackId="revenue" fill="#00A699" fillOpacity={0.4} radius={[4,4,0,0]} />
+
+                    </BarChart>
                   </ResponsiveContainer>
                 </div>
               </div>
@@ -814,13 +714,13 @@ export function AnalyticsPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#F0F0F0]">
-                      {[...revenueData].sort((a, b) => b.current - a.current).slice(0, 6).map((row, idx) =>
+                      {[...revenueData].sort((a, b) => (b.paid + b.booked) - (a.paid + a.booked)).slice(0, 6).map((row, idx) =>
                     <tr key={idx}>
                           <td className="p-3 pl-5 text-[13px] font-medium text-[#222222]">
                             {row.month}
                           </td>
                           <td className="p-3 text-[13px] text-[#222222]">
-                            R {row.current.toLocaleString()}
+                            R {(row.paid + row.booked).toLocaleString()}
                           </td>
                           <td className="p-3 text-[13px] text-[#717171]">
                             --
@@ -857,8 +757,8 @@ export function AnalyticsPage() {
                   <p className="text-[12px] text-[#334155] leading-relaxed">
                     {(() => {
                       if (revenueData.length === 0) return 'No revenue data available.';
-                      const peak = [...revenueData].sort((a, b) => b.current - a.current)[0];
-                      return <>Peak revenue month: <strong>{peak.month}</strong> generating R {peak.current.toLocaleString()}.</>;
+                      const peak = [...revenueData].sort((a, b) => (b.paid + b.booked) - (a.paid + a.booked))[0];
+                      return <>Peak revenue month: <strong>{peak.month}</strong> generating R {(peak.paid + peak.booked).toLocaleString()}.</>;
                     })()}
                   </p>
                 </div>
@@ -1788,9 +1688,9 @@ export function AnalyticsPage() {
                           if (revenueData.length < 2) return 'Not enough data to determine trend.';
                           const last = revenueData[revenueData.length - 1];
                           const prev = revenueData[revenueData.length - 2];
-                          if (prev.current === 0) return `Latest month (${last.month}): R ${last.current.toLocaleString()}.`;
-                          const change = Math.round(((last.current - prev.current) / prev.current) * 100);
-                          return `${last.month} revenue is R ${last.current.toLocaleString()} vs R ${prev.current.toLocaleString()} in ${prev.month} (${change >= 0 ? '+' : ''}${change}%).`;
+                          if ((prev.paid + prev.booked) === 0) return `Latest month (${last.month}): R ${(last.paid + last.booked).toLocaleString()}.`;
+                          const change = Math.round((((last.paid + last.booked) - (prev.paid + prev.booked)) / (prev.paid + prev.booked)) * 100);
+                          return `${last.month} revenue is R ${(last.paid + last.booked).toLocaleString()} vs R ${(prev.paid + prev.booked).toLocaleString()} in ${prev.month} (${change >= 0 ? '+' : ''}${change}%).`;
                         })()}
                       </p>
                     </div>
@@ -2089,8 +1989,8 @@ export function AnalyticsPage() {
                   <tbody className="divide-y divide-[#F0F0F0]">
                     {(revenueData.length > 0 ? (() => {
                       const avg3 = revenueData.length >= 3
-                        ? Math.round(revenueData.slice(-3).reduce((s, m) => s + m.current, 0) / 3)
-                        : Math.round(revenueData.reduce((s, m) => s + m.current, 0) / revenueData.length);
+                        ? Math.round(revenueData.slice(-3).reduce((s, m) => s + (m.paid + m.booked), 0) / 3)
+                        : Math.round(revenueData.reduce((s, m) => s + (m.paid + m.booked), 0) / revenueData.length);
                       const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
                       const now = new Date();
                       return [1, 2, 3].map(offset => {
@@ -2134,7 +2034,7 @@ export function AnalyticsPage() {
                 {[
               {
                 label: 'Total Revenue',
-                value: (() => { const t = revenueData.reduce((s, m) => s + m.current, 0); return t > 0 ? `R ${t.toLocaleString()}` : '--'; })()
+                value: (() => { const t = revenueData.reduce((s, m) => s + (m.paid + m.booked), 0); return t > 0 ? `R ${t.toLocaleString()}` : '--'; })()
               },
               {
                 label: 'Total Bookings',

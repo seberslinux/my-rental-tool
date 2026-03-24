@@ -16,7 +16,7 @@ function fmtMonthLabel(ym: string): string {
 }
 
 export let overviewKPIs: { label: string; value: string; trend: string; trendDetail: string; isPositive: boolean }[] = [];
-export let revenueData: { month: string; current: number; previous: number; confirmed?: number | null; booked?: number | null; forecast?: number | null }[] = [];
+export let revenueData: { month: string; paid: number; booked: number; forecast: number; previous: number }[] = [];
 export let revenueByProperty: { name: string; revenue: number; percentage: number }[] = [];
 export let propertyPerformance: { name: string; revenue: string; occupancy: number; adr: string; avgStay: string; bookings: number; rating: string; topPlatform: string }[] = [];
 export let channelMixData: { name: string; value: number; color: string }[] = [];
@@ -102,44 +102,45 @@ export async function loadAnalyticsData(propertyId: string = 'all', period: stri
         priorTimeline[currentKey] = Math.round(m.total || 0);
       }
     }
-    const currentTimeline: typeof revenueData = (d.revenue_timeline || []).map((m: any) => {
-      const revenue = Math.round(m.total || 0);
-      const isConfirmed = m.type === 'confirmed';
-      return {
-        month: fmtMonthLabel(m.month),
-        current: revenue,
-        previous: priorTimeline[m.month] || 0,
-        confirmed: isConfirmed ? revenue : null,
-        booked: !isConfirmed ? revenue : null,
-        forecast: null,
-      };
-    });
-
-    // Bridge confirmed→booked: set booked on last confirmed month for seamless connection
-    const lastConfirmedIdx = currentTimeline.reduce((acc, m, i) => m.confirmed !== null ? i : acc, -1);
-    if (lastConfirmedIdx >= 0 && lastConfirmedIdx < currentTimeline.length - 1 && currentTimeline[lastConfirmedIdx + 1].booked !== null) {
-      currentTimeline[lastConfirmedIdx].booked = currentTimeline[lastConfirmedIdx].confirmed;
-    }
-
-    // Bridge booked→forecast and append forecast months
+    // Build prediction lookup: predicted total revenue per month
     const predictions: any[] = d.predictions || [];
-    const lastBookedIdx = currentTimeline.reduce((acc, m, i) => m.booked !== null ? i : acc, -1);
-    if (predictions.length > 0 && lastBookedIdx >= 0) {
-      currentTimeline[lastBookedIdx].forecast = currentTimeline[lastBookedIdx].booked;
-    } else if (predictions.length > 0 && lastConfirmedIdx >= 0) {
-      currentTimeline[lastConfirmedIdx].forecast = currentTimeline[lastConfirmedIdx].confirmed;
-    }
+    const predByMonth: Record<string, number> = {};
     for (const p of predictions) {
-      currentTimeline.push({
-        month: fmtMonthLabel(p.month),
-        current: 0,
-        previous: priorTimeline[p.month] || 0,
-        confirmed: null,
-        booked: null,
-        forecast: Math.round(p.predicted_revenue || 0),
+      predByMonth[p.month] = Math.round(p.predicted_revenue || 0);
+    }
+
+    // Build stacked revenue data: paid + booked + forecast gap
+    const timeline: typeof revenueData = [];
+    for (const m of (d.revenue_timeline || [])) {
+      const paid = Math.round(m.paid || 0);
+      const booked = Math.round(m.booked || 0);
+      const actual = paid + booked;
+      // Forecast = expected additional on top of what's already booked
+      const predicted = predByMonth[m.month] || 0;
+      const forecastGap = predicted > actual ? predicted - actual : 0;
+      timeline.push({
+        month: fmtMonthLabel(m.month),
+        paid,
+        booked,
+        forecast: forecastGap,
+        previous: priorTimeline[m.month] || 0,
       });
     }
-    revenueData = currentTimeline;
+
+    // Append pure forecast months (no bookings yet)
+    for (const p of predictions) {
+      const existing = (d.revenue_timeline || []).find((m: any) => m.month === p.month);
+      if (!existing) {
+        timeline.push({
+          month: fmtMonthLabel(p.month),
+          paid: 0,
+          booked: 0,
+          forecast: Math.round(p.predicted_revenue || 0),
+          previous: priorTimeline[p.month] || 0,
+        });
+      }
+    }
+    revenueData = timeline;
 
     // --- Revenue by property ---
     const propRevEntries = Object.values(d.revenue_by_property || {}) as any[];
