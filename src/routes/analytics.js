@@ -539,45 +539,38 @@ router.get('/data', async (req, res) => {
 
   // --- Revenue prediction (hybrid: prior year seasonality + recent trend) ---
   const predictions = [];
-  if (revenueTimeline.length >= 3) {
-    const lastThree = revenueTimeline.slice(-3);
+  const currentMonth = todayStr.substring(0, 7);
+  // Only use fully completed months for the moving average (exclude current + future)
+  const completedMonths = revenueTimeline.filter(m => m.month < currentMonth);
+  if (completedMonths.length >= 3) {
+    const lastThree = completedMonths.slice(-3);
     const maRevenue = Math.round(lastThree.reduce((sum, r) => sum + r.total, 0) / 3);
     const maBookings = Math.round(lastThree.reduce((sum, r) => sum + r.bookings, 0) / 3);
     const maNights = Math.round(lastThree.reduce((sum, r) => sum + r.nights, 0) / 3);
 
-    // Compute YoY trend factor: avg of last 3 months / avg of same 3 months last year
-    let trendFactor = 1;
-    const priorMatchRevenue = lastThree.reduce((sum, r) => {
-      const [y, m] = r.month.split('-').map(Number);
-      const priorKey = `${y - 1}-${String(m).padStart(2, '0')}`;
-      const priorEntry = revenueTimeline.find(e => e.month === priorKey);
-      return sum + (priorEntry ? priorEntry.total : 0);
-    }, 0);
-    if (priorMatchRevenue > 0) {
-      trendFactor = (lastThree.reduce((s, r) => s + r.total, 0)) / priorMatchRevenue;
-    }
-
-    // Fetch prior year revenue for the forecast months
-    let priorForecastParams = [];
-    let priorForecastFilter = '';
-    priorForecastFilter += addPropertyFilter(propIds, 'b.property_id', priorForecastParams);
+    // Forecast months: current month (partial) + next 4
     const forecastMonths = [];
-    for (let i = 1; i <= 4; i++) {
+    for (let i = 0; i <= 4; i++) {
       const futureDate = new Date(today);
       futureDate.setMonth(futureDate.getMonth() + i);
       forecastMonths.push(futureDate.toISOString().substring(0, 7));
     }
-    // Prior year equivalents
-    const priorForecastMonths = forecastMonths.map(m => {
+
+    // Fetch prior year data for trend factor + forecast seasonality
+    const allMonthsForPrior = [...lastThree.map(m => m.month), ...forecastMonths];
+    const priorKeys = allMonthsForPrior.map(m => {
       const [y, mo] = m.split('-');
       return `${Number(y) - 1}-${mo}`;
     });
-    const priorForecastFrom = priorForecastMonths[0] + '-01';
-    const priorForecastTo = priorForecastMonths[priorForecastMonths.length - 1] + '-28';
+    const uniquePriorMonths = [...new Set(priorKeys)].sort();
+
+    let priorForecastParams = [];
+    let priorForecastFilter = '';
+    priorForecastFilter += addPropertyFilter(propIds, 'b.property_id', priorForecastParams);
     priorForecastFilter += ` AND b.check_in >= $${priorForecastParams.length + 1}`;
-    priorForecastParams.push(priorForecastFrom);
+    priorForecastParams.push(uniquePriorMonths[0] + '-01');
     priorForecastFilter += ` AND b.check_in <= $${priorForecastParams.length + 1}`;
-    priorForecastParams.push(priorForecastTo);
+    priorForecastParams.push(uniquePriorMonths[uniquePriorMonths.length - 1] + '-31');
 
     const priorFcBookings = await getAll(
       `SELECT b.check_in, b.total_price, b.length_of_stay, b.price_per_night, b.currency,
@@ -587,29 +580,40 @@ router.get('/data', async (req, res) => {
       priorForecastParams
     );
 
-    // Impute + convert
     for (const b of priorFcBookings) {
       if ((b.total_price || 0) === 0 && b.property_base_price > 0) {
         b.total_price = b.property_base_price * (b.length_of_stay || 1);
         b.currency = b.property_base_currency || 'ZAR';
       }
     }
-    await bulkConvert(priorFcBookings, displayCurrency);
+    if (priorFcBookings.length > 0) await bulkConvert(priorFcBookings, displayCurrency);
 
-    const priorFcByMonth = {};
+    const priorByMonth = {};
     for (const b of priorFcBookings) {
       const month = b.check_in.substring(0, 7);
-      if (!priorFcByMonth[month]) priorFcByMonth[month] = { total: 0, bookings: 0, nights: 0 };
-      priorFcByMonth[month].total += b.converted_total_price || 0;
-      priorFcByMonth[month].bookings += 1;
-      priorFcByMonth[month].nights += b.length_of_stay || 1;
+      if (!priorByMonth[month]) priorByMonth[month] = { total: 0, bookings: 0, nights: 0 };
+      priorByMonth[month].total += b.converted_total_price || 0;
+      priorByMonth[month].bookings += 1;
+      priorByMonth[month].nights += b.length_of_stay || 1;
     }
 
-    // Blend: 60% prior year with trend factor, 40% moving average
-    for (let i = 0; i < 4; i++) {
-      const month = forecastMonths[i];
-      const priorMonth = priorForecastMonths[i];
-      const priorData = priorFcByMonth[priorMonth];
+    // YoY trend factor from last 3 completed months vs same months prior year
+    let trendFactor = 1;
+    const currentThreeTotal = lastThree.reduce((s, r) => s + r.total, 0);
+    const priorThreeTotal = lastThree.reduce((sum, r) => {
+      const [y, m] = r.month.split('-').map(Number);
+      const pk = `${y - 1}-${String(m).padStart(2, '0')}`;
+      return sum + (priorByMonth[pk]?.total || 0);
+    }, 0);
+    if (priorThreeTotal > 0) {
+      trendFactor = currentThreeTotal / priorThreeTotal;
+    }
+
+    // Generate predictions: blend 60% prior year * trend + 40% moving average
+    for (const month of forecastMonths) {
+      const [y, mo] = month.split('-');
+      const priorKey = `${Number(y) - 1}-${mo}`;
+      const priorData = priorByMonth[priorKey];
       let revenue, bookings, nights;
 
       if (priorData && priorData.total > 0) {
@@ -617,7 +621,6 @@ router.get('/data', async (req, res) => {
         bookings = Math.round(priorData.bookings * trendFactor * 0.6 + maBookings * 0.4);
         nights = Math.round(priorData.nights * trendFactor * 0.6 + maNights * 0.4);
       } else {
-        // No prior year data — fall back to moving average
         revenue = maRevenue;
         bookings = maBookings;
         nights = maNights;
