@@ -243,11 +243,45 @@ router.get('/data', async (req, res) => {
   const displayCurrency = await getDisplayCurrency();
   await bulkConvert(allBookings, displayCurrency);
 
-  // --- Revenue by month ---
+  // --- Fetch future confirmed bookings (beyond the date range) ---
+  let futureFilters = '';
+  const futureParams = [];
+  futureFilters += addPropertyFilter(propIds, 'b.property_id', futureParams);
+  if (to) {
+    futureFilters += ` AND b.check_in > $${futureParams.length + 1}`;
+    futureParams.push(to);
+  }
+  const futureConfirmedBookings = to ? await getAll(
+    `SELECT b.*, p.name as property_name, p.base_price as property_base_price, p.base_currency as property_base_currency FROM bookings b
+     JOIN properties p ON b.property_id = p.id
+     WHERE b.status = 'confirmed'${BLOCKED_FILTER}${futureFilters}
+     ORDER BY b.check_in ASC`,
+    futureParams
+  ) : [];
+
+  // Impute + convert future bookings
+  for (const b of futureConfirmedBookings) {
+    if ((b.total_price || 0) === 0 && b.property_base_price > 0) {
+      b.total_price = b.property_base_price * (b.length_of_stay || 1);
+      b.currency = b.property_base_currency || 'ZAR';
+    }
+  }
+  if (futureConfirmedBookings.length > 0) await bulkConvert(futureConfirmedBookings, displayCurrency);
+
+  // --- Revenue by month (with type: confirmed/booked) ---
+  const currentMonth = todayStr.substring(0, 7);
   const revenueByMonth = {};
   for (const b of allBookings) {
     const month = b.check_in.substring(0, 7); // YYYY-MM
-    if (!revenueByMonth[month]) revenueByMonth[month] = { month, total: 0, bookings: 0, nights: 0 };
+    if (!revenueByMonth[month]) revenueByMonth[month] = { month, total: 0, bookings: 0, nights: 0, type: month <= currentMonth ? 'confirmed' : 'booked' };
+    revenueByMonth[month].total += b.converted_total_price || 0;
+    revenueByMonth[month].bookings += 1;
+    revenueByMonth[month].nights += b.length_of_stay || 1;
+  }
+  // Add future confirmed bookings
+  for (const b of futureConfirmedBookings) {
+    const month = b.check_in.substring(0, 7);
+    if (!revenueByMonth[month]) revenueByMonth[month] = { month, total: 0, bookings: 0, nights: 0, type: 'booked' };
     revenueByMonth[month].total += b.converted_total_price || 0;
     revenueByMonth[month].bookings += 1;
     revenueByMonth[month].nights += b.length_of_stay || 1;
@@ -261,7 +295,7 @@ router.get('/data', async (req, res) => {
     while (y < endY || (y === endY && m <= endM)) {
       const key = `${y}-${String(m).padStart(2, '0')}`;
       if (!revenueByMonth[key]) {
-        revenueByMonth[key] = { month: key, total: 0, bookings: 0, nights: 0 };
+        revenueByMonth[key] = { month: key, total: 0, bookings: 0, nights: 0, type: key <= currentMonth ? 'confirmed' : 'booked' };
       }
       m++;
       if (m > 12) { m = 1; y++; }

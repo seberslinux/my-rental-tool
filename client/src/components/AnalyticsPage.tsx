@@ -197,7 +197,15 @@ export function AnalyticsPage() {
                 <div className="flex gap-4 text-[11px] text-[#717171]">
                   <div className="flex items-center gap-1.5">
                     <div className="w-2 h-2 rounded-full bg-[#007AFF]"></div>
-                    Current
+                    Confirmed
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-[#E8913A]"></div>
+                    Booked
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 rounded-full bg-[#00A699]"></div>
+                    Forecast
                   </div>
                   <div className="flex items-center gap-1.5">
                     <div className="w-2 h-2 rounded-full bg-[#CBD5E1]"></div>
@@ -258,22 +266,35 @@ export function AnalyticsPage() {
                     stroke="#CBD5E1"
                     strokeWidth={2}
                     strokeDasharray="6 4"
-                    dot={false} />
-                  
+                    dot={false}
+                    connectNulls={false} />
+
                     <Line
                     type="monotone"
-                    dataKey="current"
+                    dataKey="confirmed"
                     stroke="#007AFF"
                     strokeWidth={2.5}
-                    dot={{
-                      r: 3,
-                      fill: '#007AFF',
-                      strokeWidth: 0
-                    }}
-                    activeDot={{
-                      r: 5
-                    }} />
-                  
+                    dot={{ r: 3, fill: '#007AFF', strokeWidth: 0 }}
+                    activeDot={{ r: 5 }}
+                    connectNulls={false} />
+
+                    <Line
+                    type="monotone"
+                    dataKey="booked"
+                    stroke="#E8913A"
+                    strokeWidth={2.5}
+                    dot={{ r: 3, fill: '#E8913A', strokeWidth: 0 }}
+                    connectNulls={false} />
+
+                    <Line
+                    type="monotone"
+                    dataKey="forecast"
+                    stroke="#00A699"
+                    strokeWidth={2}
+                    strokeDasharray="6 4"
+                    dot={{ r: 3, fill: '#00A699', strokeWidth: 2, stroke: '#fff' }}
+                    connectNulls={false} />
+
                   </LineChart>
                 </ResponsiveContainer>
               </div>
@@ -665,7 +686,11 @@ export function AnalyticsPage() {
                   <div className="flex gap-4 text-[11px] text-[#717171]">
                     <div className="flex items-center gap-1.5">
                       <div className="w-2 h-2 rounded-full bg-[#007AFF]"></div>
-                      Actual
+                      Confirmed
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-full bg-[#E8913A]"></div>
+                      Booked
                     </div>
                     <div className="flex items-center gap-1.5">
                       <div className="w-2 h-2 rounded-full bg-[#00A699]"></div>
@@ -678,7 +703,8 @@ export function AnalyticsPage() {
                     <LineChart
                     data={revenueData.map((m) => ({
                       month: m.month,
-                      actual: m.current || null,
+                      confirmed: m.confirmed,
+                      booked: m.booked,
                       forecast: m.forecast,
                     }))}
                     margin={{
@@ -726,14 +752,18 @@ export function AnalyticsPage() {
                     
                       <Line
                       type="monotone"
-                      dataKey="actual"
+                      dataKey="confirmed"
                       stroke="#007AFF"
                       strokeWidth={2.5}
-                      dot={{
-                        r: 3,
-                        fill: '#007AFF',
-                        strokeWidth: 0
-                      }}
+                      dot={{ r: 3, fill: '#007AFF', strokeWidth: 0 }}
+                      connectNulls={false} />
+
+                      <Line
+                      type="monotone"
+                      dataKey="booked"
+                      stroke="#E8913A"
+                      strokeWidth={2.5}
+                      dot={{ r: 3, fill: '#E8913A', strokeWidth: 0 }}
                       connectNulls={false} />
                     
                       <Line

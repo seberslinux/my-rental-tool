@@ -16,7 +16,7 @@ function fmtMonthLabel(ym: string): string {
 }
 
 export let overviewKPIs: { label: string; value: string; trend: string; trendDetail: string; isPositive: boolean }[] = [];
-export let revenueData: { month: string; current: number; previous: number; forecast?: number | null }[] = [];
+export let revenueData: { month: string; current: number; previous: number; confirmed?: number | null; booked?: number | null; forecast?: number | null }[] = [];
 export let revenueByProperty: { name: string; revenue: number; percentage: number }[] = [];
 export let propertyPerformance: { name: string; revenue: string; occupancy: number; adr: string; avgStay: string; bookings: number; rating: string; topPlatform: string }[] = [];
 export let channelMixData: { name: string; value: number; color: string }[] = [];
@@ -102,24 +102,40 @@ export async function loadAnalyticsData(propertyId: string = 'all', period: stri
         priorTimeline[currentKey] = Math.round(m.total || 0);
       }
     }
-    const currentTimeline = (d.revenue_timeline || []).map((m: any) => ({
-      month: fmtMonthLabel(m.month),
-      current: Math.round(m.total || 0),
-      previous: priorTimeline[m.month] || 0,
-      forecast: null as number | null,
-    }));
+    const currentTimeline: typeof revenueData = (d.revenue_timeline || []).map((m: any) => {
+      const revenue = Math.round(m.total || 0);
+      const isConfirmed = m.type === 'confirmed';
+      return {
+        month: fmtMonthLabel(m.month),
+        current: revenue,
+        previous: priorTimeline[m.month] || 0,
+        confirmed: isConfirmed ? revenue : null,
+        booked: !isConfirmed ? revenue : null,
+        forecast: null,
+      };
+    });
 
-    // Append forecast months (bridge last actual into forecast)
+    // Bridge confirmed→booked: set booked on last confirmed month for seamless connection
+    const lastConfirmedIdx = currentTimeline.reduce((acc, m, i) => m.confirmed !== null ? i : acc, -1);
+    if (lastConfirmedIdx >= 0 && lastConfirmedIdx < currentTimeline.length - 1 && currentTimeline[lastConfirmedIdx + 1].booked !== null) {
+      currentTimeline[lastConfirmedIdx].booked = currentTimeline[lastConfirmedIdx].confirmed;
+    }
+
+    // Bridge booked→forecast and append forecast months
     const predictions: any[] = d.predictions || [];
-    if (predictions.length > 0 && currentTimeline.length > 0) {
-      // Set forecast on last actual month for a seamless line connection
-      currentTimeline[currentTimeline.length - 1].forecast = currentTimeline[currentTimeline.length - 1].current;
+    const lastBookedIdx = currentTimeline.reduce((acc, m, i) => m.booked !== null ? i : acc, -1);
+    if (predictions.length > 0 && lastBookedIdx >= 0) {
+      currentTimeline[lastBookedIdx].forecast = currentTimeline[lastBookedIdx].booked;
+    } else if (predictions.length > 0 && lastConfirmedIdx >= 0) {
+      currentTimeline[lastConfirmedIdx].forecast = currentTimeline[lastConfirmedIdx].confirmed;
     }
     for (const p of predictions) {
       currentTimeline.push({
         month: fmtMonthLabel(p.month),
         current: 0,
         previous: priorTimeline[p.month] || 0,
+        confirmed: null,
+        booked: null,
         forecast: Math.round(p.predicted_revenue || 0),
       });
     }
