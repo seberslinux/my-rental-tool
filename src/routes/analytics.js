@@ -542,9 +542,9 @@ router.get('/data', async (req, res) => {
   const currentMonth = todayStr.substring(0, 7);
   const completedMonths = revenueTimeline.filter(m => m.month < currentMonth);
 
-  // Forecast months: current month (partial) + next 4
+  // Forecast months: next 4 months (exclude current month)
   const forecastMonths = [];
-  for (let i = 0; i <= 4; i++) {
+  for (let i = 1; i <= 4; i++) {
     const futureDate = new Date(today);
     futureDate.setMonth(futureDate.getMonth() + i);
     forecastMonths.push(futureDate.toISOString().substring(0, 7));
