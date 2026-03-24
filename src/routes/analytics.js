@@ -787,6 +787,38 @@ router.get('/data', async (req, res) => {
     };
   }
 
+  // --- Top Revenue Periods (cluster consecutive bookings, gap > 3 days = new period) ---
+  const sortedBookings = [...allBookingsCombined].sort((a, b) => a.check_in.localeCompare(b.check_in));
+  const revenuePeriods = [];
+  let currentPeriod = null;
+  for (const b of sortedBookings) {
+    const gapDays = currentPeriod
+      ? Math.round((new Date(b.check_in) - new Date(currentPeriod.end)) / 86400000)
+      : Infinity;
+    if (!currentPeriod || gapDays > 3) {
+      // Start new period
+      if (currentPeriod) revenuePeriods.push(currentPeriod);
+      currentPeriod = {
+        start: b.check_in,
+        end: b.check_out,
+        revenue: b.converted_total_price || 0,
+        bookings: 1,
+        nights: b.length_of_stay || 1,
+      };
+    } else {
+      // Extend current period
+      if (b.check_out > currentPeriod.end) currentPeriod.end = b.check_out;
+      currentPeriod.revenue += b.converted_total_price || 0;
+      currentPeriod.bookings += 1;
+      currentPeriod.nights += b.length_of_stay || 1;
+    }
+  }
+  if (currentPeriod) revenuePeriods.push(currentPeriod);
+  const topRevenuePeriods = revenuePeriods
+    .map(p => ({ ...p, revenue: Math.round(p.revenue), adr: p.nights > 0 ? Math.round(p.revenue / p.nights) : 0 }))
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 8);
+
   res.json({
     display_currency: displayCurrency,
     summary: {
@@ -822,6 +854,7 @@ router.get('/data', async (req, res) => {
     cancellations_by_channel: Object.values(cancellationsByChannel),
     price_trends: priceTrends,
     predictions,
+    top_revenue_periods: topRevenuePeriods,
     reviews_by_property: Object.values(reviewsByProperty),
     recent_reviews: reviews.slice(0, 20),
     guest_demographics: {

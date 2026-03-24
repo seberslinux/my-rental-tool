@@ -29,6 +29,7 @@ import {
   checkoutDowStats,
   hourDistribution,
   occupancyHeatmap,
+  topRevenuePeriods,
   recentReviews,
   loadAnalyticsData } from
 '../data/analytics';
@@ -647,7 +648,7 @@ export function AnalyticsPage() {
                     <thead className="bg-[#F7F7F7] text-[#717171]">
                       <tr>
                         <th className="p-3 pl-5 font-semibold uppercase tracking-[0.3px] text-[10px]">
-                          Month
+                          Period
                         </th>
                         <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px]">
                           Revenue
@@ -664,26 +665,28 @@ export function AnalyticsPage() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[#F0F0F0]">
-                      {[...revenueData].sort((a, b) => (b.paid + b.booked) - (a.paid + a.booked)).slice(0, 6).map((row, idx) =>
+                      {topRevenuePeriods.map((row, idx) => {
+                    const fmtD = (ds: string) => { const d = new Date(ds + 'T00:00:00'); return `${d.getDate()} ${d.toLocaleDateString('en-ZA', { month: 'short', year: 'numeric' })}`; };
+                    return (
                     <tr key={idx}>
                           <td className="p-3 pl-5">
-                            <div className="text-[13px] font-medium text-[#222222]">{row.monthFull}</div>
-                            {row.period && <div className="text-[11px] text-[#B0B0B0]">{row.period}</div>}
+                            <div className="text-[13px] font-medium text-[#222222]">{fmtD(row.start)} – {fmtD(row.end)}</div>
                           </td>
                           <td className="p-3 text-[13px] text-[#222222]">
-                            R {(row.paid + row.booked).toLocaleString()}
+                            R {row.revenue.toLocaleString()}
                           </td>
                           <td className="p-3 text-[13px] text-[#717171]">
-                            {row.bookings || '--'}
+                            {row.bookings}
                           </td>
                           <td className="p-3 text-[13px] text-[#717171]">
-                            {row.nights || '--'}
+                            {row.nights}
                           </td>
                           <td className="p-3 pr-5 text-[13px] text-[#222222]">
-                            {row.nights > 0 ? `R ${Math.round((row.paid + row.booked) / row.nights).toLocaleString()}` : '--'}
+                            R {row.adr.toLocaleString()}
                           </td>
-                        </tr>
-                    )}
+                        </tr>);
+
+                    })}
                     </tbody>
                   </table>
                 </div>
@@ -707,9 +710,10 @@ export function AnalyticsPage() {
                   </div>
                   <p className="text-[12px] text-[#334155] leading-relaxed">
                     {(() => {
-                      if (revenueData.length === 0) return 'No revenue data available.';
-                      const peak = [...revenueData].sort((a, b) => (b.paid + b.booked) - (a.paid + a.booked))[0];
-                      return <>Peak revenue month: <strong>{peak.month}</strong> generating R {(peak.paid + peak.booked).toLocaleString()}.</>;
+                      if (topRevenuePeriods.length === 0) return 'No revenue data available.';
+                      const peak = topRevenuePeriods[0];
+                      const fmtD = (ds: string) => { const d = new Date(ds + 'T00:00:00'); return `${d.getDate()} ${d.toLocaleDateString('en-ZA', { month: 'short', year: 'numeric' })}`; };
+                      return <>Peak period: <strong>{fmtD(peak.start)} – {fmtD(peak.end)}</strong> generating R {peak.revenue.toLocaleString()} from {peak.bookings} bookings.</>;
                     })()}
                   </p>
                 </div>

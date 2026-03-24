@@ -43,6 +43,7 @@ export let dowStats: { day: string; count: number }[] = [];
 export let checkoutDowStats: { day: string; count: number }[] = [];
 export let hourDistribution: { hour: string; count: number }[] = [];
 export let occupancyHeatmap: { property: string; months: { month: string; rate: number }[] }[] = [];
+export let topRevenuePeriods: { start: string; end: string; revenue: number; bookings: number; nights: number; adr: number }[] = [];
 export let recentReviews: { id: number; guest: string; property: string; rating: number; date: string; text: string }[] = [];
 
 const CHANNEL_COLORS: Record<string, string> = {
@@ -305,6 +306,16 @@ export async function loadAnalyticsData(propertyId: string = 'all', period: stri
       }
       return { property: p.property, months };
     });
+
+    // --- Top Revenue Periods ---
+    topRevenuePeriods = (d.top_revenue_periods || []).map((p: any) => ({
+      start: p.start,
+      end: p.end,
+      revenue: p.revenue,
+      bookings: p.bookings,
+      nights: p.nights,
+      adr: p.adr,
+    }));
 
     // --- Reviews ---
     if (reviewsRes.ok) {
