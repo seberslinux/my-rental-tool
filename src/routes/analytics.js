@@ -592,20 +592,20 @@ router.get('/data', async (req, res) => {
       priorByMonth[month].nights += b.length_of_stay || 1;
     }
 
-    // Compute YoY growth factor: avg ratio of each completed month vs same month last year
-    // Only use months where both years have data
-    let ratioSum = 0;
-    let ratioCount = 0;
+    // Compute YoY growth factor: total this year / total last year
+    // Only use months where both years have data (avoids skew from outlier ratios)
+    let thisYearTotal = 0;
+    let lastYearTotal = 0;
     for (const cm of completedMonths) {
       const [y, mo] = cm.month.split('-').map(Number);
       const priorKey = `${y - 1}-${String(mo).padStart(2, '0')}`;
       const priorData = priorByMonth[priorKey];
       if (priorData && priorData.total > 0 && cm.total > 0) {
-        ratioSum += cm.total / priorData.total;
-        ratioCount += 1;
+        thisYearTotal += cm.total;
+        lastYearTotal += priorData.total;
       }
     }
-    const growthFactor = ratioCount > 0 ? ratioSum / ratioCount : 1;
+    const growthFactor = lastYearTotal > 0 ? thisYearTotal / lastYearTotal : 1;
 
     // Generate predictions: prior year same month × growth factor
     // Skip months with no prior year data
