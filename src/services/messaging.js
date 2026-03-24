@@ -1,5 +1,6 @@
 const { getAll } = require('../db/database');
 const smoobu = require('./smoobu');
+const { getApiKeyForProperty } = require('./api-key-resolver');
 
 // Send check-in instructions 24 hours before check-in
 async function sendCheckinMessages() {
@@ -25,10 +26,12 @@ async function sendCheckinMessages() {
         .replace('{property_name}', booking.property_name)
         .replace('{check_in}', booking.check_in);
 
+      const apiKey = await getApiKeyForProperty(booking.property_id);
       await smoobu.sendGuestMessage(
         booking.smoobu_id,
         'Check-in Instructions',
-        message
+        message,
+        apiKey
       );
       console.log(
         `Sent check-in message for booking ${booking.smoobu_id} at ${booking.property_name}`
@@ -64,10 +67,12 @@ async function sendCheckoutMessages() {
         .replace('{property_name}', booking.property_name)
         .replace('{check_out}', booking.check_out);
 
+      const apiKey = await getApiKeyForProperty(booking.property_id);
       await smoobu.sendGuestMessage(
         booking.smoobu_id,
         'Checkout Reminder',
-        message
+        message,
+        apiKey
       );
       console.log(
         `Sent checkout message for booking ${booking.smoobu_id} at ${booking.property_name}`

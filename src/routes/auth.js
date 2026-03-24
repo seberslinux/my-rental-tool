@@ -84,7 +84,8 @@ router.get('/me', (req, res) => {
       email: req.user.email,
       name: req.user.name,
       role: req.user.role,
-      avatar_url: req.user.avatar_url
+      avatar_url: req.user.avatar_url,
+      has_smoobu_key: !!(req.user.smoobu_api_key_encrypted && req.user.smoobu_api_key_iv),
     });
   }
   // Fallback: cleaner PIN session

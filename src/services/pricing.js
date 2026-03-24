@@ -1,5 +1,6 @@
 const { getAll } = require('../db/database');
 const smoobu = require('./smoobu');
+const { getApiKeyForProperty } = require('./api-key-resolver');
 
 // Apply dynamic pricing rules for all properties
 async function runPricingEngine() {
@@ -102,7 +103,8 @@ async function applyPricingForProperty(property, from, to) {
     price = Math.round(price);
 
     try {
-      await smoobu.setRates(property.smoobu_id, dateStr, dateStr, price);
+      const apiKey = await getApiKeyForProperty(property.id);
+      await smoobu.setRates(property.smoobu_id, dateStr, dateStr, price, apiKey);
       console.log(`Set rate for ${property.name} on ${dateStr}: ${price}`);
     } catch (err) {
       console.error(`Failed to set rate for ${property.name} on ${dateStr}:`, err.message);

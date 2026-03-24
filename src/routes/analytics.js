@@ -5,6 +5,7 @@ const smoobu = require('../services/smoobu');
 const { detectCurrency } = require('../services/currency-detect');
 const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
 const { scopeProperties, enforcePropertyScope } = require('../middleware/auth');
+const { getApiKeyForProperty, getApiKeyForUser } = require('../services/api-key-resolver');
 
 // Apply property scoping to all analytics routes
 router.use(scopeProperties);
@@ -40,7 +41,8 @@ router.post('/sync-rates', async (req, res) => {
 
     for (const p of properties) {
       try {
-        const ratesData = await smoobu.getRates(p.smoobu_id, today, sixtyDaysOut);
+        const apiKey = await getApiKeyForProperty(p.id);
+        const ratesData = await smoobu.getRates(p.smoobu_id, today, sixtyDaysOut, apiKey);
         // Smoobu returns rates keyed by apartment ID
         const apartmentRates = ratesData?.data?.[p.smoobu_id] || ratesData?.[p.smoobu_id] || {};
 
@@ -120,7 +122,9 @@ router.post('/sync-history', async (req, res) => {
       .toISOString()
       .split('T')[0];
 
-    const allBookings = await smoobu.getAllBookings({ from: twoYearsAgo, to: sixMonthsOut });
+    // Use requesting user's key if available, else env var
+    const syncApiKey = req.user ? await getApiKeyForUser(req.user.id) : process.env.SMOOBU_API_KEY;
+    const allBookings = await smoobu.getAllBookings({ from: twoYearsAgo, to: sixMonthsOut }, syncApiKey);
 
     // Build property base_currency map for fallback
     const propCurrencyMap = {};

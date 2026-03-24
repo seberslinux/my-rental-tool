@@ -1,6 +1,7 @@
 const { getAll, getOne, run } = require('../db/database');
 const smoobu = require('./smoobu');
 const whatsapp = require('./whatsapp');
+const { getApiKeyForProperty } = require('./api-key-resolver');
 
 // Run cleaner assignment for a specific property and checkout date
 // booking: { id, smoobu_id, property_id, check_out, check_in_next, num_guests_next, guest_name_next }
@@ -146,11 +147,13 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
 
   try {
     const blockEnd = nextBooking ? nextBooking.check_in : checkoutDate;
+    const apiKey = await getApiKeyForProperty(property.id);
     await smoobu.blockDates(
       property.smoobu_id,
       checkoutDate,
       blockEnd,
-      'No cleaner available'
+      'No cleaner available',
+      apiKey
     );
 
     await run(

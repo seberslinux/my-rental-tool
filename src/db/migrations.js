@@ -382,6 +382,37 @@ async function runMigrations() {
     ['language', "TEXT DEFAULT ''"],
   ]);
 
+  // Multi-tenant support: encrypted API keys on users
+  await alterColumns('users', [
+    ['smoobu_api_key_encrypted', "TEXT DEFAULT ''"],
+    ['smoobu_api_key_iv', "TEXT DEFAULT ''"],
+  ]);
+
+  // Multi-tenant support: owner tracking on properties
+  await alterColumns('properties', [
+    ['owner_user_id', 'INTEGER DEFAULT NULL'],
+  ]);
+
+  // Multi-tenant support: user_properties junction table
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_properties (
+      user_id INTEGER NOT NULL,
+      property_id INTEGER NOT NULL,
+      role TEXT NOT NULL DEFAULT 'viewer',
+      created_at TEXT DEFAULT NOW(),
+      PRIMARY KEY (user_id, property_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (property_id) REFERENCES properties(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Multi-tenant support: migrate existing user_property_access rows
+  await pool.query(`
+    INSERT INTO user_properties (user_id, property_id, role)
+    SELECT user_id, property_id, 'manager' FROM user_property_access
+    ON CONFLICT (user_id, property_id) DO NOTHING
+  `);
+
   // Add 'ready' to cleaning_jobs status CHECK constraint (PG)
   try {
     await pool.query("ALTER TABLE cleaning_jobs DROP CONSTRAINT IF EXISTS cleaning_jobs_status_check");

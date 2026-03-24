@@ -192,4 +192,79 @@ router.put('/:id', async (req, res) => {
   res.json(updated);
 });
 
+// --- Property Sharing ---
+
+// GET /api/properties/:id/users — list users with access
+router.get('/:id/users', async (req, res) => {
+  try {
+    const rows = await getAll(
+      `SELECT up.user_id, up.role, u.name, u.email
+       FROM user_properties up JOIN users u ON up.user_id = u.id
+       WHERE up.property_id = $1 ORDER BY up.role ASC, u.name ASC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/properties/:id/share — share property with a user
+router.post('/:id/share', async (req, res) => {
+  try {
+    const propertyId = parseInt(req.params.id);
+    const { user_id, role } = req.body;
+    if (!user_id || !['manager', 'viewer'].includes(role)) {
+      return res.status(400).json({ error: 'user_id and role (manager/viewer) required' });
+    }
+
+    // Only owner or admin can share
+    const isOwner = req.propertyRoles && req.propertyRoles.get(propertyId) === 'owner';
+    if (req.user.role !== 'admin' && !isOwner) {
+      return res.status(403).json({ error: 'Only the property owner can share access' });
+    }
+
+    await run(
+      `INSERT INTO user_properties (user_id, property_id, role)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, property_id) DO UPDATE SET role = EXCLUDED.role`,
+      [user_id, propertyId, role]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/properties/:id/share/:userId — remove a user's access
+router.delete('/:id/share/:userId', async (req, res) => {
+  try {
+    const propertyId = parseInt(req.params.id);
+    const userId = parseInt(req.params.userId);
+
+    // Cannot remove owner
+    const existing = await getOne(
+      'SELECT role FROM user_properties WHERE user_id = $1 AND property_id = $2',
+      [userId, propertyId]
+    );
+    if (existing && existing.role === 'owner') {
+      return res.status(400).json({ error: 'Cannot remove the property owner' });
+    }
+
+    // Only owner or admin can remove
+    const isOwner = req.propertyRoles && req.propertyRoles.get(propertyId) === 'owner';
+    if (req.user.role !== 'admin' && !isOwner) {
+      return res.status(403).json({ error: 'Only the property owner can remove access' });
+    }
+
+    await run(
+      'DELETE FROM user_properties WHERE user_id = $1 AND property_id = $2',
+      [userId, propertyId]
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

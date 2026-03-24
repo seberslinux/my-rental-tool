@@ -33,16 +33,24 @@ async function scopeProperties(req, res, next) {
   if (!req.user) return next();
 
   if (req.user.role === 'admin') {
+    // Admin sees all, but also load their property roles for ownership checks
+    const rows = await getAll(
+      'SELECT property_id, role FROM user_properties WHERE user_id = $1',
+      [req.user.id]
+    );
+    req.propertyRoles = new Map(rows.map(r => [r.property_id, r.role]));
     req.accessiblePropertyIds = null; // null = all properties
     return next();
   }
 
   try {
+    // Use user_properties for all non-admin users (owner, manager, viewer)
     if (req.user.role === 'property_manager') {
       const rows = await getAll(
-        'SELECT property_id FROM user_property_access WHERE user_id = $1',
+        'SELECT property_id, role FROM user_properties WHERE user_id = $1',
         [req.user.id]
       );
+      req.propertyRoles = new Map(rows.map(r => [r.property_id, r.role]));
       req.accessiblePropertyIds = rows.map(r => r.property_id);
       return next();
     }

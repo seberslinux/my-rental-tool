@@ -5,20 +5,37 @@ const smoobu = require('../services/smoobu');
 const { requireRole, scopeProperties } = require('../middleware/auth');
 const { detectCurrency } = require('../services/currency-detect');
 const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
+const { getApiKeyForUser } = require('../services/api-key-resolver');
 
-// Sync routes — admin only
+// Sync properties — uses the requesting user's API key (or env var fallback)
 router.post('/sync/properties', requireRole('admin'), async (req, res) => {
   try {
-    const apartments = await smoobu.getProperties();
+    const apiKey = await getApiKeyForUser(req.user.id);
+    if (!apiKey) return res.status(400).json({ error: 'No Smoobu API key configured' });
+
+    const apartments = await smoobu.getProperties(apiKey);
 
     await transaction(async (client) => {
       for (const apt of apartments) {
+        // Upsert property
         await client.query(
-          `INSERT INTO properties (smoobu_id, name)
-           VALUES ($1, $2)
-           ON CONFLICT(smoobu_id) DO UPDATE SET name = excluded.name`,
-          [apt.id, apt.name]
+          `INSERT INTO properties (smoobu_id, name, owner_user_id)
+           VALUES ($1, $2, $3)
+           ON CONFLICT(smoobu_id) DO UPDATE SET name = excluded.name,
+             owner_user_id = CASE WHEN properties.owner_user_id IS NULL THEN excluded.owner_user_id ELSE properties.owner_user_id END`,
+          [apt.id, apt.name, req.user.id]
         );
+
+        // Ensure owner has access in user_properties
+        const prop = await client.query('SELECT id FROM properties WHERE smoobu_id = $1', [apt.id]);
+        if (prop.rows.length > 0) {
+          await client.query(
+            `INSERT INTO user_properties (user_id, property_id, role)
+             VALUES ($1, $2, 'owner')
+             ON CONFLICT (user_id, property_id) DO NOTHING`,
+            [req.user.id, prop.rows[0].id]
+          );
+        }
       }
     });
 
@@ -32,6 +49,9 @@ router.post('/sync/properties', requireRole('admin'), async (req, res) => {
 // Sync bookings from Smoobu into local DB
 router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
   try {
+    const apiKey = await getApiKeyForUser(req.user.id);
+    if (!apiKey) return res.status(400).json({ error: 'No Smoobu API key configured' });
+
     const today = new Date();
     const from = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000)
       .toISOString()
@@ -45,7 +65,7 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
     let hasMore = true;
 
     while (hasMore) {
-      const data = await smoobu.getBookings({ from, to, page });
+      const data = await smoobu.getBookings({ from, to, page }, apiKey);
       const bookings = data.bookings || [];
       allBookings = allBookings.concat(bookings);
       hasMore = bookings.length >= 100;
