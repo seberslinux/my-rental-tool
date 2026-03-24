@@ -21,8 +21,17 @@ function fmtMonthFull(ym: string): string {
   return `${months[parseInt(m, 10) - 1]} ${y}`;
 }
 
+function fmtPeriod(firstCheckin?: string, lastCheckout?: string): string {
+  if (!firstCheckin || !lastCheckout) return '';
+  const fmt = (ds: string) => {
+    const d = new Date(ds + 'T00:00:00');
+    return `${d.getDate()} ${d.toLocaleDateString('en-ZA', { month: 'short' })} ${d.getFullYear()}`;
+  };
+  return `${fmt(firstCheckin)} – ${fmt(lastCheckout)}`;
+}
+
 export let overviewKPIs: { label: string; value: string; trend: string; trendDetail: string; isPositive: boolean }[] = [];
-export let revenueData: { month: string; monthFull: string; paid: number; booked: number; forecast: number; previous: number; bookings: number; nights: number; isForecastOnly?: boolean }[] = [];
+export let revenueData: { month: string; monthFull: string; period: string; paid: number; booked: number; forecast: number; previous: number; bookings: number; nights: number; isForecastOnly?: boolean }[] = [];
 export let revenueByProperty: { name: string; revenue: number; percentage: number }[] = [];
 export let propertyPerformance: { name: string; revenue: string; occupancy: number; adr: string; avgStay: string; bookings: number; rating: string; topPlatform: string }[] = [];
 export let channelMixData: { name: string; value: number; color: string }[] = [];
@@ -127,6 +136,7 @@ export async function loadAnalyticsData(propertyId: string = 'all', period: stri
       timeline.push({
         month: fmtMonthLabel(m.month),
         monthFull: fmtMonthFull(m.month),
+        period: fmtPeriod(m.first_checkin, m.last_checkout),
         paid,
         booked,
         forecast: forecastGap,
@@ -143,6 +153,7 @@ export async function loadAnalyticsData(propertyId: string = 'all', period: stri
         timeline.push({
           month: fmtMonthLabel(p.month),
           monthFull: fmtMonthFull(p.month),
+          period: '',
           paid: 0,
           booked: 0,
           forecast: Math.round(p.predicted_revenue || 0),

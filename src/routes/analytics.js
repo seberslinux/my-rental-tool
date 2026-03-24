@@ -273,10 +273,9 @@ router.get('/data', async (req, res) => {
   const revenueByMonth = {};
   for (const b of allBookingsCombined) {
     const month = b.check_in.substring(0, 7); // YYYY-MM
-    if (!revenueByMonth[month]) revenueByMonth[month] = { month, total: 0, paid: 0, booked: 0, bookings: 0, nights: 0 };
+    if (!revenueByMonth[month]) revenueByMonth[month] = { month, total: 0, paid: 0, booked: 0, bookings: 0, nights: 0, first_checkin: b.check_in, last_checkout: b.check_out };
     const rev = b.converted_total_price || 0;
     revenueByMonth[month].total += rev;
-    // Paid = checkout is in the past; Booked = checkout is still in the future
     if (b.check_out <= todayStr) {
       revenueByMonth[month].paid += rev;
     } else {
@@ -284,6 +283,8 @@ router.get('/data', async (req, res) => {
     }
     revenueByMonth[month].bookings += 1;
     revenueByMonth[month].nights += b.length_of_stay || 1;
+    if (b.check_in < revenueByMonth[month].first_checkin) revenueByMonth[month].first_checkin = b.check_in;
+    if (b.check_out > revenueByMonth[month].last_checkout) revenueByMonth[month].last_checkout = b.check_out;
   }
   // Fill in missing months with 0 values so the chart has no gaps
   const monthKeys = Object.keys(revenueByMonth).sort();
