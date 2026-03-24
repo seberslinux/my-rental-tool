@@ -673,13 +673,13 @@ export function AnalyticsPage() {
                             R {(row.paid + row.booked).toLocaleString()}
                           </td>
                           <td className="p-3 text-[13px] text-[#717171]">
-                            --
+                            {row.bookings || '--'}
                           </td>
                           <td className="p-3 text-[13px] text-[#717171]">
-                            --
+                            {row.nights || '--'}
                           </td>
                           <td className="p-3 pr-5 text-[13px] text-[#222222]">
-                            --
+                            {row.nights > 0 ? `R ${Math.round((row.paid + row.booked) / row.nights).toLocaleString()}` : '--'}
                           </td>
                         </tr>
                     )}
