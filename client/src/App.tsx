@@ -12,6 +12,7 @@ import { LoginPage } from './components/LoginPage';
 import { CleanersPage } from './components/CleanersPage';
 import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
+import { SmoobuConnectionPage } from './components/SmoobuConnectionPage';
 import { properties, bookings, Booking, loadCalendarData } from './data/properties';
 import { loadDashboardData, setPropertyFilter, setOnDataChanged } from './data/dashboard';
 import { loadAnalyticsData } from './data/analytics';
@@ -86,6 +87,8 @@ export function App() {
         return 'Properties';
       case 'users':
         return 'Users';
+      case 'smoobu':
+        return 'Smoobu';
       case 'more':
         return 'More';
       default:
@@ -152,6 +155,7 @@ export function App() {
         {activeTab === 'analytics' && <AnalyticsPage />}
         {activeTab === 'properties' && <PropertiesPage />}
         {activeTab === 'users' && <UsersPage />}
+        {activeTab === 'smoobu' && <SmoobuConnectionPage />}
         {activeTab === 'more' && <MorePage onNavigate={setActiveTab} onLogout={() => { setIsLoggedIn(false); setDataLoaded(false); }} />}
       </main>
 

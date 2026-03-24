@@ -15,7 +15,10 @@ import {
   User,
   Cloud,
   Wifi,
-  Globe } from
+  Globe,
+  Users,
+  X,
+  Plus } from
 'lucide-react';
 
 interface Property {
@@ -584,6 +587,11 @@ export function PropertiesPage() {
                     </Section>
                   </div>
 
+                  {/* Sharing */}
+                  <Section icon={Users} title="Sharing">
+                    <PropertySharing propertyId={prop.id} />
+                  </Section>
+
                   {/* Save Button */}
                   <div className="flex justify-end pt-3">
                     <button
@@ -698,4 +706,107 @@ function SmoobuDetails({
       }
     </div>);
 
+}
+
+function PropertySharing({ propertyId }: { propertyId: number }) {
+  const [users, setUsers] = useState<{ user_id: number; role: string; name: string; email: string }[]>([]);
+  const [allUsers, setAllUsers] = useState<{ id: number; name: string; email: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [addUserId, setAddUserId] = useState('');
+  const [addRole, setAddRole] = useState('manager');
+
+  const load = async () => {
+    const [usersRes, allRes] = await Promise.all([
+      fetch(`/api/properties/${propertyId}/users`, { credentials: 'same-origin' }),
+      fetch('/api/users', { credentials: 'same-origin' }),
+    ]);
+    if (usersRes.ok) setUsers(await usersRes.json());
+    if (allRes.ok) {
+      const data = await allRes.json();
+      setAllUsers(Array.isArray(data) ? data : data.users || []);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [propertyId]);
+
+  const handleAdd = async () => {
+    if (!addUserId) return;
+    await fetch(`/api/properties/${propertyId}/share`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ user_id: Number(addUserId), role: addRole }),
+    });
+    setAddUserId('');
+    load();
+  };
+
+  const handleRemove = async (userId: number) => {
+    await fetch(`/api/properties/${propertyId}/share/${userId}`, {
+      method: 'DELETE',
+      credentials: 'same-origin',
+    });
+    load();
+  };
+
+  if (loading) return <div className="text-[12px] text-[#B0B0B0] py-2">Loading...</div>;
+
+  const availableUsers = allUsers.filter((u) => !users.some((pu) => pu.user_id === u.id));
+
+  return (
+    <div className="space-y-3">
+      {users.length === 0 && (
+        <div className="text-[13px] text-[#B0B0B0]">No users assigned</div>
+      )}
+      {users.map((u) => (
+        <div key={u.user_id} className="flex items-center justify-between">
+          <div>
+            <span className="text-[13px] font-medium text-[#222222]">{u.name || u.email}</span>
+            <span className={`ml-2 text-[11px] font-semibold px-2 py-[2px] rounded-[4px] ${
+              u.role === 'owner' ? 'bg-[#007AFF15] text-[#007AFF]' :
+              u.role === 'manager' ? 'bg-[#00A69915] text-[#00A699]' :
+              'bg-[#F7F7F7] text-[#717171]'
+            }`}>
+              {u.role}
+            </span>
+          </div>
+          {u.role !== 'owner' && (
+            <button
+              onClick={() => handleRemove(u.user_id)}
+              className="text-[#DC2626] p-1 rounded hover:bg-[#FEF2F2]">
+              <X className="w-3.5 h-3.5" strokeWidth={2} />
+            </button>
+          )}
+        </div>
+      ))}
+
+      {availableUsers.length > 0 && (
+        <div className="flex items-center gap-2 pt-2 border-t border-[#F0F0F0]">
+          <select
+            value={addUserId}
+            onChange={(e) => setAddUserId(e.target.value)}
+            className="flex-1 text-[12px] px-2 py-1.5 border border-[#EBEBEB] rounded-[6px] bg-white focus:outline-none focus:border-[#007AFF]">
+            <option value="">Add user...</option>
+            {availableUsers.map((u) => (
+              <option key={u.id} value={u.id}>{u.name || u.email}</option>
+            ))}
+          </select>
+          <select
+            value={addRole}
+            onChange={(e) => setAddRole(e.target.value)}
+            className="text-[12px] px-2 py-1.5 border border-[#EBEBEB] rounded-[6px] bg-white focus:outline-none focus:border-[#007AFF]">
+            <option value="manager">Manager</option>
+            <option value="viewer">Viewer</option>
+          </select>
+          <button
+            onClick={handleAdd}
+            disabled={!addUserId}
+            className="p-1.5 bg-[#007AFF] text-white rounded-[6px] disabled:opacity-50">
+            <Plus className="w-3.5 h-3.5" strokeWidth={2} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
