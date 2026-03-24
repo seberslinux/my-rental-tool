@@ -16,7 +16,7 @@ function fmtMonthLabel(ym: string): string {
 }
 
 export let overviewKPIs: { label: string; value: string; trend: string; trendDetail: string; isPositive: boolean }[] = [];
-export let revenueData: { month: string; paid: number; booked: number; forecast: number; previous: number }[] = [];
+export let revenueData: { month: string; paid: number; booked: number; forecast: number; previous: number; isForecastOnly?: boolean }[] = [];
 export let revenueByProperty: { name: string; revenue: number; percentage: number }[] = [];
 export let propertyPerformance: { name: string; revenue: string; occupancy: number; adr: string; avgStay: string; bookings: number; rating: string; topPlatform: string }[] = [];
 export let channelMixData: { name: string; value: number; color: string }[] = [];
@@ -137,6 +137,7 @@ export async function loadAnalyticsData(propertyId: string = 'all', period: stri
           booked: 0,
           forecast: Math.round(p.predicted_revenue || 0),
           previous: priorTimeline[p.month] || 0,
+          isForecastOnly: true,
         });
       }
     }

@@ -430,11 +430,13 @@ export function AnalyticsPage() {
               <div className="h-[240px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                  data={revenueData.map((m) => ({
-                    month: m.month,
-                    thisYear: m.paid + m.booked,
-                    lastYear: m.previous,
-                  }))}
+                  data={revenueData
+                    .filter((m) => !m.isForecastOnly)
+                    .map((m) => ({
+                      month: m.month,
+                      thisYear: m.paid + m.booked,
+                      lastYear: m.previous,
+                    }))}
                   margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
 
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F0F0F0" />
