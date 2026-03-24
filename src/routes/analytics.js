@@ -504,19 +504,92 @@ router.get('/data', async (req, res) => {
     };
   }
 
-  // --- Revenue prediction (simple 3-month moving average) ---
+  // --- Revenue prediction (hybrid: prior year seasonality + recent trend) ---
   const predictions = [];
   if (revenueTimeline.length >= 3) {
     const lastThree = revenueTimeline.slice(-3);
-    const avgRevenue = Math.round(lastThree.reduce((sum, r) => sum + r.total, 0) / 3);
-    const avgBookings = Math.round(lastThree.reduce((sum, r) => sum + r.bookings, 0) / 3);
-    const avgNights = Math.round(lastThree.reduce((sum, r) => sum + r.nights, 0) / 3);
+    const maRevenue = Math.round(lastThree.reduce((sum, r) => sum + r.total, 0) / 3);
+    const maBookings = Math.round(lastThree.reduce((sum, r) => sum + r.bookings, 0) / 3);
+    const maNights = Math.round(lastThree.reduce((sum, r) => sum + r.nights, 0) / 3);
 
+    // Compute YoY trend factor: avg of last 3 months / avg of same 3 months last year
+    let trendFactor = 1;
+    const priorMatchRevenue = lastThree.reduce((sum, r) => {
+      const [y, m] = r.month.split('-').map(Number);
+      const priorKey = `${y - 1}-${String(m).padStart(2, '0')}`;
+      const priorEntry = revenueTimeline.find(e => e.month === priorKey);
+      return sum + (priorEntry ? priorEntry.total : 0);
+    }, 0);
+    if (priorMatchRevenue > 0) {
+      trendFactor = (lastThree.reduce((s, r) => s + r.total, 0)) / priorMatchRevenue;
+    }
+
+    // Fetch prior year revenue for the forecast months
+    let priorForecastParams = [];
+    let priorForecastFilter = '';
+    priorForecastFilter += addPropertyFilter(propIds, 'b.property_id', priorForecastParams);
+    const forecastMonths = [];
     for (let i = 1; i <= 4; i++) {
       const futureDate = new Date(today);
       futureDate.setMonth(futureDate.getMonth() + i);
-      const month = futureDate.toISOString().substring(0, 7);
-      predictions.push({ month, predicted_revenue: avgRevenue, predicted_bookings: avgBookings, predicted_nights: avgNights });
+      forecastMonths.push(futureDate.toISOString().substring(0, 7));
+    }
+    // Prior year equivalents
+    const priorForecastMonths = forecastMonths.map(m => {
+      const [y, mo] = m.split('-');
+      return `${Number(y) - 1}-${mo}`;
+    });
+    const priorForecastFrom = priorForecastMonths[0] + '-01';
+    const priorForecastTo = priorForecastMonths[priorForecastMonths.length - 1] + '-28';
+    priorForecastFilter += ` AND b.check_in >= $${priorForecastParams.length + 1}`;
+    priorForecastParams.push(priorForecastFrom);
+    priorForecastFilter += ` AND b.check_in <= $${priorForecastParams.length + 1}`;
+    priorForecastParams.push(priorForecastTo);
+
+    const priorFcBookings = await getAll(
+      `SELECT b.check_in, b.total_price, b.length_of_stay, b.price_per_night, b.currency,
+              p.base_price as property_base_price, p.base_currency as property_base_currency
+       FROM bookings b JOIN properties p ON b.property_id = p.id
+       WHERE b.status = 'confirmed'${BLOCKED_FILTER}${priorForecastFilter}`,
+      priorForecastParams
+    );
+
+    // Impute + convert
+    for (const b of priorFcBookings) {
+      if ((b.total_price || 0) === 0 && b.property_base_price > 0) {
+        b.total_price = b.property_base_price * (b.length_of_stay || 1);
+        b.currency = b.property_base_currency || 'ZAR';
+      }
+    }
+    await bulkConvert(priorFcBookings, displayCurrency);
+
+    const priorFcByMonth = {};
+    for (const b of priorFcBookings) {
+      const month = b.check_in.substring(0, 7);
+      if (!priorFcByMonth[month]) priorFcByMonth[month] = { total: 0, bookings: 0, nights: 0 };
+      priorFcByMonth[month].total += b.converted_total_price || 0;
+      priorFcByMonth[month].bookings += 1;
+      priorFcByMonth[month].nights += b.length_of_stay || 1;
+    }
+
+    // Blend: 60% prior year with trend factor, 40% moving average
+    for (let i = 0; i < 4; i++) {
+      const month = forecastMonths[i];
+      const priorMonth = priorForecastMonths[i];
+      const priorData = priorFcByMonth[priorMonth];
+      let revenue, bookings, nights;
+
+      if (priorData && priorData.total > 0) {
+        revenue = Math.round(priorData.total * trendFactor * 0.6 + maRevenue * 0.4);
+        bookings = Math.round(priorData.bookings * trendFactor * 0.6 + maBookings * 0.4);
+        nights = Math.round(priorData.nights * trendFactor * 0.6 + maNights * 0.4);
+      } else {
+        // No prior year data — fall back to moving average
+        revenue = maRevenue;
+        bookings = maBookings;
+        nights = maNights;
+      }
+      predictions.push({ month, predicted_revenue: revenue, predicted_bookings: bookings, predicted_nights: nights });
     }
   }
 
