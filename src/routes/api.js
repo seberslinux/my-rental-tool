@@ -15,15 +15,49 @@ router.post('/sync/properties', requireRole('admin'), async (req, res) => {
 
     const apartments = await smoobu.getProperties(apiKey);
 
+    // Fetch detailed info for each property
+    const detailedApts = [];
+    for (const apt of apartments) {
+      try {
+        const details = await smoobu.getPropertyDetails(apt.id, apiKey);
+        detailedApts.push({ ...apt, details });
+      } catch (e) {
+        detailedApts.push({ ...apt, details: null });
+      }
+    }
+
     await transaction(async (client) => {
-      for (const apt of apartments) {
-        // Upsert property
+      for (const apt of detailedApts) {
+        const d = apt.details || {};
+        const loc = d.location || {};
+        const rooms = d.rooms || {};
+        const price = d.price || {};
+        const address = [loc.street, loc.zip, loc.city, loc.country].filter(Boolean).join(', ');
+        const basePrice = price.minimal || 0;
+        const currency = d.currency || 'ZAR';
+        const bedrooms = rooms.bedrooms || 1;
+        const bathrooms = rooms.bathrooms || 1;
+        const maxGuests = rooms.maxOccupancy || 2;
+        const propertyType = d.type?.name || 'apartment';
+        const neighbourhood = loc.city || '';
+        const locationStr = loc.latitude && loc.longitude ? `${loc.latitude},${loc.longitude}` : '';
+
         await client.query(
-          `INSERT INTO properties (smoobu_id, name, owner_user_id)
-           VALUES ($1, $2, $3)
-           ON CONFLICT(smoobu_id) DO UPDATE SET name = excluded.name,
-             owner_user_id = CASE WHEN properties.owner_user_id IS NULL THEN excluded.owner_user_id ELSE properties.owner_user_id END`,
-          [apt.id, apt.name, req.user.id]
+          `INSERT INTO properties (smoobu_id, name, owner_user_id, address, base_price, base_currency, bedrooms, bathrooms, max_guests, property_type, neighbourhood, location)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           ON CONFLICT(smoobu_id) DO UPDATE SET
+             name = excluded.name,
+             owner_user_id = CASE WHEN properties.owner_user_id IS NULL THEN excluded.owner_user_id ELSE properties.owner_user_id END,
+             address = CASE WHEN excluded.address != '' THEN excluded.address ELSE properties.address END,
+             base_price = CASE WHEN excluded.base_price > 0 THEN excluded.base_price ELSE properties.base_price END,
+             base_currency = CASE WHEN excluded.base_currency != 'ZAR' OR properties.base_currency = '' OR properties.base_currency IS NULL THEN excluded.base_currency ELSE properties.base_currency END,
+             bedrooms = excluded.bedrooms,
+             bathrooms = excluded.bathrooms,
+             max_guests = excluded.max_guests,
+             property_type = excluded.property_type,
+             neighbourhood = CASE WHEN excluded.neighbourhood != '' THEN excluded.neighbourhood ELSE properties.neighbourhood END,
+             location = CASE WHEN excluded.location != '' THEN excluded.location ELSE properties.location END`,
+          [apt.id, apt.name, req.user.id, address, basePrice, currency, bedrooms, bathrooms, maxGuests, propertyType, neighbourhood, locationStr]
         );
 
         // Ensure owner has access in user_properties
