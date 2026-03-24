@@ -418,117 +418,65 @@ export function AnalyticsPage() {
                 </h3>
                 <div className="flex gap-4 text-[11px] text-[#717171]">
                   <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-[#007AFF]"></div>
-                    Current
+                    <div className="w-2 h-2 rounded-[2px] bg-[#007AFF]"></div>
+                    This Year
                   </div>
                   <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-full bg-[#E2E8F0]"></div>
-                    Prior Year
+                    <div className="w-2 h-2 rounded-[2px] bg-[#E2E8F0]"></div>
+                    Last Year
                   </div>
                 </div>
               </div>
               <div className="h-[240px] w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                  data={revenueData}
-                  margin={{
-                    top: 5,
-                    right: 5,
-                    left: -15,
-                    bottom: 0
-                  }}>
-                  
-                    <CartesianGrid
-                    strokeDasharray="3 3"
-                    vertical={false}
-                    stroke="#F0F0F0" />
-                  
-                    <XAxis
-                    dataKey="month"
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{
-                      fontSize: 11,
-                      fill: '#B0B0B0'
-                    }}
-                    dy={10} />
-                  
-                    <YAxis
-                    axisLine={false}
-                    tickLine={false}
-                    tick={{
-                      fontSize: 11,
-                      fill: '#B0B0B0'
-                    }}
-                    tickFormatter={(val) => `R${val / 1000}k`} />
-                  
+                  data={revenueData.map((m) => ({
+                    month: m.month,
+                    thisYear: m.paid + m.booked,
+                    lastYear: m.previous,
+                  }))}
+                  margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
+
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F0F0F0" />
+                    <XAxis dataKey="month" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#B0B0B0' }} dy={10} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#B0B0B0' }} tickFormatter={(val) => val >= 1000000 ? `R${val / 1000000}M` : `R${val / 1000}k`} />
+
                     <Tooltip
-                    cursor={{
-                      fill: '#F7F7F7'
-                    }}
+                    cursor={{ fill: '#F7F7F7' }}
                     content={({ active, payload, label }) => {
                       if (!active || !payload?.length) return null;
-                      const current = payload.find(
-                        (p: any) => p.dataKey === 'current'
-                      )?.value as number | undefined;
-                      const previous = payload.find(
-                        (p: any) => p.dataKey === 'previous'
-                      )?.value as number | undefined;
-                      const idx = revenueData.findIndex(
-                        (d) => d.month === label
-                      );
-                      const prevMonth =
-                      idx > 0 ? (revenueData[idx - 1].paid + revenueData[idx - 1].booked) : null;
-                      const growth =
-                      prevMonth && current ?
-                      (current - prevMonth) / prevMonth * 100 :
-                      null;
+                      const thisYear = payload.find((p: any) => p.dataKey === 'thisYear')?.value as number | undefined;
+                      const lastYear = payload.find((p: any) => p.dataKey === 'lastYear')?.value as number | undefined;
+                      const yoyChange = lastYear && thisYear && lastYear > 0
+                        ? ((thisYear - lastYear) / lastYear * 100)
+                        : null;
                       return (
                         <div className="bg-white rounded-[8px] border border-[#EBEBEB] shadow-[0_4px_12px_rgba(0,0,0,0.08)] p-3 text-[12px]">
-                            <div className="font-semibold text-[#222222] mb-1.5">
-                              {label}
+                            <div className="font-semibold text-[#222222] mb-1.5">{label}</div>
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className="w-2 h-2 rounded-[2px] bg-[#007AFF]"></div>
+                              <span className="text-[#717171]">This Year:</span>
+                              <span className="font-semibold text-[#222222]">R {thisYear?.toLocaleString()}</span>
                             </div>
                             <div className="flex items-center gap-2 mb-1">
-                              <div className="w-2 h-2 rounded-full bg-[#007AFF]"></div>
-                              <span className="text-[#717171]">Current:</span>
-                              <span className="font-semibold text-[#222222]">
-                                R {current?.toLocaleString()}
-                              </span>
+                              <div className="w-2 h-2 rounded-[2px] bg-[#E2E8F0]"></div>
+                              <span className="text-[#717171]">Last Year:</span>
+                              <span className="font-semibold text-[#222222]">R {lastYear?.toLocaleString()}</span>
                             </div>
-                            <div className="flex items-center gap-2 mb-1">
-                              <div className="w-2 h-2 rounded-full bg-[#E2E8F0]"></div>
-                              <span className="text-[#717171]">
-                                Prior Year:
-                              </span>
-                              <span className="font-semibold text-[#222222]">
-                                R {previous?.toLocaleString()}
-                              </span>
-                            </div>
-                            {growth !== null &&
+                            {yoyChange !== null &&
                           <div className="mt-1.5 pt-1.5 border-t border-[#F0F0F0] flex items-center gap-1">
-                                <span className="text-[#717171]">MoM:</span>
-                                <span
-                              className={`font-semibold ${growth >= 0 ? 'text-[#00A699]' : 'text-[#D93900]'}`}>
-                              
-                                  {growth >= 0 ? '↑' : '↓'}{' '}
-                                  {Math.abs(growth).toFixed(1)}%
+                                <span className="text-[#717171]">YoY:</span>
+                                <span className={`font-semibold ${yoyChange >= 0 ? 'text-[#00A699]' : 'text-[#D93900]'}`}>
+                                  {yoyChange >= 0 ? '↑' : '↓'} {Math.abs(yoyChange).toFixed(1)}%
                                 </span>
                               </div>
                           }
                           </div>);
-
                     }} />
-                  
-                    <Bar
-                    dataKey="previous"
-                    fill="#E2E8F0"
-                    radius={[4, 4, 0, 0]} />
-                  
-                    <Bar
-                    dataKey="current"
-                    fill="#007AFF"
-                    radius={[4, 4, 0, 0]} />
-                  
+
+                    <Bar dataKey="lastYear" fill="#E2E8F0" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="thisYear" fill="#007AFF" radius={[4, 4, 0, 0]} />
+
                   </BarChart>
                 </ResponsiveContainer>
               </div>
