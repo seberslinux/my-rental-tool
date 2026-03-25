@@ -275,9 +275,9 @@ router.get('/data', async (req, res) => {
     properties = await getAll('SELECT * FROM properties');
   }
 
-  // Round date filters to full months so charts always show complete months
+  // Round 'from' to start of month; use 'to' as-is if full date, else expand to end of month
   const from = rawFrom ? rawFrom.substring(0, 7) + '-01' : null;
-  const to = rawTo ? (() => { const [y, m] = rawTo.split('-').map(Number); return new Date(y, m, 0).toISOString().split('T')[0]; })() : null;
+  const to = rawTo ? (rawTo.length === 10 ? rawTo : (() => { const [y, m] = rawTo.split('-').map(Number); return new Date(y, m, 0).toISOString().split('T')[0]; })()) : null;
 
   // Build dynamic filter
   let bookingFilters = '';
@@ -342,10 +342,10 @@ router.get('/data', async (req, res) => {
   }
   if (futureConfirmedBookings.length > 0) await bulkConvert(futureConfirmedBookings, displayCurrency);
 
-  // --- Revenue by month (split into paid vs booked) ---
+  // --- Revenue by month (split into paid vs booked) — only past/current bookings ---
   const allBookingsCombined = [...allBookings, ...futureConfirmedBookings];
   const revenueByMonth = {};
-  for (const b of allBookingsCombined) {
+  for (const b of allBookings) {
     const month = b.check_in.substring(0, 7); // YYYY-MM
     if (!revenueByMonth[month]) revenueByMonth[month] = { month, total: 0, paid: 0, booked: 0, commission: 0, bookings: 0, nights: 0, first_checkin: b.check_in, last_checkout: b.check_out };
     const rev = b.converted_total_price || 0;
