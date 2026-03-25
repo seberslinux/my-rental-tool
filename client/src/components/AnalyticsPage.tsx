@@ -85,6 +85,7 @@ export function AnalyticsPage() {
   const [activeTab, setActiveTab] = useState('overview');
   const [activePeriod, setActivePeriod] = useState('1Y');
   const [activeProperty, setActiveProperty] = useState('All Properties');
+  const [revenueMode, setRevenueMode] = useState<'gross' | 'net'>('gross');
   const [version, setVersion] = useState(0);
 
   const refreshData = useCallback(async () => {
@@ -419,14 +420,28 @@ export function AnalyticsPage() {
                 <h3 className="text-[15px] font-semibold text-[#222222]">
                   Monthly Revenue Trend
                 </h3>
-                <div className="flex gap-4 text-[11px] text-[#717171]">
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-[2px] bg-[#007AFF]"></div>
-                    This Year
+                <div className="flex items-center gap-4">
+                  <div className="flex items-center bg-[#F7F7F7] rounded-[8px] p-0.5 text-[11px] font-semibold">
+                    <button
+                      onClick={() => setRevenueMode('gross')}
+                      className={`px-3 py-1 rounded-[6px] transition-all ${revenueMode === 'gross' ? 'bg-white text-[#222222] shadow-sm' : 'text-[#717171]'}`}>
+                      Gross
+                    </button>
+                    <button
+                      onClick={() => setRevenueMode('net')}
+                      className={`px-3 py-1 rounded-[6px] transition-all ${revenueMode === 'net' ? 'bg-white text-[#222222] shadow-sm' : 'text-[#717171]'}`}>
+                      Net
+                    </button>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 rounded-[2px] bg-[#E2E8F0]"></div>
-                    Last Year
+                  <div className="flex gap-4 text-[11px] text-[#717171]">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-[2px] bg-[#007AFF]"></div>
+                      This Year
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-2 h-2 rounded-[2px] bg-[#E2E8F0]"></div>
+                      Last Year
+                    </div>
                   </div>
                 </div>
               </div>
@@ -434,12 +449,15 @@ export function AnalyticsPage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                   data={revenueData
-                    .filter((m) => !m.isForecastOnly)
-                    .map((m) => ({
-                      month: m.month,
-                      thisYear: m.paid + m.booked,
-                      lastYear: m.previous,
-                    }))}
+                    .filter((m) => !m.isForecastOnly && (m.paid + m.booked) > 0)
+                    .map((m) => {
+                      const gross = m.paid + m.booked;
+                      return {
+                        month: m.month,
+                        thisYear: revenueMode === 'net' ? gross - m.commission : gross,
+                        lastYear: m.previous,
+                      };
+                    })}
                   margin={{ top: 5, right: 5, left: -15, bottom: 0 }}>
 
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#F0F0F0" />
@@ -460,7 +478,7 @@ export function AnalyticsPage() {
                             <div className="font-semibold text-[#222222] mb-1.5">{label}</div>
                             <div className="flex items-center gap-2 mb-1">
                               <div className="w-2 h-2 rounded-[2px] bg-[#007AFF]"></div>
-                              <span className="text-[#717171]">This Year:</span>
+                              <span className="text-[#717171]">{revenueMode === 'net' ? 'Net' : 'Gross'} This Year:</span>
                               <span className="font-semibold text-[#222222]">R {thisYear?.toLocaleString()}</span>
                             </div>
                             <div className="flex items-center gap-2 mb-1">
@@ -480,7 +498,7 @@ export function AnalyticsPage() {
                     }} />
 
                     <Bar dataKey="lastYear" fill="#E2E8F0" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="thisYear" fill="#007AFF" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="thisYear" fill={revenueMode === 'net' ? '#00A699' : '#007AFF'} radius={[4, 4, 0, 0]} />
 
                   </BarChart>
                 </ResponsiveContainer>

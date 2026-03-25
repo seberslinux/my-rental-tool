@@ -347,7 +347,7 @@ router.get('/data', async (req, res) => {
   const revenueByMonth = {};
   for (const b of allBookingsCombined) {
     const month = b.check_in.substring(0, 7); // YYYY-MM
-    if (!revenueByMonth[month]) revenueByMonth[month] = { month, total: 0, paid: 0, booked: 0, bookings: 0, nights: 0, first_checkin: b.check_in, last_checkout: b.check_out };
+    if (!revenueByMonth[month]) revenueByMonth[month] = { month, total: 0, paid: 0, booked: 0, commission: 0, bookings: 0, nights: 0, first_checkin: b.check_in, last_checkout: b.check_out };
     const rev = b.converted_total_price || 0;
     revenueByMonth[month].total += rev;
     if (b.check_out <= todayStr) {
@@ -355,6 +355,7 @@ router.get('/data', async (req, res) => {
     } else {
       revenueByMonth[month].booked += rev;
     }
+    revenueByMonth[month].commission += (b.converted_commission || 0);
     revenueByMonth[month].bookings += 1;
     revenueByMonth[month].nights += b.length_of_stay || 1;
     if (b.check_in < revenueByMonth[month].first_checkin) revenueByMonth[month].first_checkin = b.check_in;
@@ -369,7 +370,7 @@ router.get('/data', async (req, res) => {
     while (y < endY || (y === endY && m <= endM)) {
       const key = `${y}-${String(m).padStart(2, '0')}`;
       if (!revenueByMonth[key]) {
-        revenueByMonth[key] = { month: key, total: 0, paid: 0, booked: 0, bookings: 0, nights: 0 };
+        revenueByMonth[key] = { month: key, total: 0, paid: 0, booked: 0, commission: 0, bookings: 0, nights: 0 };
       }
       m++;
       if (m > 12) { m = 1; y++; }
