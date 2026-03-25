@@ -35,6 +35,8 @@ export let revenueData: { month: string; monthFull: string; period: string; paid
 export let revenueByProperty: { name: string; revenue: number; percentage: number }[] = [];
 export let propertyPerformance: { name: string; revenue: string; occupancy: number; adr: string; avgStay: string; bookings: number; rating: string; topPlatform: string }[] = [];
 export let channelMixData: { name: string; value: number; color: string }[] = [];
+export let netRevenue: number = 0;
+export let commissionPercentage: number = 0;
 export let occupancyTrendData: { month: string; rate: number }[] = [];
 export let rateTrendData: { month: string; adr: number; revpar: number }[] = [];
 export let guestCountries: { country: string; percentage: number }[] = [];
@@ -99,6 +101,9 @@ export async function loadAnalyticsData(propertyId: string = 'all', period: stri
       : 0;
     const avgRate = totalNights > 0 ? Math.round(totalRevenue / totalNights) : 0;
     const avgStay = totalBookings > 0 ? (totalNights / totalBookings).toFixed(1) : '0';
+    const totalCommission = d.summary?.total_commission || 0;
+    netRevenue = d.summary?.net_revenue || 0;
+    commissionPercentage = totalRevenue > 0 ? Math.round((totalCommission / totalRevenue) * 100) : 0;
 
     overviewKPIs = [
       { label: 'Total Revenue', value: fmtMoney(totalRevenue), trend: '', trendDetail: 'selected period', isPositive: true },

@@ -31,6 +31,8 @@ import {
   occupancyHeatmap,
   topRevenuePeriods,
   recentReviews,
+  netRevenue,
+  commissionPercentage,
   loadAnalyticsData } from
 '../data/analytics';
 import { properties } from '../data/properties';
@@ -384,8 +386,8 @@ export function AnalyticsPage() {
                 return [
                   { label: 'Gross Revenue', value: totalRev > 0 ? `R ${totalRev.toLocaleString()}` : '--', trend: '', isPositive: true },
                   { label: 'Avg Booking Value', value: avgBookingVal > 0 ? `R ${avgBookingVal.toLocaleString()}` : '--', trend: '', isPositive: true },
-                  { label: 'Total Bookings', value: totalBookings > 0 ? String(totalBookings) : '--', trend: '', isPositive: true },
-                  { label: 'Properties', value: propertyPerformance.length > 0 ? String(propertyPerformance.length) : '--', trend: '', isPositive: true },
+                  { label: 'Net Revenue', value: netRevenue > 0 ? `R ${netRevenue.toLocaleString()}` : '--', trend: '', isPositive: true },
+                  { label: 'Commission %', value: commissionPercentage > 0 ? `${commissionPercentage}%` : '--', trend: '', isPositive: false },
                 ];
               })().
             map((kpi, idx) =>
@@ -1992,12 +1994,12 @@ export function AnalyticsPage() {
                 value: (() => { const t = revenueData.reduce((s, m) => s + (m.paid + m.booked), 0); return t > 0 ? `R ${t.toLocaleString()}` : '--'; })()
               },
               {
-                label: 'Total Bookings',
-                value: (() => { const t = propertyPerformance.reduce((s, p) => s + p.bookings, 0); return t > 0 ? String(t) : '--'; })()
+                label: 'Net Revenue',
+                value: netRevenue > 0 ? `R ${netRevenue.toLocaleString()}` : '--'
               },
               {
-                label: 'Properties',
-                value: propertyPerformance.length > 0 ? String(propertyPerformance.length) : '--'
+                label: 'Commission %',
+                value: commissionPercentage > 0 ? `${commissionPercentage}%` : '--'
               }].
               map((kpi, idx) =>
               <div key={idx} className="bg-[#F7F7F7] rounded-[10px] p-4">
