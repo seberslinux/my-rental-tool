@@ -18,6 +18,7 @@ import { loadDashboardData, setPropertyFilter, setOnDataChanged } from './data/d
 import { loadAnalyticsData } from './data/analytics';
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [userRole, setUserRole] = useState<string>('');
   const [authChecked, setAuthChecked] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState('home');
@@ -40,7 +41,11 @@ export function App() {
       .then((res) => {
         if (res.ok) {
           setIsLoggedIn(true);
+          return res.json();
         }
+      })
+      .then((data) => {
+        if (data?.role) setUserRole(data.role);
       })
       .catch(() => {})
       .finally(() => setAuthChecked(true));
@@ -155,7 +160,7 @@ export function App() {
         {activeTab === 'analytics' && <AnalyticsPage />}
         {activeTab === 'properties' && <PropertiesPage />}
         {activeTab === 'users' && <UsersPage />}
-        {activeTab === 'smoobu' && <SmoobuConnectionPage />}
+        {activeTab === 'smoobu' && <SmoobuConnectionPage isAdmin={userRole === 'admin'} />}
         {activeTab === 'more' && <MorePage onNavigate={setActiveTab} onLogout={() => { setIsLoggedIn(false); setDataLoaded(false); }} />}
       </main>
 

@@ -4,7 +4,7 @@ const { getAll, getOne, run, transaction } = require('../db/database');
 const smoobu = require('../services/smoobu');
 const { detectCurrency } = require('../services/currency-detect');
 const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
-const { scopeProperties, enforcePropertyScope } = require('../middleware/auth');
+const { scopeProperties, enforcePropertyScope, requireRole } = require('../middleware/auth');
 const { getApiKeyForProperty, getApiKeyForUser } = require('../services/api-key-resolver');
 
 // Apply property scoping to all analytics routes
@@ -111,6 +111,99 @@ function countryFromPhone(phone) {
   }
   return '';
 }
+
+// Clear all bookings and resync from Smoobu (admin only)
+router.post('/reset-and-resync', requireRole('admin'), async (req, res) => {
+  try {
+    // 1. Delete all bookings
+    await run('DELETE FROM bookings');
+
+    // 2. Resync properties
+    const syncApiKey = await getApiKeyForUser(req.user.id);
+    if (!syncApiKey) return res.status(400).json({ error: 'No Smoobu API key configured' });
+
+    const apartments = await smoobu.getProperties(syncApiKey);
+    await transaction(async (client) => {
+      for (const apt of apartments) {
+        let d = {};
+        try { d = await smoobu.getPropertyDetails(apt.id, syncApiKey) || {}; } catch {}
+        const loc = d.location || {};
+        const rooms = d.rooms || {};
+        const price = d.price || {};
+        const address = [loc.street, loc.zip, loc.city, loc.country].filter(Boolean).join(', ');
+        await client.query(
+          `INSERT INTO properties (smoobu_id, name, owner_user_id, address, base_price, base_currency, bedrooms, bathrooms, max_guests, property_type, neighbourhood, location)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+           ON CONFLICT(smoobu_id) DO UPDATE SET
+             name = excluded.name,
+             address = CASE WHEN excluded.address != '' THEN excluded.address ELSE properties.address END,
+             base_price = CASE WHEN excluded.base_price > 0 THEN excluded.base_price ELSE properties.base_price END,
+             base_currency = CASE WHEN excluded.base_currency != 'ZAR' OR properties.base_currency = '' OR properties.base_currency IS NULL THEN excluded.base_currency ELSE properties.base_currency END,
+             bedrooms = excluded.bedrooms, bathrooms = excluded.bathrooms,
+             max_guests = excluded.max_guests, property_type = excluded.property_type`,
+          [apt.id, apt.name, req.user.id, address, price.minimal || 0, d.currency || 'ZAR',
+           rooms.bedrooms || 1, rooms.bathrooms || 1, rooms.maxOccupancy || 2, d.type?.name || 'apartment',
+           loc.city || '', loc.latitude && loc.longitude ? `${loc.latitude},${loc.longitude}` : '']
+        );
+      }
+    });
+
+    // 3. Resync all bookings
+    const twoYearsAgo = new Date(Date.now() - 2 * 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const sixMonthsOut = new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const allBookings = await smoobu.getAllBookings({ from: twoYearsAgo, to: sixMonthsOut }, syncApiKey);
+
+    const propCurrencyMap = {};
+    const propsForCurrency = await getAll('SELECT smoobu_id, base_currency FROM properties');
+    for (const p of propsForCurrency) propCurrencyMap[p.smoobu_id] = p.base_currency || 'ZAR';
+
+    const { detectCurrency } = require('../services/currency-detect');
+    await transaction(async (client) => {
+      for (const b of allBookings) {
+        const platform = b['channel']?.name || b.channel || '';
+        const checkIn = b.arrival || b.arrivalDate;
+        const checkOut = b.departure || b.departureDate;
+        const createdAt = b['created-at'] || b.createdAt || '';
+        const modifiedAt = b['modified-at'] || b.modifiedAt || '';
+        const los = Math.max(1, Math.round((new Date(checkOut) - new Date(checkIn)) / (24 * 60 * 60 * 1000)));
+        const price = b.price || 0;
+        const ppn = los > 0 ? Math.round((price / los) * 100) / 100 : 0;
+        const leadTime = createdAt ? Math.max(0, Math.round((new Date(checkIn) - new Date(createdAt)) / (24 * 60 * 60 * 1000))) : 0;
+        const commission = b['commission-included'] || b.commissionIncluded || 0;
+        const language = b.language || '';
+        const children = b.children || 0;
+        const phone = b.phone || b['guest-phone'] || b.guestPhone || '';
+        const guestCountry = countryFromPhone(phone) || '';
+        const aptId = b['apartment']?.id || b.apartmentId;
+        const currency = detectCurrency(b) || propCurrencyMap[aptId] || 'ZAR';
+
+        await client.query(
+          `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, commission, language, children, guest_country, currency, modified_at)
+           VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+           ON CONFLICT(smoobu_id) DO UPDATE SET
+             guest_name = CASE WHEN EXCLUDED.guest_name = '' THEN bookings.guest_name ELSE EXCLUDED.guest_name END,
+             check_in = EXCLUDED.check_in, check_out = EXCLUDED.check_out,
+             platform = EXCLUDED.platform, total_price = EXCLUDED.total_price,
+             status = EXCLUDED.status, num_guests = EXCLUDED.num_guests,
+             created_at = EXCLUDED.created_at, lead_time_days = EXCLUDED.lead_time_days,
+             length_of_stay = EXCLUDED.length_of_stay, price_per_night = EXCLUDED.price_per_night,
+             commission = EXCLUDED.commission, language = EXCLUDED.language,
+             children = EXCLUDED.children, guest_country = EXCLUDED.guest_country,
+             currency = EXCLUDED.currency, modified_at = EXCLUDED.modified_at`,
+          [b.id, aptId, b['guest-name'] || b.guestName || '', checkIn, checkOut, platform, price,
+           b.type === 'cancellation' ? 'cancelled' : 'confirmed',
+           b['adults'] || b.adults || 1, createdAt, leadTime, los, ppn,
+           commission, language, children, guestCountry, currency, modifiedAt]
+        );
+      }
+    });
+
+    res.json({ properties: apartments.length, bookings: allBookings.length });
+  } catch (err) {
+    console.error('Reset and resync failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Sync historical bookings (wider range for analytics)
 router.post('/sync-history', async (req, res) => {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Wifi, WifiOff, RefreshCw, Trash2, CheckCircle, XCircle, ExternalLink } from 'lucide-react';
+import { Wifi, WifiOff, RefreshCw, Trash2, CheckCircle, XCircle, ExternalLink, AlertTriangle } from 'lucide-react';
 
-export function SmoobuConnectionPage() {
+export function SmoobuConnectionPage({ isAdmin = false }: { isAdmin?: boolean }) {
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
   const [apiKey, setApiKey] = useState('');
@@ -9,6 +9,7 @@ export function SmoobuConnectionPage() {
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [testResult, setTestResult] = useState<{ success: boolean; properties: { id: number; name: string }[] } | null>(null);
 
@@ -112,6 +113,25 @@ export function SmoobuConnectionPage() {
     }
   };
 
+  const handleResetAndResync = async () => {
+    if (!confirm('This will DELETE all bookings and resync everything from Smoobu. Are you sure?')) return;
+    setResetting(true);
+    setMessage(null);
+    try {
+      const res = await fetch('/api/analytics/reset-and-resync', { method: 'POST', credentials: 'same-origin' });
+      const data = await res.json();
+      if (res.ok) {
+        setMessage({ type: 'success', text: `Reset complete. Synced ${data.properties} properties and ${data.bookings} bookings.` });
+      } else {
+        setMessage({ type: 'error', text: data.error || 'Reset failed' });
+      }
+    } catch {
+      setMessage({ type: 'error', text: 'Reset failed' });
+    } finally {
+      setResetting(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="p-4 bg-[#F7F7F7] min-h-full flex items-center justify-center">
@@ -159,6 +179,21 @@ export function SmoobuConnectionPage() {
               <Trash2 className="w-4 h-4" strokeWidth={2} />
               {disconnecting ? '...' : 'Disconnect'}
             </button>
+          </div>
+        )}
+
+        {connected && isAdmin && (
+          <div className="mt-3 pt-3 border-t border-[#EBEBEB]">
+            <button
+              onClick={handleResetAndResync}
+              disabled={resetting}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#FEF2F2] border border-[#DC2626] text-[#DC2626] rounded-[8px] text-[14px] font-medium active:bg-[#FEE2E2] disabled:opacity-50">
+              <AlertTriangle className={`w-4 h-4 ${resetting ? 'animate-pulse' : ''}`} strokeWidth={2} />
+              {resetting ? 'Resetting & Resyncing...' : 'Clear Database & Resync from Smoobu'}
+            </button>
+            <p className="text-[11px] text-[#B0B0B0] mt-1.5 text-center">
+              Deletes all bookings and re-imports everything from Smoobu
+            </p>
           </div>
         )}
       </div>
