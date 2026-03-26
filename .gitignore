@@ -6,8 +6,8 @@ client/dist/
 *.db-shm
 *.db-wal
 .DS_Store
-.claude/
-!.claude/skills/
+.claude/*
+!.claude/commands/
 design-assets/
 exports/
 smoobu-bookings.json
