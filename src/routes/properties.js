@@ -174,7 +174,7 @@ router.put('/:id', async (req, res) => {
   const property = await getOne('SELECT * FROM properties WHERE id = $1', [req.params.id]);
   if (!property) return res.status(404).json({ error: 'Property not found' });
 
-  const fields = ['address','cleaning_hours_required','base_price','base_currency','airbnb_url','airbnb_id','booking_url','booking_id_ext','vrbo_url','vrbo_id','commission_airbnb','commission_booking','commission_vrbo','bank_charge_airbnb','bank_charge_booking','bank_charge_vrbo','vat_rate','property_type','bedrooms','bathrooms','max_guests','location','neighbourhood','wifi_network','wifi_password','access_code','checkin_instructions','checkout_instructions','supply_checklist','emergency_contact'];
+  const fields = ['address','cleaning_hours_required','base_price','base_currency','airbnb_url','airbnb_id','booking_url','booking_id_ext','vrbo_url','vrbo_id','commission_airbnb','commission_booking','commission_vrbo','bank_charge_airbnb','bank_charge_booking','bank_charge_vrbo','vat_rate','vat_airbnb','vat_booking','vat_vrbo','property_type','bedrooms','bathrooms','max_guests','location','neighbourhood','wifi_network','wifi_password','access_code','checkin_instructions','checkout_instructions','supply_checklist','emergency_contact'];
   const updates = [];
   const values = [];
   for (const f of fields) {

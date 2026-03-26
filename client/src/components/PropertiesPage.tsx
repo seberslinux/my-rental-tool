@@ -39,6 +39,9 @@ interface Property {
   bank_charge_booking: number | null;
   bank_charge_vrbo: number | null;
   vat_rate: number | null;
+  vat_airbnb: number | null;
+  vat_booking: number | null;
+  vat_vrbo: number | null;
   property_type: string | null;
   bedrooms: number | null;
   bathrooms: number | null;
@@ -66,6 +69,9 @@ interface PropertyForm {
   bank_charge_booking: number;
   bank_charge_vrbo: number;
   vat_rate: number;
+  vat_airbnb: number;
+  vat_booking: number;
+  vat_vrbo: number;
   check_in_time: string;
   check_out_time: string;
   wifi_network: string;
@@ -86,6 +92,9 @@ function buildForm(p: Property): PropertyForm {
     bank_charge_booking: p.bank_charge_booking ?? 0,
     bank_charge_vrbo: p.bank_charge_vrbo ?? 0,
     vat_rate: p.vat_rate ?? 0,
+    vat_airbnb: p.vat_airbnb ?? 0,
+    vat_booking: p.vat_booking ?? 0,
+    vat_vrbo: p.vat_vrbo ?? 0,
     check_in_time: p.check_in_time ?? '',
     check_out_time: p.check_out_time ?? '',
     wifi_network: p.wifi_network ?? '',
@@ -495,22 +504,39 @@ export function PropertiesPage() {
                       </div>
 
                       <div className="text-[11px] font-semibold text-[#717171] uppercase tracking-[0.3px] mb-2">
-                        Tax
+                        VAT on Fees
                       </div>
-                      <div className="w-full sm:w-48">
-                        <label className="block text-[11px] font-medium text-[#222222] mb-1">
-                          VAT Rate %
-                        </label>
-                        <input
-                        type="number"
-                        value={form.vat_rate}
-                        onChange={(e) => updateForm(prop.id, 'vat_rate', parseFloat(e.target.value) || 0)}
-                        className={inputCls} />
+                      <div className="grid grid-cols-3 gap-2 mb-1">
+                        {([
+                      {
+                        l: 'Airbnb %',
+                        field: 'vat_airbnb' as const,
+                      },
+                      {
+                        l: 'Booking.com %',
+                        field: 'vat_booking' as const,
+                      },
+                      {
+                        l: 'VRBO %',
+                        field: 'vat_vrbo' as const,
+                      }]).
+                      map((c) =>
+                      <div key={c.l + 'vat'}>
+                            <label className="block text-[11px] font-medium text-[#222222] mb-1">
+                              {c.l}
+                            </label>
+                            <input
+                          type="number"
+                          value={form[c.field]}
+                          onChange={(e) => updateForm(prop.id, c.field, parseFloat(e.target.value) || 0)}
+                          className={inputCls} />
 
-                        <p className="text-[10px] text-[#B0B0B0] mt-1 leading-tight">
-                          VAT charged on top of commissions + bank charges (e.g. 15 for SA VAT)
-                        </p>
+                          </div>
+                      )}
                       </div>
+                      <p className="text-[10px] text-[#B0B0B0] mt-1 leading-tight">
+                        VAT charged on top of commissions + bank charges (e.g. 15 for SA VAT)
+                      </p>
                     </Section>
 
                     <Section icon={MessageSquare} title="Monthly Fixed Costs">
