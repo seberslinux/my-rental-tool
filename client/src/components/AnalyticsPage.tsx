@@ -388,7 +388,7 @@ export function AnalyticsPage() {
                   { label: 'Gross Revenue', value: totalRev > 0 ? `R ${totalRev.toLocaleString()}` : '--', trend: '', isPositive: true },
                   { label: 'Avg Booking Value', value: avgBookingVal > 0 ? `R ${avgBookingVal.toLocaleString()}` : '--', trend: '', isPositive: true },
                   { label: 'Net Revenue', value: netRevenue > 0 ? `R ${netRevenue.toLocaleString()}` : '--', trend: '', isPositive: true },
-                  { label: 'Commission %', value: commissionPercentage > 0 ? `${commissionPercentage}%` : '--', trend: '', isPositive: false },
+                  { label: 'Deductions %', value: commissionPercentage > 0 ? `${commissionPercentage}%` : '--', trend: '', isPositive: false },
                 ];
               })().
             map((kpi, idx) =>
@@ -454,7 +454,7 @@ export function AnalyticsPage() {
                       const gross = m.paid + m.booked;
                       return {
                         month: m.month,
-                        thisYear: revenueMode === 'net' ? gross - m.commission : gross,
+                        thisYear: revenueMode === 'net' ? gross - m.deductions : gross,
                         lastYear: m.previous,
                       };
                     })}
@@ -2016,7 +2016,7 @@ export function AnalyticsPage() {
                 value: netRevenue > 0 ? `R ${netRevenue.toLocaleString()}` : '--'
               },
               {
-                label: 'Commission %',
+                label: 'Deductions %',
                 value: commissionPercentage > 0 ? `${commissionPercentage}%` : '--'
               }].
               map((kpi, idx) =>

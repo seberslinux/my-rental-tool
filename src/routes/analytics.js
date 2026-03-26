@@ -326,10 +326,12 @@ router.get('/export-csv', async (req, res) => {
       rows[key].commission += Math.round(rev * commRate / 100);
       rows[key].bank_charges += Math.round(rev * bankRate / 100);
 
-      // VAT
+      // VAT on commissions + bank charges
       const vatRate = b.vat_rate || 0;
-      if (vatRate > 0 && platform.includes('booking')) {
-        rows[key].vat += Math.round(rev - rev / (1 + vatRate / 100));
+      if (vatRate > 0) {
+        const commAmount = Math.round(rev * commRate / 100);
+        const bankAmount = Math.round(rev * bankRate / 100);
+        rows[key].vat += Math.round((commAmount + bankAmount) * vatRate / 100);
       }
     }
 
@@ -388,7 +390,7 @@ router.get('/data', async (req, res) => {
   // All confirmed bookings (excluding calendar blocks)
   const BLOCKED_FILTER = ` AND b.platform NOT IN ('Blocked channel', 'Blocked channel auto')`;
   const allBookings = await getAll(
-    `SELECT b.*, p.name as property_name, p.base_price as property_base_price, p.base_currency as property_base_currency, p.vat_rate as property_vat_rate, p.bank_charge_airbnb, p.bank_charge_booking, p.bank_charge_vrbo FROM bookings b
+    `SELECT b.*, p.name as property_name, p.base_price as property_base_price, p.base_currency as property_base_currency, p.vat_rate as property_vat_rate, p.commission_airbnb as prop_commission_airbnb, p.commission_booking as prop_commission_booking, p.commission_vrbo as prop_commission_vrbo, p.bank_charge_airbnb, p.bank_charge_booking, p.bank_charge_vrbo FROM bookings b
      JOIN properties p ON b.property_id = p.id
      WHERE b.status = 'confirmed'${BLOCKED_FILTER}${bookingFilters}
      ORDER BY b.check_in ASC`,
@@ -435,12 +437,28 @@ router.get('/data', async (req, res) => {
   }
   if (futureConfirmedBookings.length > 0) await bulkConvert(futureConfirmedBookings, displayCurrency);
 
+  // Helper: calculate total deductions (commission + bank charges + VAT) for a booking
+  function calcDeductions(b) {
+    const rev = b.converted_total_price || 0;
+    const platform = (b.platform || '').toLowerCase();
+    let commRate = 0, bankRate = 0;
+    if (platform.includes('airbnb')) { commRate = b.prop_commission_airbnb || 0; bankRate = b.bank_charge_airbnb || 0; }
+    else if (platform.includes('booking')) { commRate = b.prop_commission_booking || 0; bankRate = b.bank_charge_booking || 0; }
+    else if (platform.includes('vrbo')) { commRate = b.prop_commission_vrbo || 0; bankRate = b.bank_charge_vrbo || 0; }
+    // If no property-level rates configured, fall back to Smoobu commission
+    const commAmount = commRate > 0 ? rev * commRate / 100 : (b.converted_commission || 0);
+    const bankAmount = bankRate > 0 ? rev * bankRate / 100 : 0;
+    const vatRate = b.property_vat_rate || 0;
+    const vatAmount = vatRate > 0 ? (commAmount + bankAmount) * vatRate / 100 : 0;
+    return commAmount + bankAmount + vatAmount;
+  }
+
   // --- Revenue by month (split into paid vs booked) — only past/current bookings ---
   const allBookingsCombined = [...allBookings, ...futureConfirmedBookings];
   const revenueByMonth = {};
   for (const b of allBookings) {
     const month = b.check_in.substring(0, 7); // YYYY-MM
-    if (!revenueByMonth[month]) revenueByMonth[month] = { month, total: 0, paid: 0, booked: 0, commission: 0, bookings: 0, nights: 0, first_checkin: b.check_in, last_checkout: b.check_out };
+    if (!revenueByMonth[month]) revenueByMonth[month] = { month, total: 0, paid: 0, booked: 0, deductions: 0, bookings: 0, nights: 0, first_checkin: b.check_in, last_checkout: b.check_out };
     const rev = b.converted_total_price || 0;
     revenueByMonth[month].total += rev;
     if (b.check_out <= todayStr) {
@@ -448,7 +466,7 @@ router.get('/data', async (req, res) => {
     } else {
       revenueByMonth[month].booked += rev;
     }
-    revenueByMonth[month].commission += (b.converted_commission || 0);
+    revenueByMonth[month].deductions += calcDeductions(b);
     revenueByMonth[month].bookings += 1;
     revenueByMonth[month].nights += b.length_of_stay || 1;
     if (b.check_in < revenueByMonth[month].first_checkin) revenueByMonth[month].first_checkin = b.check_in;
@@ -463,7 +481,7 @@ router.get('/data', async (req, res) => {
     while (y < endY || (y === endY && m <= endM)) {
       const key = `${y}-${String(m).padStart(2, '0')}`;
       if (!revenueByMonth[key]) {
-        revenueByMonth[key] = { month: key, total: 0, paid: 0, booked: 0, commission: 0, bookings: 0, nights: 0 };
+        revenueByMonth[key] = { month: key, total: 0, paid: 0, booked: 0, deductions: 0, bookings: 0, nights: 0 };
       }
       m++;
       if (m > 12) { m = 1; y++; }
@@ -833,8 +851,8 @@ router.get('/data', async (req, res) => {
 
   // --- Summary KPIs ---
   const totalRevenue = allBookings.reduce((sum, b) => sum + (b.converted_total_price || 0), 0);
-  const totalCommission = allBookings.reduce((sum, b) => sum + (b.converted_commission || 0), 0);
-  const netRevenue = totalRevenue - totalCommission;
+  const totalDeductions = allBookings.reduce((sum, b) => sum + calcDeductions(b), 0);
+  const netRevenue = totalRevenue - totalDeductions;
   const totalNights = allBookings.reduce((sum, b) => sum + (b.length_of_stay || 0), 0);
   const avgAdr = totalNights > 0 ? Math.round(totalRevenue / totalNights) : 0;
   const avgLos = allBookings.length > 0 ? Math.round((totalNights / allBookings.length) * 10) / 10 : 0;
@@ -991,7 +1009,7 @@ router.get('/data', async (req, res) => {
     display_currency: displayCurrency,
     summary: {
       total_revenue: totalRevenue,
-      total_commission: totalCommission,
+      total_deductions: totalDeductions,
       net_revenue: netRevenue,
       total_bookings: allBookings.length,
       total_nights: totalNights,

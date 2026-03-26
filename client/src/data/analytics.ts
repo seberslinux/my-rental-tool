@@ -31,7 +31,7 @@ function fmtPeriod(firstCheckin?: string, lastCheckout?: string): string {
 }
 
 export let overviewKPIs: { label: string; value: string; trend: string; trendDetail: string; isPositive: boolean }[] = [];
-export let revenueData: { month: string; monthFull: string; period: string; paid: number; booked: number; forecast: number; previous: number; bookings: number; nights: number; commission: number; isForecastOnly?: boolean }[] = [];
+export let revenueData: { month: string; monthFull: string; period: string; paid: number; booked: number; forecast: number; previous: number; bookings: number; nights: number; deductions: number; isForecastOnly?: boolean }[] = [];
 export let revenueByProperty: { name: string; revenue: number; percentage: number }[] = [];
 export let propertyPerformance: { name: string; revenue: string; occupancy: number; adr: string; avgStay: string; bookings: number; rating: string; topPlatform: string }[] = [];
 export let channelMixData: { name: string; value: number; color: string }[] = [];
@@ -103,9 +103,9 @@ export async function loadAnalyticsData(propertyId: string = 'all', period: stri
       : 0;
     const avgRate = totalNights > 0 ? Math.round(totalRevenue / totalNights) : 0;
     const avgStay = totalBookings > 0 ? (totalNights / totalBookings).toFixed(1) : '0';
-    const totalCommission = d.summary?.total_commission || 0;
+    const totalDeductions = d.summary?.total_deductions || 0;
     netRevenue = d.summary?.net_revenue || 0;
-    commissionPercentage = totalRevenue > 0 ? Math.round((totalCommission / totalRevenue) * 100) : 0;
+    commissionPercentage = totalRevenue > 0 ? Math.round((totalDeductions / totalRevenue) * 100) : 0;
 
     overviewKPIs = [
       { label: 'Total Revenue', value: fmtMoney(totalRevenue), trend: '', trendDetail: 'selected period', isPositive: true },
@@ -151,7 +151,7 @@ export async function loadAnalyticsData(propertyId: string = 'all', period: stri
         previous: priorTimeline[m.month] || 0,
         bookings: m.bookings || 0,
         nights: m.nights || 0,
-        commission: Math.round(m.commission || 0),
+        deductions: Math.round(m.deductions || 0),
       });
     }
 
@@ -169,7 +169,7 @@ export async function loadAnalyticsData(propertyId: string = 'all', period: stri
           previous: priorTimeline[p.month] || 0,
           bookings: 0,
           nights: 0,
-          commission: 0,
+          deductions: 0,
           isForecastOnly: true,
         });
       }

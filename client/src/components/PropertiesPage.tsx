@@ -32,12 +32,12 @@ interface Property {
   airbnb_url: string | null;
   booking_url: string | null;
   vrbo_url: string | null;
-  airbnb_commission: number | null;
-  booking_commission: number | null;
-  vrbo_commission: number | null;
-  airbnb_bank_charge: number | null;
-  booking_bank_charge: number | null;
-  vrbo_bank_charge: number | null;
+  commission_airbnb: number | null;
+  commission_booking: number | null;
+  commission_vrbo: number | null;
+  bank_charge_airbnb: number | null;
+  bank_charge_booking: number | null;
+  bank_charge_vrbo: number | null;
   vat_rate: number | null;
   property_type: string | null;
   bedrooms: number | null;
@@ -59,12 +59,12 @@ interface PropertyForm {
   airbnb_url: string;
   booking_url: string;
   vrbo_url: string;
-  airbnb_commission: number;
-  booking_commission: number;
-  vrbo_commission: number;
-  airbnb_bank_charge: number;
-  booking_bank_charge: number;
-  vrbo_bank_charge: number;
+  commission_airbnb: number;
+  commission_booking: number;
+  commission_vrbo: number;
+  bank_charge_airbnb: number;
+  bank_charge_booking: number;
+  bank_charge_vrbo: number;
   vat_rate: number;
   check_in_time: string;
   check_out_time: string;
@@ -79,12 +79,12 @@ function buildForm(p: Property): PropertyForm {
     airbnb_url: p.airbnb_url ?? '',
     booking_url: p.booking_url ?? '',
     vrbo_url: p.vrbo_url ?? '',
-    airbnb_commission: p.airbnb_commission ?? 0,
-    booking_commission: p.booking_commission ?? 0,
-    vrbo_commission: p.vrbo_commission ?? 0,
-    airbnb_bank_charge: p.airbnb_bank_charge ?? 0,
-    booking_bank_charge: p.booking_bank_charge ?? 0,
-    vrbo_bank_charge: p.vrbo_bank_charge ?? 0,
+    commission_airbnb: p.commission_airbnb ?? 0,
+    commission_booking: p.commission_booking ?? 0,
+    commission_vrbo: p.commission_vrbo ?? 0,
+    bank_charge_airbnb: p.bank_charge_airbnb ?? 0,
+    bank_charge_booking: p.bank_charge_booking ?? 0,
+    bank_charge_vrbo: p.bank_charge_vrbo ?? 0,
     vat_rate: p.vat_rate ?? 0,
     check_in_time: p.check_in_time ?? '',
     check_out_time: p.check_out_time ?? '',
@@ -436,15 +436,15 @@ export function PropertiesPage() {
                         {([
                       {
                         l: 'Airbnb %',
-                        field: 'airbnb_commission' as const,
+                        field: 'commission_airbnb' as const,
                       },
                       {
                         l: 'Booking.com %',
-                        field: 'booking_commission' as const,
+                        field: 'commission_booking' as const,
                       },
                       {
                         l: 'VRBO %',
-                        field: 'vrbo_commission' as const,
+                        field: 'commission_vrbo' as const,
                       }]).
                       map((c) =>
                       <div key={c.l}>
@@ -468,15 +468,15 @@ export function PropertiesPage() {
                         {([
                       {
                         l: 'Airbnb %',
-                        field: 'airbnb_bank_charge' as const,
+                        field: 'bank_charge_airbnb' as const,
                       },
                       {
                         l: 'Booking.com %',
-                        field: 'booking_bank_charge' as const,
+                        field: 'bank_charge_booking' as const,
                       },
                       {
                         l: 'VRBO %',
-                        field: 'vrbo_bank_charge' as const,
+                        field: 'bank_charge_vrbo' as const,
                       }]).
                       map((c) =>
                       <div key={c.l + 'bank'}>
@@ -508,7 +508,7 @@ export function PropertiesPage() {
                         className={inputCls} />
 
                         <p className="text-[10px] text-[#B0B0B0] mt-1 leading-tight">
-                          Set to 14 if Booking.com rates include VAT.
+                          VAT charged on top of commissions + bank charges (e.g. 15 for SA VAT)
                         </p>
                       </div>
                     </Section>
