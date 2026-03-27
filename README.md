@@ -1,57 +1,89 @@
-# Short-Term Rental Management Tool
+# My Rental Tool
 
-A Node.js tool for managing short-term rental properties synced through Smoobu (Airbnb + Booking.com), with automated cleaner assignment, WhatsApp notifications, dynamic pricing, and guest messaging.
+A web app for managing short-term rental properties, built for hosts who use **Smoobu** to manage bookings across platforms like Airbnb, Booking.com, and Vrbo.
 
-## Setup
+## What It Does
+
+My Rental Tool brings together everything you need to run your rental business in one place:
+
+- **Bookings Dashboard** — See all your bookings across properties in a calendar view, synced automatically from Smoobu
+- **Revenue Analytics** — Track gross and net revenue per property, per platform, with commission, bank charges, and VAT broken down
+- **Cleaner Management** — Assign cleaners to properties, manage availability schedules, and auto-assign cleaning jobs based on checkouts
+- **Cleaner Portal** — Cleaners get their own PIN-based login to see their upcoming jobs
+- **Dynamic Pricing** — Automated pricing engine that adjusts rates based on demand
+- **Guest Messaging** — Automated check-in instructions and checkout reminders via WhatsApp
+- **Maintenance Tracking** — Log and track maintenance issues per property
+- **Inventory Management** — Track supplies and consumables across properties
+- **Multi-User Access** — Role-based access (admin, property manager, cleaner) so each user only sees what's relevant to them
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React 18, TypeScript, Vite, Tailwind CSS |
+| Backend | Node.js, Express 5 |
+| Database | PostgreSQL |
+| Hosting | Railway (auto-deploys on merge) |
+| Booking Data | Smoobu API + webhooks |
+| Messaging | WhatsApp Business API |
+| Charts | Recharts |
+
+## Quick Start
 
 ```bash
-npm install
-cp .env.example .env
-# Fill in your .env values (see below)
-npm start
+# Clone the repo
+git clone https://github.com/seberslinux/my-rental-tool.git
+cd my-rental-tool
+
+# Install everything
+npm run setup
+
+# Start the app (runs frontend + backend together)
+npm run dev
 ```
 
-Open http://localhost:3000 in your browser.
+Open [http://localhost:5173](http://localhost:5173) in your browser.
 
-## .env Configuration
+> You'll need access to the Railway project for database connectivity. See the [Contributing Guide](CONTRIBUTING.md) for full setup instructions.
 
-| Variable | Description |
+## Automated Features
+
+The app runs scheduled tasks in the background:
+
+| Time (SAST) | Task |
 |---|---|
-| `SMOOBU_API_KEY` | Your Smoobu API key (Settings > API in Smoobu) |
-| `WHATSAPP_TOKEN` | Meta WhatsApp Business Cloud API access token |
-| `WHATSAPP_PHONE_NUMBER_ID` | Your WhatsApp Business phone number ID |
-| `WHATSAPP_BUSINESS_ACCOUNT_ID` | Your WhatsApp Business Account ID |
-| `CHECKIN_MESSAGE_TEMPLATE` | Guest check-in message (supports `{guest_name}`, `{property_name}`, `{check_in}`) |
-| `CHECKOUT_MESSAGE_TEMPLATE` | Guest checkout reminder message |
-| `PORT` | Server port (default: 3000) |
-
-## Usage
-
-1. **Sync Properties** — Click "Sync Properties" on the dashboard to pull apartments from Smoobu
-2. **Configure Properties** — Go to Properties page to set address, cleaning hours, and base price
-3. **Add Cleaners** — Go to Cleaners page to add cleaners with WhatsApp numbers, assign to properties, and set availability
-4. **Sync Bookings** — Click "Sync Bookings" to pull reservations and auto-assign cleaners
-5. **Webhook** — Configure `POST https://yourdomain.com/webhook` in Smoobu for real-time booking updates
-
-## Automated Features (Cron)
-
-- **06:00 SAST** — Dynamic pricing engine runs
-- **07:00 SAST** — Checkout reminders sent to guests
-- **10:00 SAST** — Check-in instructions sent to tomorrow's guests
-- **05:00 SAST** — Cleaner assignment for upcoming checkouts
-- **Every 30 min** — Cleaning job reminders (2 hours before start)
+| 05:00 | Auto-assign cleaners for upcoming checkouts |
+| 06:00 | Dynamic pricing engine runs |
+| 07:00 | Checkout reminders sent to guests |
+| 10:00 | Check-in instructions sent to tomorrow's guests |
+| Every 30 min | Cleaning job reminders (2 hours before start) |
 
 ## API Endpoints
 
-- `POST /api/sync/properties` — Sync properties from Smoobu
-- `POST /api/sync/bookings` — Sync bookings + run cleaner assignment
-- `GET /api/bookings` — List all bookings
-- `GET /api/dashboard/stats` — Dashboard stats (occupancy, gaps, checkouts, jobs)
-- `GET/PUT /api/properties/:id` — Property settings
-- `GET/POST /api/cleaners` — Cleaner management
-- `PUT/DELETE /api/cleaners/:id` — Edit/delete cleaner
-- `POST /api/cleaners/:id/properties` — Assign property
-- `PUT /api/cleaners/:id/availability` — Set weekly schedule
-- `POST /api/cleaners/:id/overrides` — Date overrides
-- `POST /api/pricing/run` — Manually run pricing engine
-- `POST /webhook` — Smoobu webhook endpoint
+All endpoints under `/api` require authentication. Public endpoints:
+
+- `POST /webhook` — Smoobu webhook for real-time booking updates
+- `GET /ical/:id` — iCal feed per property
+
+Key authenticated endpoints:
+
+| Endpoint | Description |
+|---|---|
+| `POST /api/sync/properties` | Sync properties from Smoobu |
+| `POST /api/sync/bookings` | Sync bookings + auto-assign cleaners |
+| `GET /api/bookings` | List bookings (filtered by user access) |
+| `GET /api/dashboard/stats` | Dashboard stats (occupancy, gaps, upcoming jobs) |
+| `GET/PUT /api/properties/:id` | Property settings and commission config |
+| `GET/POST /api/cleaners` | Cleaner management |
+| `GET /api/analytics/*` | Revenue and financial analytics |
+| `POST /api/pricing/run` | Manually trigger the pricing engine |
+
+## Contributing
+
+We welcome contributions! Whether you're fixing a bug, adding a feature, or improving documentation, check out our **[Contributing Guide](CONTRIBUTING.md)** for everything you need to get started — including step-by-step setup instructions, coding style, Git workflow, and how to submit a pull request.
+
+The contributing guide is written to be accessible to everyone, even if you're new to coding.
+
+## License
+
+ISC
