@@ -87,10 +87,10 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
     if (!apiKey) return res.status(400).json({ error: 'No Smoobu API key configured' });
 
     const today = new Date();
-    const from = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000)
+    const from = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000)
       .toISOString()
       .split('T')[0];
-    const to = new Date(today.getTime() + 90 * 24 * 60 * 60 * 1000)
+    const to = new Date(today.getTime() + 180 * 24 * 60 * 60 * 1000)
       .toISOString()
       .split('T')[0];
 
@@ -112,6 +112,13 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
     for (const p of props) propCurrencyMap[p.smoobu_id] = p.base_currency || 'ZAR';
 
     await transaction(async (client) => {
+      // Delete all bookings in the sync window — Smoobu is the source of truth.
+      // cleaning_jobs.booking_id uses smoobu_id, so the link survives re-insert.
+      await client.query(
+        `DELETE FROM bookings WHERE check_in >= $1 AND check_in <= $2`,
+        [from, to]
+      );
+
       for (const b of allBookings) {
         const platform = b['channel']?.name || b.channel || '';
         const checkIn = b.arrival || b.arrivalDate;

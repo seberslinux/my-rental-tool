@@ -469,6 +469,19 @@ async function runMigrations() {
     }
   }
 
+  // Migrate cleaning_jobs.booking_id from bookings.id to bookings.smoobu_id
+  // This allows bookings to be deleted and re-inserted without breaking the link
+  try {
+    await pool.query(`
+      UPDATE cleaning_jobs cj
+      SET booking_id = b.smoobu_id
+      FROM bookings b
+      WHERE cj.booking_id = b.id
+        AND cj.booking_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM bookings b2 WHERE b2.smoobu_id = cj.booking_id)
+    `);
+  } catch (e) { /* already migrated or no rows */ }
+
   console.log('Database migrations complete.');
 }
 

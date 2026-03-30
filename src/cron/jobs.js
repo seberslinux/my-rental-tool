@@ -119,7 +119,7 @@ cron.schedule('0 6 * * *', async () => {
          FROM cleaning_jobs cj
          JOIN cleaners c ON cj.cleaner_id = c.id
          JOIN properties p ON cj.property_id = p.id
-         LEFT JOIN bookings b ON cj.booking_id = b.id
+         LEFT JOIN bookings b ON cj.booking_id = b.smoobu_id
          WHERE cj.cleaning_date = $1 AND cj.status != 'completed'`,
         [targetDate]
       );
