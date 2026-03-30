@@ -2,6 +2,7 @@ export interface Property {
   id: number;
   name: string;
   base: number;
+  checkInTime: string; // e.g. '15:00'
 }
 
 export type ChannelType = 'airbnb' | 'bcom' | 'direct' | 'blocked';
@@ -52,6 +53,7 @@ export async function loadCalendarData(): Promise<void> {
       id: p.id,
       name: p.name,
       base: p.base_price || 0,
+      checkInTime: p.check_in_time || '15:00',
     }));
   }
 

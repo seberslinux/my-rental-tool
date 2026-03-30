@@ -357,6 +357,8 @@ async function runMigrations() {
     ['supply_checklist', "TEXT DEFAULT ''"],
     ['emergency_contact', "TEXT DEFAULT ''"],
     ['base_currency', "TEXT DEFAULT 'ZAR'"],
+    ['check_in_time', "TEXT DEFAULT '15:00'"],
+    ['check_out_time', "TEXT DEFAULT '10:00'"],
   ]);
 
   await alterColumns('cleaners', [

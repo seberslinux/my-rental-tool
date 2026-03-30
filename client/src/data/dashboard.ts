@@ -216,9 +216,21 @@ export async function loadDashboardData(): Promise<void> {
     needsAttention = attentionItems.slice(0, 5);
 
     // --- Currently Staying (show all properties) ---
-    const stayingBookings = allBookings.filter((b: any) =>
-      b.check_in <= today && b.check_out > today && !((b.platform || '').toLowerCase().includes('block'))
-    );
+    // On check-in day, only show the guest after the property's check-in time (default 15:00)
+    const now = new Date();
+    const currentHHMM = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+    const stayingBookings = allBookings.filter((b: any) => {
+      if (b.check_out <= today || b.check_in > today) return false;
+      if ((b.platform || '').toLowerCase().includes('block')) return false;
+      // On check-in day, only show after check-in time
+      if (b.check_in === today) {
+        const prop = allProperties.find((p) => p.id === b.property_id);
+        const checkInTime = prop?.checkInTime || '15:00';
+        if (currentHHMM < checkInTime) return false;
+      }
+      return true;
+    });
 
     const stayingPropIds = new Set(stayingBookings.map((b: any) => b.property_id));
 
