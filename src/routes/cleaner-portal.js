@@ -46,7 +46,7 @@ router.get('/jobs', requireCleaner, async (req, res) => {
              b.guest_name, b.num_guests, b.special_requirements, b.check_in, b.check_out
              FROM cleaning_jobs cj
              JOIN properties p ON cj.property_id = p.id
-             LEFT JOIN bookings b ON cj.booking_id = b.id
+             LEFT JOIN bookings b ON cj.booking_id = b.smoobu_id
              WHERE cj.cleaner_id = $1`;
   const params = [req.cleaner.id];
   let paramIndex = 2;

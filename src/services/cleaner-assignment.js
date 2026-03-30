@@ -97,14 +97,14 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
     const actualEndMinutes = windowStart + property.cleaning_hours_required * 60;
     const actualEndTime = formatTime(actualEndMinutes);
 
-    // Assign this cleaner
+    // Assign this cleaner (link via smoobu_id so delete+reinsert sync doesn't break the link)
     const result = await run(
       `INSERT INTO cleaning_jobs (property_id, cleaner_id, booking_id, cleaning_date, start_time, end_time, status)
        VALUES ($1, $2, $3, $4, $5, $6, 'pending') RETURNING id`,
       [
         property.id,
         cleaner.id,
-        booking.id,
+        booking.smoobu_id,
         checkoutDate,
         checkoutTime,
         actualEndTime,
@@ -179,7 +179,7 @@ async function runAssignmentForAllCheckouts() {
     `SELECT b.* FROM bookings b
      WHERE b.check_out >= $1 AND b.check_out <= $2 AND b.status = 'confirmed'
      AND NOT EXISTS (
-       SELECT 1 FROM cleaning_jobs cj WHERE cj.booking_id = b.id
+       SELECT 1 FROM cleaning_jobs cj WHERE cj.booking_id = b.smoobu_id
      )
      ORDER BY b.check_out ASC`,
     [today, futureDate]
@@ -199,14 +199,15 @@ async function runAssignmentForAllCheckouts() {
 }
 
 // Unassign a cleaner from a job and notify them
-async function unassignCleanerFromBooking(bookingId) {
+// smoobuId: the Smoobu booking ID (cleaning_jobs.booking_id stores smoobu_id)
+async function unassignCleanerFromBooking(smoobuId) {
   const jobs = await getAll(
     `SELECT cj.*, c.phone, c.name as cleaner_name, p.name as property_name
      FROM cleaning_jobs cj
      JOIN cleaners c ON cj.cleaner_id = c.id
      JOIN properties p ON cj.property_id = p.id
      WHERE cj.booking_id = $1 AND cj.status != 'completed'`,
-    [bookingId]
+    [smoobuId]
   );
 
   for (const job of jobs) {
@@ -229,17 +230,18 @@ async function unassignCleanerFromBooking(bookingId) {
 }
 
 // Re-run assignment for a modified booking
-async function reassignCleanerForBooking(bookingId) {
-  await unassignCleanerFromBooking(bookingId);
+// smoobuId: the Smoobu booking ID
+async function reassignCleanerForBooking(smoobuId) {
+  await unassignCleanerFromBooking(smoobuId);
 
-  const booking = await getOne('SELECT * FROM bookings WHERE id = $1', [bookingId]);
+  const booking = await getOne('SELECT * FROM bookings WHERE smoobu_id = $1', [smoobuId]);
   if (!booking) return;
 
   const nextBooking = await getOne(
     `SELECT * FROM bookings
-     WHERE property_id = $1 AND check_in >= $2 AND status = 'confirmed' AND id != $3
+     WHERE property_id = $1 AND check_in >= $2 AND status = 'confirmed' AND smoobu_id != $3
      ORDER BY check_in ASC LIMIT 1`,
-    [booking.property_id, booking.check_out, booking.id]
+    [booking.property_id, booking.check_out, smoobuId]
   );
 
   await assignCleanerForCheckout(booking, nextBooking);

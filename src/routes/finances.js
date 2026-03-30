@@ -412,7 +412,7 @@ router.get('/pnl', async (req, res) => {
 
     // Booking profitability
     const bookings = await getAll(`
-      SELECT b.id as booking_id, b.guest_name, b.check_in, b.check_out, b.total_price,
+      SELECT b.smoobu_id as booking_id, b.guest_name, b.check_in, b.check_out, b.total_price,
              b.platform, b.property_id, b.currency,
              p.name as property_name, p.cleaning_hours_required,
              p.commission_airbnb, p.commission_booking, p.commission_vrbo,

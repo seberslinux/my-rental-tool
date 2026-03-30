@@ -59,9 +59,9 @@ router.post('/', async (req, res) => {
       // Find next booking for this property
       const nextBooking = await getOne(
         `SELECT * FROM bookings
-         WHERE property_id = $1 AND check_in >= $2 AND status = 'confirmed' AND id != $3
+         WHERE property_id = $1 AND check_in >= $2 AND status = 'confirmed' AND smoobu_id != $3
          ORDER BY check_in ASC LIMIT 1`,
-        [property.id, booking.check_out, booking.id]
+        [property.id, booking.check_out, smoobuId]
       );
 
       await assignCleanerForCheckout(booking, nextBooking);
@@ -70,8 +70,8 @@ router.post('/', async (req, res) => {
       const booking = await getOne('SELECT * FROM bookings WHERE smoobu_id = $1', [smoobuId]);
 
       if (booking) {
-        await run("UPDATE bookings SET status = 'cancelled', modified_at = NOW() WHERE id = $1", [booking.id]);
-        await unassignCleanerFromBooking(booking.id);
+        await run("UPDATE bookings SET status = 'cancelled', modified_at = NOW() WHERE smoobu_id = $1", [smoobuId]);
+        await unassignCleanerFromBooking(smoobuId);
 
         // Unblock any dates that were blocked due to this booking's checkout
         const blockedDates = await getAll(
@@ -102,7 +102,7 @@ router.post('/', async (req, res) => {
 
       const booking = await getOne('SELECT * FROM bookings WHERE smoobu_id = $1', [smoobuId]);
       if (booking) {
-        await reassignCleanerForBooking(booking.id);
+        await reassignCleanerForBooking(smoobuId);
       }
     }
 
