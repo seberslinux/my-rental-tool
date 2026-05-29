@@ -1,5 +1,5 @@
 import React from 'react';
-import { X } from 'lucide-react';
+import { X, Check } from 'lucide-react';
 import {
   kpis,
   needsAttention,
@@ -12,7 +12,7 @@ import {
 '../data/dashboard';
 export function DashboardPage() {
   return (
-    <div className="p-4 bg-[#F7F7F7] min-h-full">
+    <div className="p-4 lg:px-8 lg:py-6 bg-[#F7F7F7] min-h-full">
       {/* KPIs */}
       <div className="flex gap-2 mb-6">
         {kpis.map((kpi, idx) =>
@@ -48,6 +48,7 @@ export function DashboardPage() {
         <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
           Needs Attention
         </div>
+        {needsAttention.length > 0 ?
         <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] overflow-hidden">
           {needsAttention.map((item, idx) =>
           <div
@@ -74,7 +75,12 @@ export function DashboardPage() {
 
             </div>
           )}
+        </div> :
+        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] px-4 py-3 flex items-center gap-2 text-[14px] text-[#717171]">
+          <Check className="w-4 h-4 text-[#00A699] shrink-0" strokeWidth={2.5} />
+          You're all caught up — nothing needs attention.
         </div>
+        }
       </div>
 
       {/* Currently Staying */}
@@ -140,6 +146,7 @@ export function DashboardPage() {
         <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
           Next Up
         </div>
+        {nextUp.length > 0 ?
         <div className="flex flex-col">
           {nextUp.map((item) =>
           <div key={item.id} className="flex gap-3">
@@ -166,7 +173,11 @@ export function DashboardPage() {
               </div>
             </div>
           )}
+        </div> :
+        <div className="text-[14px] text-[#717171] py-1">
+          Nothing scheduled in the next 7 days.
         </div>
+        }
       </div>
 
       {/* Cleaning Jobs */}
@@ -174,6 +185,7 @@ export function DashboardPage() {
         <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
           Cleaning · Next 7 Days
         </div>
+        {cleaningJobs.length > 0 ?
         <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] overflow-hidden">
           {cleaningJobs.map((job, idx) =>
           <div
@@ -200,7 +212,11 @@ export function DashboardPage() {
               </button>
             </div>
           )}
+        </div> :
+        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] px-4 py-3 text-[14px] text-[#717171]">
+          No cleanings scheduled in the next 7 days.
         </div>
+        }
       </div>
 
       {/* Upcoming Holidays */}

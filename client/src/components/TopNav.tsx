@@ -7,7 +7,8 @@ import {
   MoreHorizontal,
   RefreshCw,
   Bell,
-  User } from
+  User,
+  ChevronDown } from
 'lucide-react';
 
 interface TopNavProps {
@@ -15,10 +16,15 @@ interface TopNavProps {
   onTabChange: (tab: string) => void;
   onRefresh?: () => Promise<void>;
   hasNotifications?: boolean;
+  propertyFilter?: {
+    properties: { id: number; name: string }[];
+    selected: number;
+    onChange: (id: number) => void;
+  };
 }
 
 // Desktop-only top navigation (hidden below lg). Mirrors the mobile TabBar's tabs.
-export function TopNav({ activeTab, onTabChange, onRefresh, hasNotifications }: TopNavProps) {
+export function TopNav({ activeTab, onTabChange, onRefresh, hasNotifications, propertyFilter }: TopNavProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = async () => {
     if (isRefreshing) return;
@@ -68,6 +74,20 @@ export function TopNav({ activeTab, onTabChange, onRefresh, hasNotifications }: 
 
       {/* Actions */}
       <div className="flex items-center gap-2">
+        {propertyFilter &&
+        <div className="relative mr-1">
+          <select
+            value={propertyFilter.selected}
+            onChange={(e) => propertyFilter.onChange(Number(e.target.value))}
+            className="appearance-none bg-[#F7F7F7] text-[14px] font-medium text-[#222222] rounded-[8px] pl-3 pr-8 py-2 border border-[#EBEBEB] cursor-pointer hover:bg-[#F0F0F0] focus:outline-none focus:ring-1 focus:ring-[#222222]">
+            <option value={0}>All Properties</option>
+            {propertyFilter.properties.map((p) =>
+            <option key={p.id} value={p.id}>{p.name}</option>
+            )}
+          </select>
+          <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#717171] pointer-events-none" strokeWidth={2} />
+        </div>
+        }
         <button
           onClick={handleRefresh}
           className="w-9 h-9 rounded-full border border-[#EBEBEB] bg-white flex items-center justify-center text-[#222222] hover:bg-[#F7F7F7] transition-colors">

@@ -22,7 +22,7 @@ export function AppHeader({ title, propertyFilter, onRefresh, hasNotifications }
     }
   };
   return (
-    <div className="bg-white px-4 py-3 border-b border-[#EBEBEB] sticky top-0 z-20">
+    <div className="lg:hidden bg-white px-4 py-3 border-b border-[#EBEBEB] sticky top-0 z-20">
       <div className="flex items-center justify-between">
         <h1 className="text-[28px] font-bold tracking-[-0.5px] text-[#222222]">
           {title}

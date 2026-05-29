@@ -123,6 +123,11 @@ export function App() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         hasNotifications={attentionCount > 0}
+        propertyFilter={activeTab === 'home' ? {
+          properties: properties.map((p) => ({ id: p.id, name: p.name })),
+          selected: dashboardPropertyFilter,
+          onChange: (id) => { setDashboardPropertyFilter(id); setPropertyFilter(id); },
+        } : undefined}
         onRefresh={async () => {
           await fetch('/api/sync/bookings', { method: 'POST', credentials: 'same-origin' });
           await loadData();
