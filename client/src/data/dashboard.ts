@@ -15,6 +15,9 @@ export let currentlyStaying: {
 
 export let nextUp: { id: number; type: string; label: string; name: string; detail: string; isLast?: boolean; sortDate?: string }[] = [];
 
+// Merged chronological agenda: check-ins, check-outs and cleanings in one list.
+export let agenda: { id: string; type: 'in' | 'out' | 'clean'; date: string; title: string; subtitle: string }[] = [];
+
 export let cleaningJobs: { id: number; title: string; subtitle: string; status: string; buttonText: string; isProblem: boolean }[] = [];
 
 export let recentCancellations: { id: number; key: string; guestName: string; property: string; checkIn: string; checkOut: string; platform: string; cancelledAt: string; cancelledDate: string }[] = [];
@@ -386,6 +389,39 @@ export async function loadDashboardData(): Promise<void> {
       });
     });
     cleaningJobs = jobItems;
+
+    // --- Upcoming agenda (check-ins, check-outs and cleanings, merged by date) ---
+    const agendaItems: typeof agenda = [];
+    upcomingOuts.forEach((b: any) => {
+      agendaItems.push({
+        id: `out-${b.id}`,
+        type: 'out',
+        date: b.check_out,
+        title: b.guest_name || 'Guest',
+        subtitle: `Check-out · ${relativeDay(b.check_out)} · ${b.property_name || ''}`,
+      });
+    });
+    upcomingIns.forEach((b: any) => {
+      agendaItems.push({
+        id: `in-${b.id}`,
+        type: 'in',
+        date: b.check_in,
+        title: b.guest_name || 'Guest',
+        subtitle: `Check-in · ${relativeDay(b.check_in)} · ${b.property_name || ''}`,
+      });
+    });
+    (stats.pending_cleaning_jobs || []).forEach((j: any) => {
+      agendaItems.push({
+        id: `clean-${j.id}`,
+        type: 'clean',
+        date: j.cleaning_date,
+        title: `${j.property_name} · cleaning`,
+        subtitle: `${relativeDay(j.cleaning_date)} · ${j.cleaner_name || 'Unassigned'}`,
+      });
+    });
+    agenda = agendaItems
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
+      .slice(0, 6);
 
     if (onDataChanged) onDataChanged();
 

@@ -4,8 +4,7 @@ import {
   kpis,
   needsAttention,
   currentlyStaying,
-  nextUp,
-  cleaningJobs,
+  agenda,
   upcomingHolidays,
   recentCancellations,
   dismissDashboardItem } from
@@ -88,7 +87,7 @@ export function DashboardPage() {
         <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
           Currently Staying
         </div>
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 lg:grid lg:grid-cols-2 lg:gap-3">
           {currentlyStaying.map((guest) => (
             <div
               key={guest.id}
@@ -141,80 +140,34 @@ export function DashboardPage() {
       </div>{/* end left column */}
       <div className="lg:col-span-1">
 
-      {/* Next Up */}
+      {/* Upcoming — check-ins, check-outs and cleanings merged chronologically */}
       <div className="mb-6">
         <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
-          Next Up
+          Upcoming
         </div>
-        {nextUp.length > 0 ?
-        <div className="flex flex-col">
-          {nextUp.map((item) =>
-          <div key={item.id} className="flex gap-3">
-              <div className="flex flex-col items-center w-3 pt-1.5">
-                <div
-                className={`w-2 h-2 rounded-full shrink-0 ${item.type === 'in' ? 'bg-[#00A699]' : 'bg-[#E8913A]'}`}>
-              </div>
-                {!item.isLast &&
-              <div className="w-[1px] flex-1 bg-[#EBEBEB] mt-1"></div>
-              }
-              </div>
-              <div className="flex-1 pb-4">
-                <div
-                className={`text-[12px] font-semibold tracking-[0.2px] mb-[2px] ${item.type === 'in' ? 'text-[#00A699]' : 'text-[#E8913A]'}`}>
-                
-                  {item.label}
-                </div>
-                <div className="text-[16px] font-medium tracking-[-0.2px]">
-                  {item.name}
-                </div>
-                <div className="text-[13px] text-[#717171] mt-[1px]">
-                  {item.detail}
-                </div>
-              </div>
-            </div>
-          )}
-        </div> :
-        <div className="text-[14px] text-[#717171] py-1">
-          Nothing scheduled in the next 7 days.
-        </div>
-        }
-      </div>
-
-      {/* Cleaning Jobs */}
-      <div className="mb-6">
-        <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
-          Cleaning · Next 7 Days
-        </div>
-        {cleaningJobs.length > 0 ?
+        {agenda.length > 0 ?
         <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] overflow-hidden">
-          {cleaningJobs.map((job, idx) =>
+          {agenda.map((item, idx) =>
           <div
-            key={job.id}
-            className={`flex items-center gap-3 p-3 px-4 min-h-[52px] active:bg-[#F7F7F7] cursor-pointer ${idx > 0 ? 'border-t border-[#F0F0F0]' : ''}`}>
-            
+            key={item.id}
+            className={`flex items-center gap-3 p-3 px-4 min-h-[52px] ${idx > 0 ? 'border-t border-[#F0F0F0]' : ''}`}>
+
               <div
-              className={`w-2 h-2 rounded-full shrink-0 ${job.status === 'warn' ? 'bg-[#D93900]' : 'bg-[#00A699]'}`}>
+              className={`w-2 h-2 rounded-full shrink-0 ${item.type === 'in' ? 'bg-[#00A699]' : item.type === 'out' ? 'bg-[#E8913A]' : 'bg-[#007AFF]'}`}>
             </div>
               <div className="flex-1 min-w-0">
-                <div
-                className={`text-[15px] font-medium tracking-[-0.2px] ${job.isProblem ? 'text-[#D93900]' : 'text-[#222222]'}`}>
-                
-                  {job.title}
+                <div className="text-[15px] font-medium text-[#222222] tracking-[-0.2px]">
+                  {item.title}
                 </div>
                 <div className="text-[13px] text-[#717171] mt-[1px]">
-                  {job.subtitle}
+                  {item.subtitle}
                 </div>
               </div>
-              <button
-              className={`text-[14px] font-semibold px-3 py-2 rounded-[8px] shrink-0 bg-transparent border-none ${job.status === 'warn' ? 'text-[#007AFF] active:bg-[#F0F6FF]' : 'text-[#00A699] active:bg-[#F0FAF9]'}`}>
-              
-                {job.buttonText}
-              </button>
             </div>
           )}
         </div> :
         <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] px-4 py-3 text-[14px] text-[#717171]">
-          No cleanings scheduled in the next 7 days.
+          Nothing scheduled in the next few days.
         </div>
         }
       </div>
