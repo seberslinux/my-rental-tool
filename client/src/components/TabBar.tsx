@@ -9,14 +9,15 @@ import {
 interface TabBarProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
+  homeBadge?: number;
 }
-export function TabBar({ activeTab, onTabChange }: TabBarProps) {
+export function TabBar({ activeTab, onTabChange, homeBadge = 0 }: TabBarProps) {
   const tabs = [
   {
     id: 'home',
     label: 'Home',
     icon: Home,
-    badge: 3
+    badge: homeBadge
   },
   {
     id: 'calendar',
@@ -40,7 +41,7 @@ export function TabBar({ activeTab, onTabChange }: TabBarProps) {
   }];
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 h-[64px] pb-safe bg-white border-t border-[#EBEBEB] flex justify-around z-50">
+    <nav className="lg:hidden fixed bottom-0 left-0 right-0 h-[64px] pb-safe bg-white border-t border-[#EBEBEB] flex justify-around z-50">
       {tabs.map((tab) => {
         const isActive = activeTab === tab.id;
         const Icon = tab.icon;
@@ -55,7 +56,7 @@ export function TabBar({ activeTab, onTabChange }: TabBarProps) {
               strokeWidth={isActive ? 2 : 1.5} />
             
             <span className="text-[10px]">{tab.label}</span>
-            {tab.badge &&
+            {(tab.badge ?? 0) > 0 &&
             <span className="absolute top-[6px] left-[calc(50%+5px)] bg-[#D93900] text-white text-[10px] font-bold min-w-[16px] h-[16px] rounded-full flex items-center justify-center px-1 border-2 border-white leading-none">
                 {tab.badge}
               </span>

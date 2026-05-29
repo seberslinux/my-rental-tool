@@ -1,5 +1,5 @@
 import React from 'react';
-import { ChevronRight } from 'lucide-react';
+import { X } from 'lucide-react';
 import {
   kpis,
   needsAttention,
@@ -7,7 +7,8 @@ import {
   nextUp,
   cleaningJobs,
   upcomingHolidays,
-  recentCancellations } from
+  recentCancellations,
+  dismissDashboardItem } from
 '../data/dashboard';
 export function DashboardPage() {
   return (
@@ -38,6 +39,10 @@ export function DashboardPage() {
         )}
       </div>
 
+      {/* Desktop: 2-column layout (left: attention + staying, right: the rest). Mobile: single column. */}
+      <div className="lg:grid lg:grid-cols-3 lg:gap-6 lg:items-start">
+      <div className="lg:col-span-2">
+
       {/* Needs Attention */}
       <div className="mb-6">
         <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
@@ -60,10 +65,13 @@ export function DashboardPage() {
                   {item.subtitle}
                 </div>
               </div>
-              <ChevronRight
-              className="w-3.5 h-3.5 text-[#B0B0B0] shrink-0"
-              strokeWidth={2} />
-            
+              <button
+              onClick={() => dismissDashboardItem(item.key, 'day')}
+              aria-label="Dismiss"
+              className="w-7 h-7 rounded-full flex items-center justify-center text-[#B0B0B0] hover:text-[#222222] hover:bg-[#F7F7F7] shrink-0 transition-colors">
+                <X className="w-4 h-4" strokeWidth={2} />
+              </button>
+
             </div>
           )}
         </div>
@@ -123,6 +131,9 @@ export function DashboardPage() {
           ))}
         </div>
       </div>
+
+      </div>{/* end left column */}
+      <div className="lg:col-span-1">
 
       {/* Next Up */}
       <div className="mb-6">
@@ -238,14 +249,29 @@ export function DashboardPage() {
                   {c.property} · {c.checkIn} – {c.checkOut}
                 </div>
               </div>
-              <span className="text-[11px] font-semibold px-2 py-[3px] rounded-[6px] bg-[#FEF2F2] text-[#DC2626]">
-                Cancelled
-              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="text-right">
+                  <span className="text-[11px] font-semibold px-2 py-[3px] rounded-[6px] bg-[#FEF2F2] text-[#DC2626]">
+                    Cancelled
+                  </span>
+                  {c.cancelledDate &&
+                  <div className="text-[11px] text-[#B0B0B0] mt-1">{c.cancelledDate}</div>
+                  }
+                </div>
+                <button
+                onClick={() => dismissDashboardItem(c.key, 'forever')}
+                aria-label="Dismiss"
+                className="w-7 h-7 rounded-full flex items-center justify-center text-[#B0B0B0] hover:text-[#222222] hover:bg-[#F7F7F7] transition-colors">
+                  <X className="w-4 h-4" strokeWidth={2} />
+                </button>
+              </div>
             </div>
           )}
         </div>
       </div>
       }
+      </div>{/* end right column */}
+      </div>{/* end 2-column grid */}
     </div>);
 
 }

@@ -1,10 +1,11 @@
 import { properties as allProperties } from './properties';
+import { filterDismissed, dismiss } from './dismissed';
 
 // Dashboard data — populated by loadDashboardData() from the real API
 
 export let kpis: { label: string; value: string; trend: string; isPositive: boolean; period: string }[] = [];
 
-export let needsAttention: { id: number; title: string; subtitle: string; dotColor: string }[] = [];
+export let needsAttention: { id: number; key: string; title: string; subtitle: string; dotColor: string }[] = [];
 
 export let currentlyStaying: {
   id: number; property: string; platform: string; guestName: string;
@@ -16,13 +17,26 @@ export let nextUp: { id: number; type: string; label: string; name: string; deta
 
 export let cleaningJobs: { id: number; title: string; subtitle: string; status: string; buttonText: string; isProblem: boolean }[] = [];
 
-export let recentCancellations: { id: number; guestName: string; property: string; checkIn: string; checkOut: string; platform: string; cancelledAt: string }[] = [];
+export let recentCancellations: { id: number; key: string; guestName: string; property: string; checkIn: string; checkOut: string; platform: string; cancelledAt: string; cancelledDate: string }[] = [];
 
 let activePropertyFilter = 0; // 0 = all properties
 let onDataChanged: (() => void) | null = null;
 
+// Unfiltered source lists, retained so dismissals can be re-applied without refetching.
+let allAttentionItems: typeof needsAttention = [];
+let allCancelledItems: typeof recentCancellations = [];
+
 export function setOnDataChanged(cb: () => void): void {
   onDataChanged = cb;
+}
+
+// Dismiss a Needs Attention item ('day' scope) or a cancellation ('forever' scope),
+// then re-apply filtering and notify the UI to re-render.
+export function dismissDashboardItem(key: string, scope: 'day' | 'forever'): void {
+  dismiss(key, scope);
+  needsAttention = filterDismissed(allAttentionItems, (a) => a.key).slice(0, 5);
+  recentCancellations = filterDismissed(allCancelledItems, (c) => c.key).slice(0, 5);
+  if (onDataChanged) onDataChanged();
 }
 
 export async function setPropertyFilter(propertyId: number): Promise<void> {
@@ -55,9 +69,12 @@ function fmtMoney(amount: number): string {
 
 function platformLabel(p: string): string {
   const pl = (p || '').toLowerCase();
+  // Check 'direct'/'blocked' first: Smoobu names direct bookings "Direct booking",
+  // which contains the substring "booking" and would otherwise match as Booking.com.
+  if (pl.includes('direct')) return 'Direct';
+  if (pl.includes('blocked')) return 'Blocked';
   if (pl.includes('airbnb')) return 'Airbnb';
   if (pl.includes('booking')) return 'Booking';
-  if (pl.includes('blocked')) return 'Blocked';
   return 'Direct';
 }
 
@@ -101,21 +118,32 @@ export async function loadDashboardData(): Promise<void> {
       const cancelledBookings = scopedBookings.filter((b: any) => b.status === 'cancelled');
       allBookings = scopedBookings.filter((b: any) => b.status !== 'cancelled');
 
-      // Recent cancellations (last 30 days)
+      // Recent cancellations — surfaced by WHEN they were cancelled (modified_at),
+      // not by their scheduled stay dates. Dismissed ones (permanent) are hidden.
       const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
-      recentCancellations = cancelledBookings
-        .filter((b: any) => b.check_in >= thirtyDaysAgo && !(b.platform || '').toLowerCase().includes('block'))
+      const cancelledItems = cancelledBookings
+        .filter((b: any) => {
+          if ((b.platform || '').toLowerCase().includes('block')) return false;
+          const cancelledAt = b.modified_at || b.created_at || '';
+          return cancelledAt >= thirtyDaysAgo; // ISO timestamp vs YYYY-MM-DD compares correctly
+        })
         .sort((a: any, b: any) => (b.modified_at || b.created_at || '').localeCompare(a.modified_at || a.created_at || ''))
-        .slice(0, 5)
-        .map((b: any) => ({
-          id: b.id,
-          guestName: b.guest_name || `Guest · ${platformLabel(b.platform)}`,
-          property: b.property_name || `Property ${b.property_id}`,
-          checkIn: fmtDate(b.check_in),
-          checkOut: fmtDate(b.check_out),
-          platform: platformLabel(b.platform),
-          cancelledAt: b.modified_at || b.created_at || '',
-        }));
+        .map((b: any) => {
+          const cancelledAt = b.modified_at || b.created_at || '';
+          return {
+            id: b.id,
+            key: `cancel:${b.id}`,
+            guestName: b.guest_name || `Guest · ${platformLabel(b.platform)}`,
+            property: b.property_name || `Property ${b.property_id}`,
+            checkIn: fmtDate(b.check_in),
+            checkOut: fmtDate(b.check_out),
+            platform: platformLabel(b.platform),
+            cancelledAt,
+            cancelledDate: cancelledAt ? fmtDate(cancelledAt.split('T')[0]) : '',
+          };
+        });
+      allCancelledItems = cancelledItems;
+      recentCancellations = filterDismissed(cancelledItems, (c) => c.key).slice(0, 5);
     }
 
     let stats: any = { occupancy: [], gaps: [], pending_cleaning_jobs: [], upcoming_checkouts: [] };
@@ -197,6 +225,7 @@ export async function loadDashboardData(): Promise<void> {
     unassignedJobs.forEach((j: any) => {
       attentionItems.push({
         id: attId++,
+        key: `attn:nocleaner:${j.property_id}:${j.cleaning_date}`,
         title: 'No cleaner assigned',
         subtitle: `${j.property_name} · ${relativeDay(j.cleaning_date)}`,
         dotColor: 'bg-[#D93900]',
@@ -207,13 +236,16 @@ export async function loadDashboardData(): Promise<void> {
     (stats.gaps || []).forEach((g: any) => {
       attentionItems.push({
         id: attId++,
+        key: `attn:gap:${g.property_id}:${g.gap_start}`,
         title: `${g.nights}-night gap ${fmtDate(g.gap_start)}`,
         subtitle: `${g.property_name} · offer discount?`,
         dotColor: 'bg-[#E8913A]',
       });
     });
 
-    needsAttention = attentionItems.slice(0, 5);
+    // Hide items the user dismissed today (they reappear tomorrow if still unresolved)
+    allAttentionItems = attentionItems;
+    needsAttention = filterDismissed(attentionItems, (a) => a.key).slice(0, 5);
 
     // --- Currently Staying (show all properties) ---
     // On check-in day, only show the guest after the property's check-in time (default 15:00)

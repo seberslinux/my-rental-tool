@@ -432,7 +432,11 @@ router.get('/pnl', async (req, res) => {
       const platform = (bk.platform || '').toLowerCase();
       let commissionRate = 0;
       let bankChargeRate = 0;
-      if (platform.includes('airbnb')) {
+      // Direct bookings have no platform commission or bank charge. Check 'direct' first:
+      // Smoobu names them "Direct booking", which contains the substring "booking".
+      if (platform.includes('direct')) {
+        // no fees
+      } else if (platform.includes('airbnb')) {
         commissionRate = (bk.commission_airbnb || 18) / 100;
         bankChargeRate = (bk.bank_charge_airbnb || 0) / 100;
       } else if (platform.includes('booking')) {

@@ -33,9 +33,12 @@ export let cleaners: Record<number, number[]> = {};
 // Map API platform string → ChannelType
 function mapPlatform(platform: string): ChannelType {
   const p = (platform || '').toLowerCase();
+  // Check 'direct'/'block' first: Smoobu names direct bookings "Direct booking",
+  // which contains the substring "booking" and would otherwise match as bcom.
+  if (p.includes('direct')) return 'direct';
+  if (p.includes('blocked') || p.includes('block') || p.includes('maintenance')) return 'blocked';
   if (p.includes('airbnb')) return 'airbnb';
   if (p.includes('booking') || p.includes('bcom')) return 'bcom';
-  if (p.includes('blocked') || p.includes('block') || p.includes('maintenance')) return 'blocked';
   return 'direct';
 }
 

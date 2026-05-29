@@ -8,8 +8,9 @@ interface AppHeaderProps {
     onChange: (id: number) => void;
   };
   onRefresh?: () => Promise<void>;
+  hasNotifications?: boolean;
 }
-export function AppHeader({ title, propertyFilter, onRefresh }: AppHeaderProps) {
+export function AppHeader({ title, propertyFilter, onRefresh, hasNotifications }: AppHeaderProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = async () => {
     if (isRefreshing) return;
@@ -26,7 +27,8 @@ export function AppHeader({ title, propertyFilter, onRefresh }: AppHeaderProps) 
         <h1 className="text-[28px] font-bold tracking-[-0.5px] text-[#222222]">
           {title}
         </h1>
-        <div className="flex gap-2">
+        {/* Actions — desktop has these in the top nav, so hide on lg+ */}
+        <div className="flex gap-2 lg:hidden">
           <button
             onClick={handleRefresh}
             className="w-9 h-9 rounded-full border border-[#EBEBEB] bg-white flex items-center justify-center text-[#222222] active:bg-[#F7F7F7] transition-colors">
@@ -38,7 +40,9 @@ export function AppHeader({ title, propertyFilter, onRefresh }: AppHeaderProps) 
           </button>
           <button className="w-9 h-9 rounded-full border border-[#EBEBEB] bg-white flex items-center justify-center text-[#222222] active:bg-[#F7F7F7] transition-colors relative">
             <Bell className="w-[18px] h-[18px]" strokeWidth={1.5} />
+            {hasNotifications &&
             <span className="absolute top-[-1px] right-[-1px] w-2 h-2 rounded-full bg-[#D93900] border-2 border-white"></span>
+            }
           </button>
         </div>
       </div>
