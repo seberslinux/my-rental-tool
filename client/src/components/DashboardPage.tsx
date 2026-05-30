@@ -1,17 +1,17 @@
 import React from 'react';
-import { ChevronRight } from 'lucide-react';
+import { X, Check } from 'lucide-react';
 import {
   kpis,
   needsAttention,
   currentlyStaying,
-  nextUp,
-  cleaningJobs,
+  agenda,
   upcomingHolidays,
-  recentCancellations } from
+  recentCancellations,
+  dismissDashboardItem } from
 '../data/dashboard';
 export function DashboardPage() {
   return (
-    <div className="p-4 bg-[#F7F7F7] min-h-full">
+    <div className="p-4 lg:px-8 lg:py-6 bg-[#F7F7F7] min-h-full">
       {/* KPIs */}
       <div className="flex gap-2 mb-6">
         {kpis.map((kpi, idx) =>
@@ -38,11 +38,16 @@ export function DashboardPage() {
         )}
       </div>
 
+      {/* Desktop: 2-column layout (left: attention + staying, right: the rest). Mobile: single column. */}
+      <div className="lg:grid lg:grid-cols-3 lg:gap-6 lg:items-start">
+      <div className="lg:col-span-2">
+
       {/* Needs Attention */}
       <div className="mb-6">
         <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
           Needs Attention
         </div>
+        {needsAttention.length > 0 ?
         <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] overflow-hidden">
           {needsAttention.map((item, idx) =>
           <div
@@ -60,13 +65,21 @@ export function DashboardPage() {
                   {item.subtitle}
                 </div>
               </div>
-              <ChevronRight
-              className="w-3.5 h-3.5 text-[#B0B0B0] shrink-0"
-              strokeWidth={2} />
-            
+              <button
+              onClick={() => dismissDashboardItem(item.key, 'day')}
+              aria-label="Dismiss"
+              className="w-7 h-7 rounded-full flex items-center justify-center text-[#B0B0B0] hover:text-[#222222] hover:bg-[#F7F7F7] shrink-0 transition-colors">
+                <X className="w-4 h-4" strokeWidth={2} />
+              </button>
+
             </div>
           )}
+        </div> :
+        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] px-4 py-3 flex items-center gap-2 text-[14px] text-[#717171]">
+          <Check className="w-4 h-4 text-[#00A699] shrink-0" strokeWidth={2.5} />
+          You're all caught up — nothing needs attention.
         </div>
+        }
       </div>
 
       {/* Currently Staying */}
@@ -74,7 +87,7 @@ export function DashboardPage() {
         <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
           Currently Staying
         </div>
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 lg:grid lg:grid-cols-2 lg:gap-3">
           {currentlyStaying.map((guest) => (
             <div
               key={guest.id}
@@ -124,72 +137,39 @@ export function DashboardPage() {
         </div>
       </div>
 
-      {/* Next Up */}
-      <div className="mb-6">
-        <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
-          Next Up
-        </div>
-        <div className="flex flex-col">
-          {nextUp.map((item) =>
-          <div key={item.id} className="flex gap-3">
-              <div className="flex flex-col items-center w-3 pt-1.5">
-                <div
-                className={`w-2 h-2 rounded-full shrink-0 ${item.type === 'in' ? 'bg-[#00A699]' : 'bg-[#E8913A]'}`}>
-              </div>
-                {!item.isLast &&
-              <div className="w-[1px] flex-1 bg-[#EBEBEB] mt-1"></div>
-              }
-              </div>
-              <div className="flex-1 pb-4">
-                <div
-                className={`text-[12px] font-semibold tracking-[0.2px] mb-[2px] ${item.type === 'in' ? 'text-[#00A699]' : 'text-[#E8913A]'}`}>
-                
-                  {item.label}
-                </div>
-                <div className="text-[16px] font-medium tracking-[-0.2px]">
-                  {item.name}
-                </div>
-                <div className="text-[13px] text-[#717171] mt-[1px]">
-                  {item.detail}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
+      </div>{/* end left column */}
+      <div className="lg:col-span-1">
 
-      {/* Cleaning Jobs */}
+      {/* Upcoming — check-ins, check-outs and cleanings merged chronologically */}
       <div className="mb-6">
         <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
-          Cleaning · Next 7 Days
+          Upcoming
         </div>
+        {agenda.length > 0 ?
         <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] overflow-hidden">
-          {cleaningJobs.map((job, idx) =>
+          {agenda.map((item, idx) =>
           <div
-            key={job.id}
-            className={`flex items-center gap-3 p-3 px-4 min-h-[52px] active:bg-[#F7F7F7] cursor-pointer ${idx > 0 ? 'border-t border-[#F0F0F0]' : ''}`}>
-            
+            key={item.id}
+            className={`flex items-center gap-3 p-3 px-4 min-h-[52px] ${idx > 0 ? 'border-t border-[#F0F0F0]' : ''}`}>
+
               <div
-              className={`w-2 h-2 rounded-full shrink-0 ${job.status === 'warn' ? 'bg-[#D93900]' : 'bg-[#00A699]'}`}>
+              className={`w-2 h-2 rounded-full shrink-0 ${item.type === 'in' ? 'bg-[#00A699]' : item.type === 'out' ? 'bg-[#E8913A]' : 'bg-[#007AFF]'}`}>
             </div>
               <div className="flex-1 min-w-0">
-                <div
-                className={`text-[15px] font-medium tracking-[-0.2px] ${job.isProblem ? 'text-[#D93900]' : 'text-[#222222]'}`}>
-                
-                  {job.title}
+                <div className="text-[15px] font-medium text-[#222222] tracking-[-0.2px]">
+                  {item.title}
                 </div>
                 <div className="text-[13px] text-[#717171] mt-[1px]">
-                  {job.subtitle}
+                  {item.subtitle}
                 </div>
               </div>
-              <button
-              className={`text-[14px] font-semibold px-3 py-2 rounded-[8px] shrink-0 bg-transparent border-none ${job.status === 'warn' ? 'text-[#007AFF] active:bg-[#F0F6FF]' : 'text-[#00A699] active:bg-[#F0FAF9]'}`}>
-              
-                {job.buttonText}
-              </button>
             </div>
           )}
+        </div> :
+        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] px-4 py-3 text-[14px] text-[#717171]">
+          Nothing scheduled in the next few days.
         </div>
+        }
       </div>
 
       {/* Upcoming Holidays */}
@@ -238,14 +218,29 @@ export function DashboardPage() {
                   {c.property} · {c.checkIn} – {c.checkOut}
                 </div>
               </div>
-              <span className="text-[11px] font-semibold px-2 py-[3px] rounded-[6px] bg-[#FEF2F2] text-[#DC2626]">
-                Cancelled
-              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                <div className="text-right">
+                  <span className="text-[11px] font-semibold px-2 py-[3px] rounded-[6px] bg-[#FEF2F2] text-[#DC2626]">
+                    Cancelled
+                  </span>
+                  {c.cancelledDate &&
+                  <div className="text-[11px] text-[#B0B0B0] mt-1">{c.cancelledDate}</div>
+                  }
+                </div>
+                <button
+                onClick={() => dismissDashboardItem(c.key, 'forever')}
+                aria-label="Dismiss"
+                className="w-7 h-7 rounded-full flex items-center justify-center text-[#B0B0B0] hover:text-[#222222] hover:bg-[#F7F7F7] transition-colors">
+                  <X className="w-4 h-4" strokeWidth={2} />
+                </button>
+              </div>
             </div>
           )}
         </div>
       </div>
       }
+      </div>{/* end right column */}
+      </div>{/* end 2-column grid */}
     </div>);
 
 }

@@ -3,6 +3,7 @@ import { CalendarHeader } from './components/CalendarHeader';
 import { MonthCalendar } from './components/MonthCalendar';
 import { TimelineView } from './components/TimelineView';
 import { TabBar } from './components/TabBar';
+import { TopNav } from './components/TopNav';
 import { BookingDetailSheet } from './components/BookingDetailSheet';
 import { AppHeader } from './components/AppHeader';
 import { DashboardPage } from './components/DashboardPage';
@@ -14,7 +15,7 @@ import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
 import { SmoobuConnectionPage } from './components/SmoobuConnectionPage';
 import { properties, bookings, Booking, loadCalendarData } from './data/properties';
-import { loadDashboardData, setPropertyFilter, setOnDataChanged } from './data/dashboard';
+import { loadDashboardData, setPropertyFilter, setOnDataChanged, needsAttention } from './data/dashboard';
 import { loadAnalyticsData } from './data/analytics';
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -101,6 +102,9 @@ export function App() {
     }
   };
 
+  // Count of dashboard items needing attention (re-read each render; dashboardVersion drives re-renders)
+  const attentionCount = needsAttention.length;
+
   // Show loading spinner while checking auth or loading data
   if (!authChecked || (isLoggedIn && !dataLoaded)) {
     return (
@@ -115,6 +119,19 @@ export function App() {
   }
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-[#F7F7F7] font-sans text-[#222222] antialiased">
+      <TopNav
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        hasNotifications={attentionCount > 0}
+        propertyFilter={activeTab === 'home' ? {
+          properties: properties.map((p) => ({ id: p.id, name: p.name })),
+          selected: dashboardPropertyFilter,
+          onChange: (id) => { setDashboardPropertyFilter(id); setPropertyFilter(id); },
+        } : undefined}
+        onRefresh={async () => {
+          await fetch('/api/sync/bookings', { method: 'POST', credentials: 'same-origin' });
+          await loadData();
+        }} />
       {activeTab === 'calendar' ?
       <CalendarHeader
         mode={mode}
@@ -135,10 +152,12 @@ export function App() {
         onRefresh={async () => {
           await fetch('/api/sync/bookings', { method: 'POST', credentials: 'same-origin' });
           await loadData();
-        }} />
+        }}
+        hasNotifications={attentionCount > 0} />
       }
 
-      <main className="flex-1 overflow-y-auto overflow-x-hidden pb-[64px]">
+      <main className="flex-1 overflow-y-auto overflow-x-hidden pb-[64px] lg:pb-0">
+        <div className="mx-auto w-full max-w-[1280px]">
         {activeTab === 'home' && <DashboardPage key={dashboardVersion} />}
 
         {activeTab === 'calendar' && (
@@ -162,9 +181,10 @@ export function App() {
         {activeTab === 'users' && <UsersPage />}
         {activeTab === 'smoobu' && <SmoobuConnectionPage isAdmin={userRole === 'admin'} />}
         {activeTab === 'more' && <MorePage onNavigate={setActiveTab} onLogout={() => { setIsLoggedIn(false); setDataLoaded(false); }} />}
+        </div>
       </main>
 
-      <TabBar activeTab={activeTab} onTabChange={setActiveTab} />
+      <TabBar activeTab={activeTab} onTabChange={setActiveTab} homeBadge={attentionCount} />
 
       {activeTab === 'calendar' &&
       <BookingDetailSheet

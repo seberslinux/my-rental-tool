@@ -320,7 +320,11 @@ router.get('/export-csv', async (req, res) => {
       const platform = (b.platform || '').toLowerCase();
       let commRate = 0;
       let bankRate = 0;
-      if (platform.includes('airbnb')) { commRate = b.commission_airbnb || 18; bankRate = b.bank_charge_airbnb || 0; }
+      // Direct bookings have no commission/bank charge. Check 'direct' first: Smoobu
+      // names them "Direct booking", which contains the substring "booking".
+      const isDirect = platform.includes('direct');
+      if (isDirect) { /* no fees */ }
+      else if (platform.includes('airbnb')) { commRate = b.commission_airbnb || 18; bankRate = b.bank_charge_airbnb || 0; }
       else if (platform.includes('booking')) { commRate = b.commission_booking || 15; bankRate = b.bank_charge_booking || 2.1; }
       else if (platform.includes('vrbo')) { commRate = b.commission_vrbo || 8; bankRate = b.bank_charge_vrbo || 0; }
       rows[key].commission += Math.round(rev * commRate / 100);
@@ -328,7 +332,8 @@ router.get('/export-csv', async (req, res) => {
 
       // VAT on commissions + bank charges (per-platform, fallback to legacy vat_rate)
       let vatRate = 0;
-      if (platform.includes('airbnb')) vatRate = b.vat_airbnb || 0;
+      if (isDirect) { /* no fees, so no VAT on fees */ }
+      else if (platform.includes('airbnb')) vatRate = b.vat_airbnb || 0;
       else if (platform.includes('booking')) vatRate = b.vat_booking || 0;
       else if (platform.includes('vrbo')) vatRate = b.vat_vrbo || 0;
       if (vatRate === 0) vatRate = b.vat_rate || 0;
@@ -446,9 +451,15 @@ router.get('/data', async (req, res) => {
     const rev = b.converted_total_price || 0;
     const platform = (b.platform || '').toLowerCase();
     let commRate = 0, bankRate = 0, vatRate = 0;
-    if (platform.includes('airbnb')) { commRate = b.prop_commission_airbnb || 0; bankRate = b.bank_charge_airbnb || 0; vatRate = b.vat_airbnb || 0; }
+    // Direct bookings have no deductions. Check 'direct' first: Smoobu names them
+    // "Direct booking", which contains the substring "booking".
+    const isDirect = platform.includes('direct');
+    if (isDirect) { /* no deductions */ }
+    else if (platform.includes('airbnb')) { commRate = b.prop_commission_airbnb || 0; bankRate = b.bank_charge_airbnb || 0; vatRate = b.vat_airbnb || 0; }
     else if (platform.includes('booking')) { commRate = b.prop_commission_booking || 0; bankRate = b.bank_charge_booking || 0; vatRate = b.vat_booking || 0; }
     else if (platform.includes('vrbo')) { commRate = b.prop_commission_vrbo || 0; bankRate = b.bank_charge_vrbo || 0; vatRate = b.vat_vrbo || 0; }
+    // Direct bookings: no commission/bank/VAT at all.
+    if (isDirect) return 0;
     // Fall back to legacy vat_rate if per-platform not set
     if (vatRate === 0) vatRate = b.property_vat_rate || 0;
     // If no property-level commission configured, fall back to Smoobu commission
