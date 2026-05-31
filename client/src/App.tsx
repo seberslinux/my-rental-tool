@@ -15,7 +15,8 @@ import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
 import { SmoobuConnectionPage } from './components/SmoobuConnectionPage';
 import { properties, bookings, Booking, loadCalendarData } from './data/properties';
-import { loadDashboardData, setPropertyFilter, setOnDataChanged, needsAttention } from './data/dashboard';
+import { loadDashboardData, setPropertyFilter, setOnDataChanged, needsAttention, lastSyncedAt } from './data/dashboard';
+import { relativeTime } from './data/time';
 import { loadAnalyticsData } from './data/analytics';
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
@@ -30,6 +31,13 @@ export function App() {
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
   const [dashboardPropertyFilter, setDashboardPropertyFilter] = useState<number>(0);
   const [dashboardVersion, setDashboardVersion] = useState(0);
+
+  // Tick every 60s so the "Synced X ago" label stays fresh between data loads
+  const [, setClockTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setClockTick((t) => t + 1), 60000);
+    return () => clearInterval(id);
+  }, []);
 
   // Subscribe to dashboard data changes for re-renders
   useEffect(() => {
@@ -104,6 +112,7 @@ export function App() {
 
   // Count of dashboard items needing attention (re-read each render; dashboardVersion drives re-renders)
   const attentionCount = needsAttention.length;
+  const syncedLabel = lastSyncedAt ? `Synced ${relativeTime(lastSyncedAt)}` : 'Not synced yet';
 
   // Show loading spinner while checking auth or loading data
   if (!authChecked || (isLoggedIn && !dataLoaded)) {
@@ -123,6 +132,7 @@ export function App() {
         activeTab={activeTab}
         onTabChange={setActiveTab}
         hasNotifications={attentionCount > 0}
+        syncedLabel={syncedLabel}
         propertyFilter={activeTab === 'home' ? {
           properties: properties.map((p) => ({ id: p.id, name: p.name })),
           selected: dashboardPropertyFilter,
@@ -153,7 +163,8 @@ export function App() {
           await fetch('/api/sync/bookings', { method: 'POST', credentials: 'same-origin' });
           await loadData();
         }}
-        hasNotifications={attentionCount > 0} />
+        hasNotifications={attentionCount > 0}
+        syncedLabel={syncedLabel} />
       }
 
       <main className="flex-1 overflow-y-auto overflow-x-hidden pb-[64px] lg:pb-0">
