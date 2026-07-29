@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const router = express.Router();
 const { getAll, getOne, run } = require('../db/database');
@@ -8,8 +9,32 @@ const {
 } = require('../services/cleaner-assignment');
 const smoobu = require('../services/smoobu');
 
-// Smoobu webhook endpoint
-router.post('/', async (req, res) => {
+// Smoobu has no HMAC/signature support in its webhook config — the only
+// control we have is the URL itself. Require a long random secret as part
+// of the path (configure Smoobu's webhook URL as /webhook/<WEBHOOK_SECRET>)
+// so an attacker can't discover or guess it from the public repo.
+function timingSafeEqualStrings(a, b) {
+  const bufA = Buffer.from(String(a));
+  const bufB = Buffer.from(String(b));
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+function verifyWebhookSecret(req, res, next) {
+  const expected = process.env.WEBHOOK_SECRET;
+  if (!expected) {
+    console.error('WEBHOOK_SECRET is not set — rejecting all webhook requests');
+    return res.status(503).json({ error: 'Webhook not configured' });
+  }
+  const provided = req.params.secret || '';
+  if (!timingSafeEqualStrings(provided, expected)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
+// Smoobu webhook endpoint — mounted at /webhook, so this is /webhook/:secret
+router.post('/:secret', verifyWebhookSecret, async (req, res) => {
   const event = req.body;
   console.log('Webhook received:', JSON.stringify(event).substring(0, 200));
 
