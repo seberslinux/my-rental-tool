@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getAll, getOne, run, transaction } = require('../db/database');
 const { bulkConvert, bulkConvertExpenses, getDisplayCurrency } = require('../services/exchange-rates');
-const { scopeProperties, enforcePropertyScope } = require('../middleware/auth');
+const { scopeProperties, enforcePropertyScope, denyIfOutOfScope } = require('../middleware/auth');
 
 // Apply property scoping to all finance routes
 router.use(scopeProperties);
@@ -151,6 +151,7 @@ router.post('/expenses', async (req, res) => {
     if (!property_id || !category || amount == null || !expense_date) {
       return res.status(400).json({ error: 'property_id, category, amount, and expense_date are required' });
     }
+    if (denyIfOutOfScope(req, res, property_id)) return;
 
     // Verify the category exists
     const cat = await getOne('SELECT id FROM expense_categories WHERE name = $1', [category]);
@@ -174,6 +175,8 @@ router.put('/expenses/:id', async (req, res) => {
   try {
     const existing = await getOne('SELECT * FROM expenses WHERE id = $1', [req.params.id]);
     if (!existing) return res.status(404).json({ error: 'Expense not found' });
+    if (denyIfOutOfScope(req, res, existing.property_id)) return;
+    if (req.body.property_id !== undefined && denyIfOutOfScope(req, res, req.body.property_id)) return;
 
     const fields = ['property_id', 'category', 'amount', 'description', 'expense_date', 'receipt_path', 'recurring', 'recurring_frequency', 'currency'];
     const updates = [];
@@ -199,6 +202,10 @@ router.put('/expenses/:id', async (req, res) => {
 
 router.delete('/expenses/:id', async (req, res) => {
   try {
+    const existing = await getOne('SELECT property_id FROM expenses WHERE id = $1', [req.params.id]);
+    if (!existing) return res.status(404).json({ error: 'Expense not found' });
+    if (denyIfOutOfScope(req, res, existing.property_id)) return;
+
     await run('DELETE FROM expenses WHERE id = $1', [req.params.id]);
     res.json({ deleted: true });
   } catch (err) {

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getAll, getOne, run } = require('../db/database');
-const { scopeProperties, enforcePropertyScope } = require('../middleware/auth');
+const { scopeProperties, enforcePropertyScope, denyIfOutOfScope } = require('../middleware/auth');
 
 // Apply property scoping to all maintenance routes
 router.use(scopeProperties);
@@ -114,6 +114,7 @@ router.get('/:id', async (req, res) => {
     `, [req.params.id]);
 
     if (!issue) return res.status(404).json({ error: 'Issue not found' });
+    if (denyIfOutOfScope(req, res, issue.property_id)) return;
     res.json(issue);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -128,6 +129,7 @@ router.post('/', async (req, res) => {
     if (!property_id || !title) {
       return res.status(400).json({ error: 'property_id and title are required' });
     }
+    if (denyIfOutOfScope(req, res, property_id)) return;
 
     const reported_date = new Date().toISOString().split('T')[0];
 
@@ -163,6 +165,8 @@ router.put('/:id', async (req, res) => {
   try {
     const existing = await getOne('SELECT * FROM maintenance_issues WHERE id = $1', [req.params.id]);
     if (!existing) return res.status(404).json({ error: 'Issue not found' });
+    if (denyIfOutOfScope(req, res, existing.property_id)) return;
+    if (req.body.property_id !== undefined && denyIfOutOfScope(req, res, req.body.property_id)) return;
 
     const fields = ['property_id', 'title', 'description', 'category', 'status', 'priority', 'reported_date', 'resolved_date', 'cost', 'assigned_to'];
     const updates = [];
@@ -198,6 +202,7 @@ router.patch('/:id/resolve', async (req, res) => {
   try {
     const existing = await getOne('SELECT * FROM maintenance_issues WHERE id = $1', [req.params.id]);
     if (!existing) return res.status(404).json({ error: 'Issue not found' });
+    if (denyIfOutOfScope(req, res, existing.property_id)) return;
 
     const resolved_date = new Date().toISOString().split('T')[0];
     await run(`UPDATE maintenance_issues SET status = 'resolved', resolved_date = $1 WHERE id = $2`, [resolved_date, req.params.id]);
@@ -220,6 +225,7 @@ router.delete('/:id', async (req, res) => {
   try {
     const existing = await getOne('SELECT * FROM maintenance_issues WHERE id = $1', [req.params.id]);
     if (!existing) return res.status(404).json({ error: 'Issue not found' });
+    if (denyIfOutOfScope(req, res, existing.property_id)) return;
 
     await run('DELETE FROM maintenance_issues WHERE id = $1', [req.params.id]);
     res.json({ deleted: true });

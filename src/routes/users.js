@@ -16,7 +16,7 @@ router.get('/', async (req, res) => {
   // Attach property access for property_managers
   for (const user of users) {
     if (user.role === 'property_manager') {
-      const rows = await getAll('SELECT property_id FROM user_property_access WHERE user_id = $1', [user.id]);
+      const rows = await getAll('SELECT property_id FROM user_properties WHERE user_id = $1', [user.id]);
       user.property_ids = rows.map(r => r.property_id);
     } else {
       user.property_ids = [];
@@ -56,7 +56,11 @@ router.post('/', async (req, res) => {
   // Set property access for property_manager
   if (role === 'property_manager' && Array.isArray(property_ids)) {
     for (const pid of property_ids) {
-      await run('INSERT INTO user_property_access (user_id, property_id) VALUES ($1, $2)', [userId, pid]);
+      await run(
+        `INSERT INTO user_properties (user_id, property_id, role) VALUES ($1, $2, 'manager')
+         ON CONFLICT (user_id, property_id) DO UPDATE SET role = EXCLUDED.role`,
+        [userId, pid]
+      );
     }
   }
 
@@ -99,13 +103,17 @@ router.put('/:id', async (req, res) => {
   // Update property access
   const effectiveRole = role !== undefined ? role : user.role;
   if (effectiveRole === 'property_manager' && Array.isArray(property_ids)) {
-    await run('DELETE FROM user_property_access WHERE user_id = $1', [userId]);
+    await run('DELETE FROM user_properties WHERE user_id = $1', [userId]);
     for (const pid of property_ids) {
-      await run('INSERT INTO user_property_access (user_id, property_id) VALUES ($1, $2)', [userId, pid]);
+      await run(
+        `INSERT INTO user_properties (user_id, property_id, role) VALUES ($1, $2, 'manager')
+         ON CONFLICT (user_id, property_id) DO UPDATE SET role = EXCLUDED.role`,
+        [userId, pid]
+      );
     }
   } else if (effectiveRole !== 'property_manager') {
     // Clear property access if role changed away from property_manager
-    await run('DELETE FROM user_property_access WHERE user_id = $1', [userId]);
+    await run('DELETE FROM user_properties WHERE user_id = $1', [userId]);
   }
 
   res.json({ ok: true });

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { getAll, getOne, run, inParams } = require('../db/database');
-const { scopeProperties } = require('../middleware/auth');
+const { scopeProperties, denyIfOutOfScope } = require('../middleware/auth');
 
 // Apply property scoping to all routes
 router.use(scopeProperties);
@@ -171,6 +171,7 @@ router.get('/:id/summary', async (req, res) => {
 
 // Update property settings
 router.put('/:id', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
   const property = await getOne('SELECT * FROM properties WHERE id = $1', [req.params.id]);
   if (!property) return res.status(404).json({ error: 'Property not found' });
 

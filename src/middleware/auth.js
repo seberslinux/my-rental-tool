@@ -100,4 +100,28 @@ function enforcePropertyScope(req, requestedIds) {
   return requestedIds.filter(id => allowedSet.has(String(id)));
 }
 
-module.exports = { requireAuth, requireRole, scopeProperties, enforcePropertyScope };
+/**
+ * Check whether a single property id is within the requesting user's
+ * accessible scope. Call after scopeProperties has populated
+ * req.accessiblePropertyIds. Returns true for admins (null = full access).
+ */
+function isPropertyInScope(req, propertyId) {
+  if (req.accessiblePropertyIds === null) return true; // admin — full access
+  if (propertyId === undefined || propertyId === null) return false;
+  return req.accessiblePropertyIds.map(String).includes(String(propertyId));
+}
+
+/**
+ * Express helper: 403s the response if propertyId is not in the requester's
+ * scope. Returns true if it responded (caller should stop handling), false
+ * if the request is in scope and may proceed.
+ */
+function denyIfOutOfScope(req, res, propertyId) {
+  if (!isPropertyInScope(req, propertyId)) {
+    res.status(403).json({ error: 'Access denied to this property' });
+    return true;
+  }
+  return false;
+}
+
+module.exports = { requireAuth, requireRole, scopeProperties, enforcePropertyScope, isPropertyInScope, denyIfOutOfScope };

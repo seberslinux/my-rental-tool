@@ -4,7 +4,7 @@ const { getAll, getOne, run, transaction } = require('../db/database');
 const smoobu = require('../services/smoobu');
 const { detectCurrency } = require('../services/currency-detect');
 const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
-const { scopeProperties, enforcePropertyScope, requireRole } = require('../middleware/auth');
+const { scopeProperties, enforcePropertyScope, requireRole, denyIfOutOfScope } = require('../middleware/auth');
 const { getApiKeyForProperty, getApiKeyForUser } = require('../services/api-key-resolver');
 
 // Apply property scoping to all analytics routes
@@ -1068,11 +1068,16 @@ router.get('/data', async (req, res) => {
 
 // --- Reviews CRUD (manual entry since Smoobu has no reviews API) ---
 router.get('/reviews', async (req, res) => {
-  const reviews = await getAll(
-    `SELECT r.*, p.name as property_name FROM reviews r
-     JOIN properties p ON r.property_id = p.id
-     ORDER BY r.review_date DESC`
-  );
+  const propIds = scopedPropertyIds(req);
+  let sql = `SELECT r.*, p.name as property_name FROM reviews r JOIN properties p ON r.property_id = p.id`;
+  const params = [];
+  if (propIds) {
+    const placeholders = propIds.map((_, i) => `$${params.length + i + 1}`).join(',');
+    sql += ` WHERE r.property_id IN (${placeholders})`;
+    propIds.forEach(id => params.push(id));
+  }
+  sql += ' ORDER BY r.review_date DESC';
+  const reviews = await getAll(sql, params);
   res.json(reviews);
 });
 
@@ -1082,6 +1087,7 @@ router.post('/reviews', async (req, res) => {
   if (!property_id || !review_date) {
     return res.status(400).json({ error: 'property_id and review_date are required' });
   }
+  if (denyIfOutOfScope(req, res, property_id)) return;
 
   const sentiment = analyzeSentiment(comment);
 
@@ -1095,6 +1101,10 @@ router.post('/reviews', async (req, res) => {
 });
 
 router.delete('/reviews/:id', async (req, res) => {
+  const existing = await getOne('SELECT property_id FROM reviews WHERE id = $1', [req.params.id]);
+  if (!existing) return res.status(404).json({ error: 'Review not found' });
+  if (denyIfOutOfScope(req, res, existing.property_id)) return;
+
   await run('DELETE FROM reviews WHERE id = $1', [req.params.id]);
   res.json({ deleted: true });
 });
@@ -1336,6 +1346,7 @@ router.post('/competitors', async (req, res) => {
   if (!property_id || !name) {
     return res.status(400).json({ error: 'property_id and name are required' });
   }
+  if (denyIfOutOfScope(req, res, property_id)) return;
   const result = await run(
     `INSERT INTO competitors (property_id, name, platform, listing_url, listing_id, bedrooms, location, avg_nightly_rate, estimated_occupancy, review_score, last_updated)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW()) RETURNING id`,
@@ -1346,6 +1357,10 @@ router.post('/competitors', async (req, res) => {
 
 router.put('/competitors/:id', async (req, res) => {
   const { name, platform, listing_url, listing_id, bedrooms, location, avg_nightly_rate, estimated_occupancy, review_score, property_id } = req.body;
+  const existing = await getOne('SELECT property_id FROM competitors WHERE id = $1', [req.params.id]);
+  if (!existing) return res.status(404).json({ error: 'Competitor not found' });
+  if (denyIfOutOfScope(req, res, existing.property_id)) return;
+  if (property_id !== undefined && property_id !== null && denyIfOutOfScope(req, res, property_id)) return;
   await run(
     `UPDATE competitors SET name = $1, platform = $2, listing_url = $3, listing_id = $4, bedrooms = $5, location = $6, avg_nightly_rate = $7, estimated_occupancy = $8, review_score = $9, property_id = COALESCE($10, property_id), last_updated = NOW()
      WHERE id = $11`,
@@ -1355,6 +1370,10 @@ router.put('/competitors/:id', async (req, res) => {
 });
 
 router.delete('/competitors/:id', async (req, res) => {
+  const existing = await getOne('SELECT property_id FROM competitors WHERE id = $1', [req.params.id]);
+  if (!existing) return res.status(404).json({ error: 'Competitor not found' });
+  if (denyIfOutOfScope(req, res, existing.property_id)) return;
+
   await run('DELETE FROM competitors WHERE id = $1', [req.params.id]);
   res.json({ deleted: true });
 });
