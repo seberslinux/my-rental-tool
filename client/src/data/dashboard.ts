@@ -520,30 +520,19 @@ export async function loadDashboardData(): Promise<void> {
     cleaningJobs = jobItems;
 
     // --- Upcoming Holidays ---
-    // Two kinds, read differently. A South African public holiday affects
-    // cleaner availability and local weekend demand. A German school
-    // holiday is an inbound-demand window — and it is a range, often
-    // weeks long, so it gets a date span rather than a single day.
+    // A South African public holiday affects cleaner availability and
+    // local demand. A Hamburg or Bavarian school break is an inbound-demand
+    // window, and a range rather than a day, so it carries a span.
     upcomingHolidays = (stats.holidays || []).slice(0, 8).map((h: any, i: number) => {
       const isRange = h.end && h.end !== h.start;
       const when = isRange ? `${fmtDate(h.start)}–${fmtDate(h.end)}` : fmtDate(h.start);
-
-      let note: string;
-      if (h.kind === 'school') {
-        // German school holidays are staggered across the states on
-        // purpose, so the span is a rolling window rather than one national
-        // shutdown. Saying so stops the long range reading as an error.
-        note = h.regions > 1
-          ? `school holidays · staggered across ${h.regions} states`
-          : 'school holidays';
-      } else {
-        note = h.is_local ? 'local public holiday' : 'public holiday';
-      }
-
+      const note = h.kind === 'school'
+        ? 'school holidays'
+        : (h.is_local ? 'local public holiday' : 'public holiday');
       return {
         id: i + 1,
         title: h.name,
-        subtitle: `${when} · ${h.country_name} · ${note}`,
+        subtitle: `${when} · ${h.label} · ${note}`,
         date: h.start,
       };
     });
