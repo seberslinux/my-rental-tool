@@ -267,3 +267,83 @@ consecutive check-out → check-in of `minNights..maxNights` (default 1–3).
 - Cancelled and blocked bookings are ignored when computing the sequence
   — so a blocked calendar entry in the middle doesn't hide a real gap.
 - Custom `minNights` / `maxNights` respected.
+
+---
+
+## `analytics-calc.aggregateRevenueByProperty.test.js` — revenue grouped by property
+
+`aggregateRevenueByProperty(bookings) → rows[]`. Sums revenue / bookings /
+nights per property and attaches the most-common platform per property.
+
+- Single booking → one property row with correct totals + `top_platform`.
+- Multiple bookings on the same property accumulate (revenue, bookings, nights).
+- **Regression guard**: properties are keyed by `property_id`, not
+  `property_name` — two properties sharing a name do not collapse.
+- Empty input → empty array.
+- Missing `converted_total_price` → 0. Missing `length_of_stay` → 1.
+- `top_platform` is the most-common canonical platform per property.
+- `top_platform` uses `normalizePlatform`, so `HomeAway` + `vrbo` count as
+  one platform.
+
+---
+
+## `analytics-calc.aggregateRevenueByPlatform.test.js` — revenue grouped by channel
+
+`aggregateRevenueByPlatform(bookings) → rows[]`. Sums per canonical platform
+(after `normalizePlatform`) and computes `adr = round(revenue / nights)`.
+
+- Single booking → one channel row with correct ADR.
+- Same channel accumulates.
+- **Canonicalization**: `Airbnb` / `AIRBNB` / `Airbnb 2` collapse to one row,
+  `Booking.com` / `booking` collapse, `HomeAway` / `vrbo` collapse.
+- Null / empty platform / `Direct booking` all bucket into `Direct`.
+- ADR handles zero-nights input without producing NaN / Infinity.
+- ADR rounds to nearest integer (`1000 / 3 = 333`).
+- Empty input → empty array.
+
+---
+
+## `analytics-calc.aggregateAdrByMonth.test.js` — ADR per month
+
+`aggregateAdrByMonth(bookings) → [{ month, adr }]`. Weighted ADR per month.
+
+- Single booking → one month row, `adr = revenue / nights`.
+- **Weighted average, not simple average**: for two bookings in the same
+  month with different nightly rates, ADR = `Σ revenue / Σ nights`
+  (e.g. 6000/3 + 1000/2 → ADR 1400, not (2000+500)/2 = 1250). Pinning this
+  guards against a future "average of ADRs" refactor.
+- Different months produce separate rows.
+- Output sorted ascending by month.
+- Straddling bookings attributed to the check-in month.
+- ADR rounds to nearest integer.
+- Empty input → empty array.
+
+---
+
+## `analytics-calc.reconciliation.test.js` — cross-facet invariants
+
+The core accuracy tests. Users see the same revenue sliced by month, by
+property, and by channel on the same dashboard. All three totals must be
+identical. These tests build one realistic fixture (2 properties × 3
+platforms × 6 months, hand-summing to R42 000) and assert:
+
+**Invariants asserted on the fixture:**
+- `portfolioTotalRevenue` matches the hand-computed R42 000.
+- `sum(revenue by month) === portfolio total`
+- `sum(revenue by property) === portfolio total`
+- `sum(revenue by platform) === portfolio total`
+- **All facets transitively equal** — any drift between any pair fails a
+  named assertion.
+- **Booking count is identical across facets** — a dropped or double-counted
+  booking surfaces here as a count mismatch even if amounts happen to
+  cancel out.
+- **Nights count is identical across facets** — same reasoning for nights.
+- **Per-facet expected values** are hand-pinned so a wrong aggregation that
+  happens to sum to the right portfolio total (unlikely but possible) still
+  fails. Every property, every platform, every month has its individual
+  total asserted.
+- **ADR consistency**: for each month, `ADR = round(monthly revenue /
+  monthly nights)`.
+
+Any regression that adds, drops, mis-attributes, or double-counts a booking
+in **any** aggregator fails at least one of these tests.
