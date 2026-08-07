@@ -167,3 +167,103 @@ rows between the first and last observed month.
   suite instead.
 - Very long gap-fill ranges (multi-year).
 - Timezone-sensitive `todayStr` — treated as an opaque `YYYY-MM-DD` string.
+
+---
+
+## `dashboard-calc.dateUtils.test.js` — date arithmetic primitives
+
+Tests `addDays(dateStr, n)` and `daysBetween(fromStr, toStr)`. Every
+"today" derivation, occupancy calc, and gap detection depends on these
+two — an off-by-one here silently drifts every number on the dashboard.
+Both use UTC-only arithmetic to sidestep timezone drift.
+
+`addDays`: 0, ±1, month boundary, year boundary, leap-day forward,
+non-leap February, +30-day occupancy window.
+
+`daysBetween`: same-day → 0, consecutive → 1, typical 3-night stay,
+crossing month/year, leap February, negative on reversed inputs.
+
+**Regression guard:** the leap-February and month-boundary cases catch
+any regression to a naive `new Date(str)` that would locally-timezone-shift
+the input.
+
+---
+
+## `dashboard-calc.today.test.js` — "who is where right now?" classifiers
+
+Tests the classifiers that produce the home dashboard:
+`isCancelled`, `isBlocked`, `occupiesOn`, `arrivesOn`, `departsOn`,
+`inHouseOn`, `arrivalsOn`, `departuresOn`, `upcomingArrivals`,
+`upcomingDepartures`, `nextArrivalByProperty`, `activeBlockOn`.
+
+Booking convention pinned: **`[check_in, check_out)`** is the half-open
+occupancy window. Guest is in on `check_in` day, gone on `check_out` day.
+The property is available for a new arrival on the check-out date.
+
+**Predicates:**
+- `isCancelled` / `isBlocked`: only status `'cancelled'` counts as cancelled;
+  `isBlocked` is a case-insensitive substring match on `platform`.
+- `occupiesOn`: check-in day = in, check-out day = out (half-open window).
+- `arrivesOn` / `departsOn`: exact-date equality.
+
+**`inHouseOn`:**
+- Window semantics: mid-stay and check-in day are in-house, check-out day is
+  not.
+- Excludes cancelled and blocked bookings.
+
+**`arrivalsOn` / `departuresOn`:**
+- Return only bookings whose check-in/check-out equals today.
+- Exclude cancelled and blocked.
+- **Same-day turnover invariant:** guest A departing on 2025-06-10 and
+  guest B arriving on 2025-06-10 both surface; `inHouseOn` reports guest B
+  (the incoming stay's window covers the night).
+
+**`upcomingArrivals` / `upcomingDepartures`:**
+- Rolling `days`-day window starting at `todayStr` (inclusive of today).
+- Results sorted ascending by check_in / check_out.
+- Bookings just outside the window (day `+days`) are excluded.
+
+**`nextArrivalByProperty`:**
+- Returns a `Map(property_id → booking)` — first arrival **strictly after**
+  today per property.
+- Same-day arrivals go to `arrivalsOn`, not here.
+- Properties with no future arrival are omitted (not present as `null`).
+- Excludes cancelled and blocked.
+
+**`activeBlockOn`:**
+- Returns the block covering today, or `null`.
+- On the block's own check-out day, no block is active (half-open window).
+
+---
+
+## `dashboard-calc.occupancyAndGaps.test.js` — occupancy % and gap detection
+
+### `occupancyByProperty(bookings, propertyIds, todayStr, days)`
+
+Booked nights per property in the window `[todayStr, todayStr + days)`. Rate
+is `bookedNights / days × 100`, rounded.
+
+- Fully-inside booking counts every night.
+- Booking straddling the window **start** is clipped to `todayStr`.
+- Booking straddling the window **end** is clipped to `todayStr + days`
+  (exclusive).
+- Bookings entirely before or after the window contribute 0.
+- Multiple bookings on the same property accumulate.
+- Independent counts across properties.
+- Property with no bookings → 0%.
+- Cancelled and blocked bookings do not count.
+- Fully booked → 100%.
+
+### `detectGaps(bookings, todayStr, { minNights, maxNights })`
+
+For each property, walks the sorted booking list and reports gaps between
+consecutive check-out → check-in of `minNights..maxNights` (default 1–3).
+
+- 2-night gap → reported.
+- Back-to-back (same-day turnover) = 0 nights → not reported.
+- 4-night gap exceeds default max → not reported.
+- Gaps ending **before** `todayStr` are excluded (no reminder needed).
+- Gaps are per-property; no cross-property "gaps".
+- Cancelled and blocked bookings are ignored when computing the sequence
+  — so a blocked calendar entry in the middle doesn't hide a real gap.
+- Custom `minNights` / `maxNights` respected.
