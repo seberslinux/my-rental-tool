@@ -119,9 +119,59 @@ async function loginAs(agent, user) {
   return res;
 }
 
+async function seedCleaner(overrides = {}) {
+  const row = {
+    name: overrides.name || uniq('Cleaner'),
+    phone: overrides.phone || `+2710${String(Date.now()).slice(-7)}${++counter}`,
+    email: overrides.email || `${uniq('cleaner')}@test.local`,
+    ...overrides,
+  };
+  const { rows } = await pool.query(
+    `INSERT INTO cleaners (name, phone, email) VALUES ($1, $2, $3) RETURNING *`,
+    [row.name, row.phone, row.email]
+  );
+  return rows[0];
+}
+
+async function linkCleanerToProperty(cleaner, property) {
+  await pool.query(
+    `INSERT INTO cleaner_properties (cleaner_id, property_id) VALUES ($1, $2)
+     ON CONFLICT DO NOTHING`,
+    [cleaner.id, property.id]
+  );
+}
+
+/**
+ * Set a cleaner's weekly availability for one weekday.
+ * dayOfWeek: 0 (Sunday) .. 6 (Saturday). Times as 'HH:MM'.
+ */
+async function seedAvailability(cleaner, dayOfWeek, startTime, endTime) {
+  await pool.query(
+    `INSERT INTO cleaner_availability (cleaner_id, day_of_week, start_time, end_time)
+     VALUES ($1, $2, $3, $4)`,
+    [cleaner.id, dayOfWeek, startTime, endTime]
+  );
+}
+
+/**
+ * Set a one-off override (available or unavailable) for a specific date.
+ * `available` may be boolean or 0/1; column is stored as integer.
+ */
+async function seedAvailabilityOverride(cleaner, date, available) {
+  await pool.query(
+    `INSERT INTO cleaner_availability_overrides (cleaner_id, date, available)
+     VALUES ($1, $2, $3)`,
+    [cleaner.id, date, available ? 1 : 0]
+  );
+}
+
 module.exports = {
   seedUser,
   seedProperty,
   seedBooking,
+  seedCleaner,
+  linkCleanerToProperty,
+  seedAvailability,
+  seedAvailabilityOverride,
   loginAs,
 };
