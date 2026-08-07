@@ -21,6 +21,29 @@ const { getUpcomingHolidays } = require('../services/holidays-store');
 const { getUpcomingSchoolHolidays } = require('../services/school-holidays');
 // One mapper for every Smoobu write path — see its header for why.
 const { mapSmoobuBooking } = require('../services/smoobu-mapper');
+const { syncRates } = require('../services/rate-sync');
+// Net is computed in exactly one place — calcDeductions — which revenue.js
+// and the analytics page also call. The calendar joins that path rather
+// than growing its own, so a booking cannot be worth one number here and
+// another in a report.
+const { calcDeductions } = require('../services/analytics-calc');
+
+/**
+ * calcDeductions' input contract, as SQL.
+ *
+ * It reads per-property, per-platform commission, bank-charge and VAT
+ * rates off the booking row, so every query feeding it must join the same
+ * columns. Spelling them out per query meant a new fee column reached some
+ * callers and not others — the deductions would then silently differ
+ * between two screens showing the same booking.
+ */
+const FEE_COLUMNS = `
+  p.vat_rate                 AS property_vat_rate,
+  p.commission_airbnb        AS prop_commission_airbnb,
+  p.commission_booking       AS prop_commission_booking,
+  p.commission_vrbo          AS prop_commission_vrbo,
+  p.bank_charge_airbnb, p.bank_charge_booking, p.bank_charge_vrbo,
+  p.vat_airbnb, p.vat_booking, p.vat_vrbo`;
 
 // Sync properties — uses the requesting user's API key (or env var fallback)
 router.post('/sync/properties', requireRole('admin'), async (req, res) => {
@@ -178,6 +201,13 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
     const { runAssignmentForAllCheckouts } = require('../services/cleaner-assignment');
     await runAssignmentForAllCheckouts();
 
+    // Rates come down in the same pass. They were previously synced only by
+    // an endpoint nothing called, so daily_rates sat empty and the calendar
+    // fell back to inventing prices from base_price. Failures here are
+    // reported, not thrown: the bookings are already committed and are the
+    // more important half.
+    const rates = await syncRates({ apiKeyForProperty: () => apiKey });
+
     // Record when this sync completed so the UI can show "Synced X ago"
     await run(
       `INSERT INTO app_settings (key, value, updated_at) VALUES ('last_synced_at', NOW()::text, NOW())
@@ -185,7 +215,11 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
       []
     );
 
-    res.json({ synced: allBookings.length });
+    res.json({
+      synced: allBookings.length,
+      rates_synced: rates.synced,
+      rate_failures: rates.failures,
+    });
   } catch (err) {
     console.error('Booking sync failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -193,11 +227,16 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
 });
 
 // Get all bookings from local DB
+// The fee columns ride along so net payout can be computed here rather than
+// in the client. The calendar was showing gross under the label "Total
+// Payout" — R6,025 on a booking that actually pays out R4,951.
+const BOOKING_FEE_COLUMNS = `p.name as property_name, ${FEE_COLUMNS}`;
+
 router.get('/bookings', scopeProperties, async (req, res) => {
   let bookings;
   if (req.accessiblePropertyIds === null) {
     bookings = await getAll(
-      `SELECT b.*, p.name as property_name FROM bookings b
+      `SELECT b.*, ${BOOKING_FEE_COLUMNS} FROM bookings b
        JOIN properties p ON b.property_id = p.id ORDER BY b.check_in ASC`
     );
   } else {
@@ -205,7 +244,7 @@ router.get('/bookings', scopeProperties, async (req, res) => {
     if (ids.length === 0) return res.json({ bookings: [], display_currency: await getDisplayCurrency() });
     const ph = inParams(ids, 1);
     bookings = await getAll(
-      `SELECT b.*, p.name as property_name FROM bookings b
+      `SELECT b.*, ${BOOKING_FEE_COLUMNS} FROM bookings b
        JOIN properties p ON b.property_id = p.id
        WHERE b.property_id IN (${ph}) ORDER BY b.check_in ASC`,
       ids
@@ -213,7 +252,47 @@ router.get('/bookings', scopeProperties, async (req, res) => {
   }
   const displayCurrency = await getDisplayCurrency();
   await bulkConvert(bookings, displayCurrency);
+
+  // calcDeductions reads converted_* fields, so this must follow bulkConvert.
+  for (const b of bookings) {
+    const gross = b.converted_total_price || 0;
+    const deductions = calcDeductions(b);
+    b.deductions = Math.round(deductions * 100) / 100;
+    b.net_payout = Math.round((gross - deductions) * 100) / 100;
+  }
+
   res.json({ bookings, display_currency: displayCurrency });
+});
+
+/**
+ * Nightly rates for the calendar's open days.
+ *
+ * Only days Smoobu has actually published are returned; the calendar draws
+ * nothing where a day is missing. `available: 0` is Smoobu's own block flag,
+ * which is not the same thing as a "Blocked channel" booking — a day can be
+ * closed to arrivals without a block booking existing.
+ */
+router.get('/calendar/rates', scopeProperties, async (req, res) => {
+  const from = req.query.from || new Date().toISOString().split('T')[0];
+  const to = req.query.to || addDays(from, 180);
+
+  const params = [from, to];
+  let scope = '';
+  if (req.accessiblePropertyIds !== null) {
+    const ids = req.accessiblePropertyIds;
+    if (ids.length === 0) return res.json({ rates: [] });
+    scope = ` AND property_id IN (${inParams(ids, 3)})`;
+    params.push(...ids);
+  }
+
+  const rates = await getAll(
+    `SELECT property_id, date, price, min_stay, available
+       FROM daily_rates
+      WHERE date >= $1 AND date <= $2${scope}
+      ORDER BY property_id, date`,
+    params
+  );
+  res.json({ rates });
 });
 
 // Get dashboard stats
@@ -414,12 +493,7 @@ router.get('/dashboard/kpis', scopeProperties, async (req, res) => {
       bookings = await getAll(
         `SELECT b.check_in, b.check_out, b.total_price, b.price_per_night, b.currency,
                 b.platform, b.status, b.property_id, b.commission,
-                p.vat_rate                 AS property_vat_rate,
-                p.commission_airbnb        AS prop_commission_airbnb,
-                p.commission_booking       AS prop_commission_booking,
-                p.commission_vrbo          AS prop_commission_vrbo,
-                p.bank_charge_airbnb, p.bank_charge_booking, p.bank_charge_vrbo,
-                p.vat_airbnb, p.vat_booking, p.vat_vrbo
+                ${FEE_COLUMNS}
            FROM bookings b
            JOIN properties p ON b.property_id = p.id
           WHERE b.status = 'confirmed'

@@ -1,3 +1,4 @@
+import { fmtMoney, fmtParty } from './format';
 import { properties as allProperties } from './properties';
 import { filterDismissed, dismiss } from './dismissed';
 
@@ -87,21 +88,7 @@ function fmtDate(dateStr: string): string {
 // matters least to whoever is making up the beds. Children are called out
 // separately because they change what the property needs (cot, high chair),
 // not just how many towels.
-function fmtParty(b: any): string {
-  const adults = b.num_guests ?? null;
-  const kids = b.children || 0;
-  if (adults === null) return '? guests';
-  const total = adults + kids;
-  const base = `${total} ${total === 1 ? 'guest' : 'guests'}`;
-  return kids > 0 ? `${base} · ${kids} ${kids === 1 ? 'child' : 'children'}` : base;
-}
-
-function fmtMoney(amount: number): string {
-  if (!amount) return 'R 0';
-  if (amount >= 1000000) return `R ${(amount / 1000000).toFixed(1)}M`;
-  if (amount >= 1000) return `R ${(amount / 1000).toFixed(1)}K`;
-  return `R ${amount}`;
-}
+// fmtParty / fmtMoney now live in data/format.ts — see its header.
 
 function platformLabel(p: string): string {
   const pl = (p || '').toLowerCase();

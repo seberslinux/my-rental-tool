@@ -2,7 +2,6 @@ import React, { useMemo, useState } from 'react';
 import {
   Booking,
   TODAY,
-  HOLIDAY,
   CLEANER_TOGGLE,
   cleaners,
   getRate,
@@ -100,8 +99,15 @@ export function MonthCalendar({
         };
         let currentSegment: Seg | null = null;
         cells.forEach((cell, idx) => {
+          // Inclusive of the check-out day. The nights sold run
+          // [checkIn, checkOut), but the *bar* has to reach into the
+          // check-out morning: the guest is still there until 10:00, and
+          // the half-cell it draws there is what shows the next arrival
+          // can take that same night. Trimming half a cell at each end
+          // (below) turns this inclusive span into check-in-afternoon
+          // through check-out-morning.
           const isInBooking =
-          cell.date >= booking.checkIn && cell.date < booking.checkOut;
+          cell.date >= booking.checkIn && cell.date <= booking.checkOut;
           const rowIdx = Math.floor(idx / 7);
           const colIdx = idx % 7;
           if (isInBooking) {
@@ -189,9 +195,7 @@ export function MonthCalendar({
               {month.cells.map((cell, idx) => {
               const isPast = cell.date < TODAY;
               const isToday = dateEqual(cell.date, TODAY);
-              const isHoliday = dateEqual(cell.date, HOLIDAY);
-              const isWeekend =
-              cell.date.getDay() === 0 || cell.date.getDay() === 6;
+              const rate = getRate(propertyId, cell.date);
               const hasCleaner =
               CLEANER_TOGGLE &&
               !cell.isOtherMonth &&
@@ -212,18 +216,19 @@ export function MonthCalendar({
                     <div
                     className={`w-[26px] h-[26px] rounded-full flex items-center justify-center text-[13px] font-normal relative z-10
                         ${isToday ? 'bg-[#FF385C] text-white font-medium' : 'text-[#222222]'}
-                        ${isHoliday && !isToday ? 'shadow-[inset_0_0_0_1.5px_#222222]' : ''}
                       `}>
                     
                       {cell.date.getDate()}
                     </div>
 
-                    {/* Rate */}
-                    {!cell.isOtherMonth && !isCovered &&
+                    {/* Nightly rate, straight from Smoobu. Blank where no
+                        rate is synced — the calendar no longer guesses. */}
+                    {!cell.isOtherMonth && !isCovered && rate &&
                   <div
-                    className={`mt-0.5 text-[10px] ${isWeekend ? 'text-[#00A699]' : 'text-[#717171]'}`}>
-                    
-                        {formatRate(getRate(propertyId, cell.date))}
+                    className={`mt-0.5 text-[10px] tabular-nums ${
+                      rate.available ? 'text-[#717171]' : 'text-[#C13515]'
+                    }`}>
+                        {rate.available ? formatRate(rate.price) : 'Closed'}
                       </div>
                   }
 
@@ -243,13 +248,21 @@ export function MonthCalendar({
               const cellWidthPct = 100 / 7;
               let leftPct = seg.startCol * cellWidthPct;
               let widthPct = (seg.endCol - seg.startCol + 1) * cellWidthPct;
+              // Half a cell off each end: the bar starts mid-check-in-day
+              // and ends mid-check-out-day, so a departure and an arrival
+              // on the same date visibly share it. The end used to be
+              // trimmed by 0.25 of the *last night's* cell, which stopped
+              // the bar three-quarters of the way through the final night
+              // and never reached the check-out day at all.
               if (seg.isFirst) {
                 leftPct += cellWidthPct * 0.5;
                 widthPct -= cellWidthPct * 0.5;
               }
               if (seg.isLast) {
-                widthPct -= cellWidthPct * 0.25;
+                widthPct -= cellWidthPct * 0.5;
               }
+              // A same-day check-in/check-out would otherwise be invisible.
+              widthPct = Math.max(widthPct, cellWidthPct * 0.25);
               // Top offset: row index * 88px (cell height) + 38px (vertical offset)
               const topPx = seg.rowIdx * 88 + 38;
               // Border radius logic
