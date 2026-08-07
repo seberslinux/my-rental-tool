@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   Booking,
   TODAY,
@@ -11,6 +11,7 @@ import {
   dateEqual } from
 '../data/properties';
 import { BookingBar } from './BookingBar';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 interface MonthCalendarProps {
   propertyId: number;
   bookings: Booking[];
@@ -21,30 +22,44 @@ export function MonthCalendar({
   bookings,
   onBookingClick
 }: MonthCalendarProps) {
+  // The months shown were hardcoded to March–May 2026, so the calendar
+  // never moved: by August every day it drew was in the past, and the
+  // past-dimming styling greyed out the entire grid. Anchor on the current
+  // month instead, and let the arrows page through.
+  const [anchor, setAnchor] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+
+  const shiftAnchor = (months: number) =>
+    setAnchor((a) => new Date(a.getFullYear(), a.getMonth() + months, 1));
+
+  const goToToday = () => {
+    const now = new Date();
+    setAnchor(new Date(now.getFullYear(), now.getMonth(), 1));
+  };
+
+  const isOnCurrentMonth = useMemo(() => {
+    const now = new Date();
+    return anchor.getFullYear() === now.getFullYear() && anchor.getMonth() === now.getMonth();
+  }, [anchor]);
+
   const monthsData = useMemo(() => {
-    return [
-    {
-      year: 2026,
-      month: 3,
-      name: 'March'
-    },
-    {
-      year: 2026,
-      month: 4,
-      name: 'April'
-    },
-    {
-      year: 2026,
-      month: 5,
-      name: 'May'
-    }].
+    return [0, 1, 2].
+    map((offset) => {
+      const first = new Date(anchor.getFullYear(), anchor.getMonth() + offset, 1);
+      const year = first.getFullYear();
+      const month = first.getMonth() + 1; // the maths below is 1-indexed
+      const name = first.toLocaleDateString('en-ZA', { month: 'long' });
+      return { year, month, name };
+    }).
     map(({ year, month, name }) => {
       const daysInMonth = new Date(year, month, 0).getDate();
       const firstDay = new Date(year, month - 1, 1).getDay();
       const prevMonth = month === 1 ? 12 : month - 1;
       const prevYear = month === 1 ? year - 1 : year;
       const daysInPrevMonth = new Date(prevYear, prevMonth, 0).getDate();
-      const cells = [];
+      const cells: { date: Date; isOtherMonth: boolean }[] = [];
       // Prev month cells
       for (let i = firstDay - 1; i >= 0; i--) {
         cells.push({
@@ -79,7 +94,11 @@ export function MonthCalendar({
         isLast: boolean;
       }[] = [];
       bookings.forEach((booking) => {
-        let currentSegment = null;
+        type Seg = {
+          booking: Booking; rowIdx: number; startCol: number;
+          endCol: number; isFirst: boolean; isLast: boolean;
+        };
+        let currentSegment: Seg | null = null;
         cells.forEach((cell, idx) => {
           const isInBooking =
           cell.date >= booking.checkIn && cell.date < booking.checkOut;
@@ -105,9 +124,12 @@ export function MonthCalendar({
             currentSegment = null;
           }
         });
-        if (currentSegment) {
-          currentSegment.isLast = true;
-          segments.push(currentSegment);
+        // TypeScript can't follow the assignments made inside the forEach
+        // callback above, so it narrows this to null. Re-widen at the read.
+        const trailing = currentSegment as Seg | null;
+        if (trailing) {
+          trailing.isLast = true;
+          segments.push(trailing);
         }
       });
       return {
@@ -117,9 +139,44 @@ export function MonthCalendar({
         segments
       };
     });
-  }, [bookings]);
+  }, [bookings, anchor]);
   return (
     <div className="pb-10 bg-white">
+      {/* Paging. Sticky so it stays reachable while scrolling three months
+          of grid on a phone. */}
+      <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-[#F0F0F0]">
+      <div className="flex items-center justify-between px-4 py-2.5">
+        <button
+          onClick={() => shiftAnchor(-1)}
+          aria-label="Previous month"
+          className="w-9 h-9 rounded-full flex items-center justify-center text-[#222222] hover:bg-[#F7F7F7] active:bg-[#F0F0F0] transition-colors">
+          <ChevronLeft className="w-5 h-5" strokeWidth={2} />
+        </button>
+
+        <button
+          onClick={goToToday}
+          disabled={isOnCurrentMonth}
+          className={`text-[13px] font-medium px-3 py-1.5 rounded-full transition-colors ${
+            isOnCurrentMonth
+              ? 'text-[#B0B0B0] cursor-default'
+              : 'text-[#FF385C] hover:bg-[#FFF0F3]'
+          }`}>
+          Today
+        </button>
+
+        <button
+          onClick={() => shiftAnchor(1)}
+          aria-label="Next month"
+          className="w-9 h-9 rounded-full flex items-center justify-center text-[#222222] hover:bg-[#F7F7F7] active:bg-[#F0F0F0] transition-colors">
+          <ChevronRight className="w-5 h-5" strokeWidth={2} />
+        </button>
+      </div>
+
+        <div className="grid grid-cols-7 pb-2 text-[11px] font-medium text-[#B0B0B0] text-center uppercase tracking-[0.5px]">
+          <div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div>
+        </div>
+      </div>
+
       {monthsData.map((month, mIdx) =>
       <div key={mIdx} className="pb-8">
           <div className="text-[20px] font-semibold text-[#222222] pt-6 pl-6 pb-4">
