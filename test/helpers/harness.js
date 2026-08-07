@@ -26,11 +26,22 @@ process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'test-secret-not-for-
 // Silence Passport when no Google OAuth env vars are present.
 process.env.GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || 'test-client-id';
 process.env.GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || 'test-client-secret';
+// Fixed webhook secret for tests so the value is known to every test file.
+process.env.WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || 'test-webhook-secret';
+// Provide a fake Smoobu key so getApiKeyForUser's env-var fallback succeeds.
+// The Smoobu HTTP client itself is stubbed via test/helpers/mock-smoobu.js,
+// so this value is never actually used to hit smoobu.com.
+process.env.SMOOBU_API_KEY = process.env.SMOOBU_API_KEY || 'test-smoobu-key';
 
 const request = require('supertest');
 const { pool } = require('../../src/db/database');
 const { runMigrations } = require('../../src/db/migrations');
 const { buildApp } = require('../../src/app');
+
+// Auto-install Smoobu stubs the moment the harness is imported, so no
+// integration test can accidentally hit smoobu.com. Individual tests can
+// still customise return values via `mockSmoobu.setBookings(...)` etc.
+require('./mock-smoobu');
 
 let cachedApp = null;
 
@@ -71,4 +82,5 @@ module.exports = {
   resetDb,
   closePool,
   TEST_DATABASE_URL,
+  WEBHOOK_SECRET: process.env.WEBHOOK_SECRET,
 };

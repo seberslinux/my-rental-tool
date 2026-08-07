@@ -79,6 +79,84 @@ almost always in the harness itself, not the code under test.
 
 ---
 
+## `test/helpers/mock-smoobu.js` — hermetic Smoobu client
+
+Auto-installed by the harness so **no integration test hits smoobu.com**.
+Replaces every function on `require('../../src/services/smoobu')` with a
+stub. Individual tests customise return values:
+
+```js
+const mockSmoobu = require('../helpers/mock-smoobu');
+test.beforeEach(() => mockSmoobu.reset());
+mockSmoobu.setBookings([[/* page 1 */], [/* page 2 */]]);
+mockSmoobu.makeFail(new Error('503 upstream'), 'getBookings');
+```
+
+`setBookings(pages)` accepts a single page (flat array) or multi-page
+pagination (array of arrays). `makeFail(error, name?)` throws on the next
+call to `name` (or any call if omitted).
+
+---
+
+## `test/integration/webhook.test.js` — POST /webhook/:secret state machine
+
+Smoobu doesn't sign webhook payloads — the only gate is the random secret
+in the URL. These tests exercise that gate plus the upsert/cancel state
+machine.
+
+| # | test | what it guards |
+|---|---|---|
+| 1 | wrong secret → 401, no DB write | Someone brute-forcing the URL can't inject bookings. |
+| 2 | empty `/webhook/` path → 404 | Missing secret doesn't match the `:secret` route. |
+| 3 | newReservation for a known property inserts a booking | The happy path — booking lands on the correct property. |
+| 4 | newReservation for an unknown apartment → 200 "unknown property", no write | Smoobu isn't retried; no phantom rows. |
+| 5 | **Idempotent**: same payload replayed 3× → still one row | `ON CONFLICT (smoobu_id)` upserts, doesn't duplicate. |
+| 6 | modifyReservation updates the row in place | Guest rename, date change, price change, party size — all applied without duplication. |
+| 7 | cancelReservation flips `status = 'cancelled'` — **row NOT deleted** | Analytics depend on cancelled-booking history. |
+| 8 | cancelReservation for a nonexistent booking → 200, no crash | Late webhook after DB reset stays quiet. |
+| 9 | webhook write for apartment B doesn't touch apartment A's rows | Cross-property isolation at the DB layer. |
+
+---
+
+## `test/integration/sync-bookings.test.js` — POST /api/sync/bookings
+
+Pulls from Smoobu (mocked) and mirrors into local DB. The route deletes
+bookings inside its sync window (30 days back → 180 forward) and re-inserts
+what Smoobu returned, so it's idempotent by construction and transactional
+end-to-end.
+
+### Authorisation
+
+| # | test | what it guards |
+|---|---|---|
+| 1 | unauth → 401 | Auth wall covers `/api/sync/bookings`. |
+| 2 | non-admin → 403 | `requireRole('admin')` gates the endpoint. |
+
+### Happy path
+
+| # | test | what it guards |
+|---|---|---|
+| 3 | Each Smoobu booking inserted as a local row (correct property, price) | End-to-end mock → route → DB. |
+| 4 | **Idempotent**: sync twice → same rows | Delete-then-insert is safe to re-run. |
+| 5 | Sync updates existing rows in place when Smoobu returns modified data | `ON CONFLICT DO UPDATE` fires; guest name / price / party size all applied. |
+| 6 | **Removes local bookings Smoobu no longer returns** (inside sync window) | Smoobu is source of truth in the window; a booking dropped upstream disappears locally. |
+| 7 | Payloads with `type: 'cancellation'` land as `status = 'cancelled'` | Cancellation classification correct at the DB layer. |
+
+### Pagination
+
+| # | test | what it guards |
+|---|---|---|
+| 8 | Handler walks 100-page + 100-page + short-page batches, all 205 land | Termination condition (`bookings.length >= 100`) correct. |
+
+### Failure modes
+
+| # | test | what it guards |
+|---|---|---|
+| 9 | Smoobu returns a booking pointing at an apartment not in local DB → **entire sync rolls back** (baseline rows outside the window survive; nothing from this sync leaks) | The `transaction(...)` wrapping the delete-and-loop must roll back atomically on any per-row failure. Guards against partial writes wiping the window then only inserting some rows. |
+| 10 | Smoobu HTTP failure → 500, DB untouched | If Smoobu is down, we don't wipe the sync window and leave a hole. |
+
+---
+
 ---
 
 ## `smoke.test.js`
