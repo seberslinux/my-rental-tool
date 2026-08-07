@@ -293,6 +293,23 @@ async function runMigrations() {
       fetched_at TEXT DEFAULT NOW(),
       UNIQUE(base_currency, target_currency, rate_date)
     );
+
+    -- Public holidays fetched from Nager.Date, cached per country-year.
+    -- A whole year is fetched at once, so the presence of any row for a
+    -- (country, year) means that year is fully cached — see
+    -- services/holidays-store.js.
+    CREATE TABLE IF NOT EXISTS holidays (
+      id SERIAL PRIMARY KEY,
+      country TEXT NOT NULL,
+      year INTEGER NOT NULL,
+      date TEXT NOT NULL,
+      name TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'api',
+      fetched_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(country, date, name)
+    );
+
+    CREATE INDEX IF NOT EXISTS holidays_country_year_idx ON holidays (country, year);
   `);
 
   // Seed default settings

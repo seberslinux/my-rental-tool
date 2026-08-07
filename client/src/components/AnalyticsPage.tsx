@@ -79,21 +79,17 @@ const TABS = [
 }];
 
 const PERIODS = ['30D', '90D', '6M', '1Y', 'YTD', 'Custom'];
-const PROPERTIES = () => ['All Properties', ...properties.map(p => p.name)];
 
-export function AnalyticsPage() {
+export function AnalyticsPage({ propertyId }: { propertyId: number }) {
   const [activeTab, setActiveTab] = useState('overview');
   const [activePeriod, setActivePeriod] = useState('1Y');
-  const [activeProperty, setActiveProperty] = useState('All Properties');
   const [revenueMode, setRevenueMode] = useState<'gross' | 'net'>('gross');
   const [version, setVersion] = useState(0);
 
   const refreshData = useCallback(async () => {
-    const prop = properties.find((p) => p.name === activeProperty);
-    const propertyId = prop ? String(prop.id) : 'all';
-    await loadAnalyticsData(propertyId, activePeriod);
+    await loadAnalyticsData(propertyId > 0 ? String(propertyId) : 'all', activePeriod);
     setVersion((v) => v + 1);
-  }, [activeProperty, activePeriod]);
+  }, [propertyId, activePeriod]);
 
   useEffect(() => {
     refreshData();
@@ -101,37 +97,9 @@ export function AnalyticsPage() {
 
   return (
     <div className="p-4 bg-[#F7F7F7] min-h-full pb-8">
-      {/* Global Filters: Property + Period */}
+      {/* Period filter. Property selection lives in the top nav (App.tsx)
+          so it stays consistent across Home and Analytics. */}
       <div className="flex items-center gap-3 mb-3 -mx-4 px-4 overflow-x-auto no-scrollbar">
-        {/* Property Filter */}
-        <div className="relative flex-shrink-0">
-          <select
-            value={activeProperty}
-            onChange={(e) => setActiveProperty(e.target.value)}
-            className="appearance-none bg-white border border-[#EBEBEB] rounded-[8px] pl-3 pr-8 py-2 text-[13px] font-medium text-[#222222] shadow-[0_1px_2px_rgba(0,0,0,0.04)] focus:outline-none focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF]">
-            
-            {PROPERTIES().map((prop) =>
-            <option key={prop} value={prop}>
-                {prop}
-              </option>
-            )}
-          </select>
-          <div className="absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none">
-            <svg
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="#717171"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round">
-              
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </div>
-        </div>
-
         {/* Period Selector */}
         <div className="flex overflow-x-auto no-scrollbar bg-[#F0F0F0] rounded-[8px] p-[3px] flex-shrink-0">
           {PERIODS.map((period) =>

@@ -13,16 +13,11 @@ function parsePropertyIds(raw) {
 const { detectCurrency } = require('../services/currency-detect');
 const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
 const { getApiKeyForUser } = require('../services/api-key-resolver');
-const {
-  occupancyByProperty,
-  detectGaps,
-  addDays,
-  revenueEarned,
-  revenueComing,
-  revenueEarnedNet,
-  revenueComingNet,
-  avgRateEarned,
-} = require('../services/dashboard-calc');
+const { occupancyByProperty, detectGaps, addDays } = require('../services/dashboard-calc');
+// All revenue figures resolve through this one module — see its header for
+// the attribution rule. Analytics uses the same functions.
+const { revenueEarned, revenueComing, avgRateEarned } = require('../services/revenue');
+const { getUpcomingHolidays } = require('../services/holidays-store');
 
 // Sync properties — uses the requesting user's API key (or env var fallback)
 router.post('/sync/properties', requireRole('admin'), async (req, res) => {
@@ -323,10 +318,20 @@ router.get('/dashboard/stats', scopeProperties, async (req, res) => {
 
   const lastSyncedRow = await getOne("SELECT value FROM app_settings WHERE key = 'last_synced_at'", []);
 
+  // Holidays affect cleaner availability locally and inbound demand from
+  // guest-source countries. Failure here must not take down the dashboard.
+  let holidays = [];
+  try {
+    holidays = await getUpcomingHolidays(today, { days: 90 });
+  } catch (err) {
+    console.error('Holiday lookup failed:', err.message);
+  }
+
   res.json({
     upcoming_checkouts: upcomingCheckouts,
     occupancy,
     gaps,
+    holidays,
     pending_cleaning_jobs: pendingJobs,
     display_currency: displayCurrency,
     last_synced_at: lastSyncedRow?.value || null,
@@ -412,14 +417,16 @@ router.get('/dashboard/kpis', scopeProperties, async (req, res) => {
     // converted_commission on each row.
     await bulkConvert(bookings, displayCurrency);
 
+    const NET = { net: true };
+    const priorToday = addDays(today, -30);
+
     const earned = revenueEarned(bookings, today, 30);
-    const earnedNet = revenueEarnedNet(bookings, today, 30);
-    const priorEarned = revenueEarned(bookings, addDays(today, -30), 30);
-    const priorEarnedNet = revenueEarnedNet(bookings, addDays(today, -30), 30);
+    const earnedNet = revenueEarned(bookings, today, 30, NET);
+    const priorEarnedNet = revenueEarned(bookings, priorToday, 30, NET);
     const coming = revenueComing(bookings, today);
-    const comingNet = revenueComingNet(bookings, today);
+    const comingNet = revenueComing(bookings, today, NET);
     const avgRate = avgRateEarned(bookings, today, 30);
-    const priorAvgRate = avgRateEarned(bookings, addDays(today, -30), 30);
+    const priorAvgRate = avgRateEarned(bookings, priorToday, 30);
 
     // Occupancy uses the /dashboard/stats math to stay consistent with the
     // "Occupancy per property" list on the same page.

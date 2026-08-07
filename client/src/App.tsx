@@ -18,6 +18,10 @@ import { properties, bookings, Booking, loadCalendarData } from './data/properti
 import { loadDashboardData, setPropertyFilter, setOnDataChanged, needsAttention, lastSyncedAt } from './data/dashboard';
 import { relativeTime } from './data/time';
 import { loadAnalyticsData } from './data/analytics';
+
+// Tabs that scope their content to a single property. The Calendar has its
+// own property picker in CalendarHeader; More has nothing to scope.
+const SHOWS_PROPERTY_FILTER = new Set(['home', 'analytics']);
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [userRole, setUserRole] = useState<string>('');
@@ -29,7 +33,9 @@ export function App() {
   const [propertyId, setPropertyId] = useState<number>(0);
   const [channelFilter, setChannelFilter] = useState<string>('all');
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
-  const [dashboardPropertyFilter, setDashboardPropertyFilter] = useState<number>(0);
+  // Property filter lives in the top nav and applies across pages, so
+  // switching tabs keeps the selection.
+  const [globalPropertyFilter, setGlobalPropertyFilter] = useState<number>(0);
   const [dashboardVersion, setDashboardVersion] = useState(0);
 
   // Tick every 60s so the "Synced X ago" label stays fresh between data loads
@@ -133,10 +139,10 @@ export function App() {
         onTabChange={setActiveTab}
         hasNotifications={attentionCount > 0}
         syncedLabel={syncedLabel}
-        propertyFilter={activeTab === 'home' ? {
+        propertyFilter={SHOWS_PROPERTY_FILTER.has(activeTab) ? {
           properties: properties.map((p) => ({ id: p.id, name: p.name })),
-          selected: dashboardPropertyFilter,
-          onChange: (id) => { setDashboardPropertyFilter(id); setPropertyFilter(id); },
+          selected: globalPropertyFilter,
+          onChange: (id) => { setGlobalPropertyFilter(id); setPropertyFilter(id); },
         } : undefined}
         onRefresh={async () => {
           await fetch('/api/sync/bookings', { method: 'POST', credentials: 'same-origin' });
@@ -154,10 +160,10 @@ export function App() {
 
       <AppHeader
         title={getPageTitle()}
-        propertyFilter={activeTab === 'home' ? {
+        propertyFilter={SHOWS_PROPERTY_FILTER.has(activeTab) ? {
           properties: properties.map((p) => ({ id: p.id, name: p.name })),
-          selected: dashboardPropertyFilter,
-          onChange: (id) => { setDashboardPropertyFilter(id); setPropertyFilter(id); },
+          selected: globalPropertyFilter,
+          onChange: (id) => { setGlobalPropertyFilter(id); setPropertyFilter(id); },
         } : undefined}
         onRefresh={async () => {
           await fetch('/api/sync/bookings', { method: 'POST', credentials: 'same-origin' });
@@ -187,7 +193,7 @@ export function App() {
         }
 
         {activeTab === 'cleaners' && <CleanersPage />}
-        {activeTab === 'analytics' && <AnalyticsPage />}
+        {activeTab === 'analytics' && <AnalyticsPage propertyId={globalPropertyFilter} />}
         {activeTab === 'properties' && <PropertiesPage />}
         {activeTab === 'users' && <UsersPage />}
         {activeTab === 'smoobu' && <SmoobuConnectionPage isAdmin={userRole === 'admin'} />}
