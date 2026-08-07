@@ -38,10 +38,12 @@ const { pool } = require('../../src/db/database');
 const { runMigrations } = require('../../src/db/migrations');
 const { buildApp } = require('../../src/app');
 
-// Auto-install Smoobu stubs the moment the harness is imported, so no
-// integration test can accidentally hit smoobu.com. Individual tests can
-// still customise return values via `mockSmoobu.setBookings(...)` etc.
+// Auto-install Smoobu + WhatsApp stubs the moment the harness is imported,
+// so no integration test can accidentally hit smoobu.com or send a real
+// WhatsApp message. Individual tests can still inspect state via
+// `mockSmoobu.setBookings(...)` and `mockWhatsapp.sent`.
 require('./mock-smoobu');
+require('./mock-whatsapp');
 
 let cachedApp = null;
 
