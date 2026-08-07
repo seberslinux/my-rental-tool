@@ -143,13 +143,17 @@ export function TimelineView({
                   return (
                     <div
                       key={idx}
-                      className={`w-[50px] shrink-0 relative ${isWeekend ? 'bg-[#FAFAFA]' : 'bg-white'}`}>
-                      
+                      className={`w-[50px] shrink-0 relative ${
+                      rate && !rate.available ? 'bg-[#F2F2F2]' :
+                      isWeekend ? 'bg-[#FAFAFA]' : 'bg-white'}`}>
+
+                      {/* The date row above is shared by every property, so
+                          a closed night is marked on the cell itself. */}
                       {!isCovered && rate &&
-                      <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-[8px] whitespace-nowrap tabular-nums ${
-                        rate.available ? 'text-[#B0B0B0]' : 'text-[#C13515]'
+                      <div className={`absolute bottom-2 left-0 right-0 text-center text-[10px] whitespace-nowrap tabular-nums font-medium ${
+                        rate.available ? 'text-[#222222]' : 'text-[#8A8A8A] line-through decoration-[1.5px]'
                       }`}>
-                          {rate.available ? formatRate(rate.price) : 'Closed'}
+                          {formatRate(rate.price)}
                         </div>
                       }
                       {hasCleaner &&

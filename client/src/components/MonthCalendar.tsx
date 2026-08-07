@@ -237,6 +237,9 @@ export function MonthCalendar({
               !cell.isOtherMonth &&
               cleaners[propertyId]?.includes(cell.date.getDate());
               const isCovered = isDateCovered(cell.date, propertyId);
+              // Smoobu's own block flag: the night is not for sale, which
+              // is not the same as having a booking on it.
+              const isClosed = rate ? !rate.available : false;
               const edges = 'border-r border-b border-[#EBEBEB]';
 
               if (cell.isOtherMonth) {
@@ -246,7 +249,8 @@ export function MonthCalendar({
               return (
                 <div
                   key={idx}
-                  className={`h-[84px] relative ${edges} ${isToday ? 'bg-[#F7F7F7]' : ''}`}>
+                  className={`h-[84px] relative ${edges} ${
+                  isToday ? 'bg-[#F7F7F7]' : isClosed ? 'bg-[#F2F2F2]' : ''}`}>
 
                     {/* Date on the left, price on the right, both on one
                         line at the top. Centring the date and stacking the
@@ -258,10 +262,10 @@ export function MonthCalendar({
                           booking on that date. A channel colour cannot also
                           mean "you are here". */}
                       <div
-                      className={`w-[24px] h-[24px] rounded-full flex items-center justify-center text-[13px] shrink-0
-                          ${isToday ?
-                          'bg-[#222222] text-white font-semibold' :
-                          isPast ? 'text-[#B0B0B0] font-normal' : 'text-[#222222] font-normal'}
+                      className={`w-[24px] h-[24px] rounded-full flex items-center justify-center text-[13px] shrink-0 font-normal
+                          ${isToday ? 'bg-[#222222] text-white font-semibold' : ''}
+                          ${isClosed && !isToday ? 'text-[#8A8A8A] line-through decoration-[1.5px]' : ''}
+                          ${!isClosed && !isToday ? (isPast ? 'text-[#B0B0B0]' : 'text-[#222222]') : ''}
                         `}>
                         {cell.date.getDate()}
                       </div>
@@ -272,14 +276,20 @@ export function MonthCalendar({
                         rate is synced — the calendar no longer guesses.
                         Its own line at the foot of the cell: sharing the
                         top line with the date left it about 20px on a
-                        phone, so "R 1.6K" broke across two lines. */}
+                        phone, so "R 1.6K" broke across two lines.
+
+                        It reads at 12px near-black rather than 10px grey.
+                        Both Airbnb's and Booking.com's calendars make the
+                        nightly rate the loudest thing after the date, and
+                        they are right to — on an open night it is the one
+                        number you act on. Ours whispered it. */}
                     {!isCovered && rate &&
                   <span
-                    className={`absolute bottom-2 left-2 text-[10px] tabular-nums whitespace-nowrap ${
-                      !rate.available ? 'text-[#C13515]' :
-                      isPast ? 'text-[#C0C0C0]' : 'text-[#717171]'
+                    className={`absolute bottom-2 left-2 text-[12px] font-medium tabular-nums whitespace-nowrap ${
+                      isClosed ? 'text-[#8A8A8A]' :
+                      isPast ? 'text-[#B0B0B0]' : 'text-[#222222]'
                     }`}>
-                        {rate.available ? formatRate(rate.price) : 'Closed'}
+                        {formatRate(rate.price)}
                       </span>
                   }
 
