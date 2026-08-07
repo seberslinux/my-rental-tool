@@ -11,9 +11,9 @@
     "build": "cd client && npm install && npx vite build",
     "setup": "npm install && cd client && npm install && echo '\n--- Setup complete! Run: npm run dev ---'",
     "postinstall": "cd client && npm install",
-    "test": "node --test 'test/**/*.test.js'",
+    "test": "node --test 'test/*.test.js' && node --test --test-concurrency=1 'test/integration/**/*.test.js'",
     "test:unit": "node --test 'test/*.test.js'",
-    "test:integration": "node --test 'test/integration/**/*.test.js'",
+    "test:integration": "node --test --test-concurrency=1 'test/integration/**/*.test.js'",
     "test:coverage": "node --test --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout 'test/**/*.test.js'",
     "test:db:up": "docker compose -f docker-compose.test.yml up -d",
     "test:db:down": "docker compose -f docker-compose.test.yml down -v"
