@@ -6,6 +6,12 @@ const { detectCurrency } = require('../services/currency-detect');
 const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
 const { scopeProperties, enforcePropertyScope, requireRole, denyIfOutOfScope } = require('../middleware/auth');
 const { getApiKeyForProperty, getApiKeyForUser } = require('../services/api-key-resolver');
+const {
+  calcDeductions,
+  isBlockedPlatform,
+  normalizePlatform,
+  analyzeSentiment,
+} = require('../services/analytics-calc');
 
 // Apply property scoping to all analytics routes
 router.use(scopeProperties);
@@ -445,29 +451,6 @@ router.get('/data', async (req, res) => {
     }
   }
   if (futureConfirmedBookings.length > 0) await bulkConvert(futureConfirmedBookings, displayCurrency);
-
-  // Helper: calculate total deductions (commission + bank charges + VAT) for a booking
-  function calcDeductions(b) {
-    const rev = b.converted_total_price || 0;
-    const platform = (b.platform || '').toLowerCase();
-    let commRate = 0, bankRate = 0, vatRate = 0;
-    // Direct bookings have no deductions. Check 'direct' first: Smoobu names them
-    // "Direct booking", which contains the substring "booking".
-    const isDirect = platform.includes('direct');
-    if (isDirect) { /* no deductions */ }
-    else if (platform.includes('airbnb')) { commRate = b.prop_commission_airbnb || 0; bankRate = b.bank_charge_airbnb || 0; vatRate = b.vat_airbnb || 0; }
-    else if (platform.includes('booking')) { commRate = b.prop_commission_booking || 0; bankRate = b.bank_charge_booking || 0; vatRate = b.vat_booking || 0; }
-    else if (platform.includes('vrbo')) { commRate = b.prop_commission_vrbo || 0; bankRate = b.bank_charge_vrbo || 0; vatRate = b.vat_vrbo || 0; }
-    // Direct bookings: no commission/bank/VAT at all.
-    if (isDirect) return 0;
-    // Fall back to legacy vat_rate if per-platform not set
-    if (vatRate === 0) vatRate = b.property_vat_rate || 0;
-    // If no property-level commission configured, fall back to Smoobu commission
-    const commAmount = commRate > 0 ? rev * commRate / 100 : (b.converted_commission || 0);
-    const bankAmount = bankRate > 0 ? rev * bankRate / 100 : 0;
-    const vatAmount = vatRate > 0 ? (commAmount + bankAmount) * vatRate / 100 : 0;
-    return commAmount + bankAmount + vatAmount;
-  }
 
   // --- Revenue by month (split into paid vs booked) — only past/current bookings ---
   const allBookingsCombined = [...allBookings, ...futureConfirmedBookings];
@@ -1545,34 +1528,5 @@ router.post('/reviews/parse-html', (req, res) => {
     res.json({ reviews: [], message: 'Parsing failed: ' + err.message });
   }
 });
-
-function isBlockedPlatform(platform) {
-  if (!platform) return false;
-  return platform.toLowerCase().startsWith('blocked');
-}
-
-function normalizePlatform(platform) {
-  if (!platform) return 'Direct';
-  const p = platform.toLowerCase();
-  if (p.startsWith('blocked')) return 'Blocked';
-  if (p.includes('airbnb')) return 'Airbnb';
-  if (p.includes('direct')) return 'Direct';
-  if (p.includes('booking')) return 'Booking.com';
-  if (p.includes('vrbo') || p.includes('homeaway')) return 'VRBO';
-  return 'Direct';
-}
-
-function analyzeSentiment(text) {
-  if (!text) return 'neutral';
-  const lower = text.toLowerCase();
-  const positive = ['great','amazing','wonderful','excellent','perfect','love','clean','beautiful','fantastic','best','recommend','comfortable','lovely','outstanding','superb'];
-  const negative = ['dirty','noisy','broken','terrible','worst','awful','disappointing','rude','smell','bug','cockroach','dangerous','unsafe','horrible','disgusting'];
-  let score = 0;
-  for (const w of positive) if (lower.includes(w)) score++;
-  for (const w of negative) if (lower.includes(w)) score--;
-  if (score > 0) return 'positive';
-  if (score < 0) return 'negative';
-  return 'neutral';
-}
 
 module.exports = router;

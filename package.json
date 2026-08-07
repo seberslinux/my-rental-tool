@@ -10,7 +10,8 @@
     "dev:client": "cd client && npx vite",
     "build": "cd client && npm install && npx vite build",
     "setup": "npm install && cd client && npm install && echo '\n--- Setup complete! Run: npm run dev ---'",
-    "postinstall": "cd client && npm install"
+    "postinstall": "cd client && npm install",
+    "test": "node --test 'test/**/*.test.js'"
   },
   "keywords": [],
   "author": "",
