@@ -139,11 +139,15 @@ export function BookingDetailSheet({ booking, onClose }: BookingDetailSheetProps
           {/* "Status: Airbnb" answered the wrong question — Airbnb is who
               sold the stay, not what is happening to it. Two rows now. */}
           <Row label="Status" value={stayStatus(booking)} />
+          {/* A block has no channel — it was not sold. Showing "Blocked"
+              twice, once per row, said nothing the second time. */}
+          {!isBlocked &&
           <Row label="Channel" value={
             <span className={`px-2.5 py-1 rounded-full text-[12px] font-medium ${platform.bg} ${platform.text}`}>
               {platform.name}
             </span>
           } />
+          }
           <Row label="Duration" value={`${nights} ${nights === 1 ? 'night' : 'nights'}`} />
           {/* Party size, children included — the number that decides linen,
               keys and what the cleaner is told to expect. Shared formatter,

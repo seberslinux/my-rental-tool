@@ -43,6 +43,16 @@ export function MonthCalendar({
     return anchor.getFullYear() === now.getFullYear() && anchor.getMonth() === now.getMonth();
   }, [anchor]);
 
+  // Names the three months on screen, e.g. "Aug – Oct 2026".
+  const rangeLabel = useMemo(() => {
+    const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+    const last = new Date(anchor.getFullYear(), anchor.getMonth() + 2, 1);
+    const mon = (d: Date) => d.toLocaleDateString('en-ZA', { month: 'short' });
+    return first.getFullYear() === last.getFullYear()
+      ? `${mon(first)} – ${mon(last)} ${last.getFullYear()}`
+      : `${mon(first)} ${first.getFullYear()} – ${mon(last)} ${last.getFullYear()}`;
+  }, [anchor]);
+
   const monthsData = useMemo(() => {
     return [0, 1, 2].
     map((offset) => {
@@ -84,29 +94,29 @@ export function MonthCalendar({
         });
       }
       // Calculate booking segments for this month's grid
-      const segments: {
-        booking: Booking;
-        rowIdx: number;
-        startCol: number;
-        endCol: number;
-        isFirst: boolean;
-        isLast: boolean;
-      }[] = [];
+      type Seg = {
+        booking: Booking; rowIdx: number; startCol: number; endCol: number;
+        startDate: Date; endDate: Date;
+      };
+      const segments: Seg[] = [];
       bookings.forEach((booking) => {
-        type Seg = {
-          booking: Booking; rowIdx: number; startCol: number;
-          endCol: number; isFirst: boolean; isLast: boolean;
-        };
         let currentSegment: Seg | null = null;
         cells.forEach((cell, idx) => {
-          // Inclusive of the check-out day. The nights sold run
-          // [checkIn, checkOut), but the *bar* has to reach into the
-          // check-out morning: the guest is still there until 10:00, and
-          // the half-cell it draws there is what shows the next arrival
-          // can take that same night. Trimming half a cell at each end
-          // (below) turns this inclusive span into check-in-afternoon
-          // through check-out-morning.
+          // Two conditions, and the first one is easy to miss.
+          //
+          // `!isOtherMonth`: every month's grid pads its first and last
+          // rows with days from the neighbouring months. Those cells are
+          // rendered `invisible`, but the bar layer floats above the grid
+          // and did not consult the flag — so a stay ending 31 July drew
+          // itself across August's leading row, under blank date cells,
+          // looking for all the world like an August booking. It is also
+          // drawn correctly in July's own grid directly above. Clip it.
+          //
+          // Inclusive of check-out: the nights sold run [checkIn,
+          // checkOut), but the bar has to reach into the check-out
+          // morning, and half a cell is trimmed off each end below.
           const isInBooking =
+          !cell.isOtherMonth &&
           cell.date >= booking.checkIn && cell.date <= booking.checkOut;
           const rowIdx = Math.floor(idx / 7);
           const colIdx = idx % 7;
@@ -118,14 +128,14 @@ export function MonthCalendar({
                 rowIdx,
                 startCol: colIdx,
                 endCol: colIdx,
-                isFirst: idx === 0 || cells[idx - 1].date < booking.checkIn,
-                isLast: false
+                startDate: cell.date,
+                endDate: cell.date
               };
             } else {
               currentSegment.endCol = colIdx;
+              currentSegment.endDate = cell.date;
             }
           } else if (currentSegment) {
-            currentSegment.isLast = true;
             segments.push(currentSegment);
             currentSegment = null;
           }
@@ -133,10 +143,7 @@ export function MonthCalendar({
         // TypeScript can't follow the assignments made inside the forEach
         // callback above, so it narrows this to null. Re-widen at the read.
         const trailing = currentSegment as Seg | null;
-        if (trailing) {
-          trailing.isLast = true;
-          segments.push(trailing);
-        }
+        if (trailing) segments.push(trailing);
       });
       return {
         name,
@@ -151,35 +158,48 @@ export function MonthCalendar({
       {/* Paging. Sticky so it stays reachable while scrolling three months
           of grid on a phone. */}
       <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-[#F0F0F0]">
-      <div className="flex items-center justify-between px-4 py-2.5">
+      {/* The middle slot used to hold a "Today" button that disabled
+          itself whenever you were already on the current month — which is
+          the default view, so it sat there greyed out doing nothing and
+          reading as broken. A pager's centre should name what you are
+          looking at; the jump-back only appears once it has somewhere to
+          jump to. */}
+      <div className="flex items-center gap-1 px-3 py-2.5">
         <button
           onClick={() => shiftAnchor(-1)}
           aria-label="Previous month"
-          className="w-9 h-9 rounded-full flex items-center justify-center text-[#222222] hover:bg-[#F7F7F7] active:bg-[#F0F0F0] transition-colors">
+          className="w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-[#222222] hover:bg-[#F7F7F7] active:bg-[#F0F0F0] transition-colors">
           <ChevronLeft className="w-5 h-5" strokeWidth={2} />
         </button>
 
+        <div className="flex-1 text-center text-[14px] font-semibold text-[#222222] truncate">
+          {rangeLabel}
+        </div>
+
+        {!isOnCurrentMonth &&
         <button
           onClick={goToToday}
-          disabled={isOnCurrentMonth}
-          className={`text-[13px] font-medium px-3 py-1.5 rounded-full transition-colors ${
-            isOnCurrentMonth
-              ? 'text-[#B0B0B0] cursor-default'
-              : 'text-[#FF385C] hover:bg-[#FFF0F3]'
-          }`}>
+          className="shrink-0 text-[12px] font-semibold px-3 py-1.5 rounded-full border border-[#DDDDDD] text-[#222222] hover:bg-[#F7F7F7] active:bg-[#F0F0F0] transition-colors">
           Today
         </button>
+        }
 
         <button
           onClick={() => shiftAnchor(1)}
           aria-label="Next month"
-          className="w-9 h-9 rounded-full flex items-center justify-center text-[#222222] hover:bg-[#F7F7F7] active:bg-[#F0F0F0] transition-colors">
+          className="w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-[#222222] hover:bg-[#F7F7F7] active:bg-[#F0F0F0] transition-colors">
           <ChevronRight className="w-5 h-5" strokeWidth={2} />
         </button>
       </div>
 
-        <div className="grid grid-cols-7 pb-2 text-[11px] font-medium text-[#B0B0B0] text-center uppercase tracking-[0.5px]">
-          <div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div>
+        {/* Two letters, not one: "S M T W T F S" repeats T and S, so the
+            column you land on has to be counted rather than read. Bold and
+            near-black — at #B0B0B0 the header was fainter than the dates
+            it labels. */}
+        <div className="grid grid-cols-7 pb-2 text-[11px] font-semibold text-[#222222] text-center uppercase tracking-[0.4px]">
+          {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) =>
+          <div key={d} className={d === 'Su' || d === 'Sa' ? 'text-[#717171]' : ''}>{d}</div>
+          )}
         </div>
       </div>
 
@@ -195,6 +215,7 @@ export function MonthCalendar({
               {month.cells.map((cell, idx) => {
               const isPast = cell.date < TODAY;
               const isToday = dateEqual(cell.date, TODAY);
+              const isWeekend = cell.date.getDay() === 0 || cell.date.getDay() === 6;
               const rate = getRate(propertyId, cell.date);
               const hasCleaner =
               CLEANER_TOGGLE &&
@@ -210,12 +231,18 @@ export function MonthCalendar({
               return (
                 <div
                   key={idx}
-                  className={`h-[88px] relative flex flex-col items-center pt-2 ${borderTop} ${cell.isOtherMonth ? 'invisible' : ''} ${isPast ? 'opacity-30' : ''}`}>
-                  
-                    {/* Day Number */}
+                  className={`h-[88px] relative flex flex-col items-center pt-2 ${borderTop} ${cell.isOtherMonth ? 'invisible' : ''} ${isPast ? 'opacity-45' : ''} ${isWeekend && !isToday ? 'bg-[#FAFAFA]' : ''} ${isToday ? 'bg-[#F0F0F0]' : ''}`}>
+
+                    {/* Day number.
+                        Today used to be a filled #FF385C disc — the same
+                        pink the Airbnb bars use, so the marker read as a
+                        booking on that date rather than as the date. A
+                        channel colour cannot also mean "you are here".
+                        Neutral charcoal instead: unmistakable, and it says
+                        nothing about who sold the night. */}
                     <div
-                    className={`w-[26px] h-[26px] rounded-full flex items-center justify-center text-[13px] font-normal relative z-10
-                        ${isToday ? 'bg-[#FF385C] text-white font-medium' : 'text-[#222222]'}
+                    className={`w-[26px] h-[26px] rounded-full flex items-center justify-center text-[13px] relative z-10
+                        ${isToday ? 'bg-[#222222] text-white font-semibold' : 'text-[#222222] font-normal'}
                       `}>
                     
                       {cell.date.getDate()}
@@ -245,6 +272,12 @@ export function MonthCalendar({
             <div className="absolute inset-0 pointer-events-none z-10">
               {month.segments.map((seg, sIdx) => {
               // Responsive percentage calculations
+              // Trim only where the bar genuinely begins or ends. A
+              // segment cut short by a row break — or by the month edge —
+              // must run flush to that edge and continue in the next row
+              // or the neighbouring month's grid.
+              const isFirst = dateEqual(seg.startDate, seg.booking.checkIn);
+              const isLast = dateEqual(seg.endDate, seg.booking.checkOut);
               const cellWidthPct = 100 / 7;
               let leftPct = seg.startCol * cellWidthPct;
               let widthPct = (seg.endCol - seg.startCol + 1) * cellWidthPct;
@@ -254,11 +287,11 @@ export function MonthCalendar({
               // trimmed by 0.25 of the *last night's* cell, which stopped
               // the bar three-quarters of the way through the final night
               // and never reached the check-out day at all.
-              if (seg.isFirst) {
+              if (isFirst) {
                 leftPct += cellWidthPct * 0.5;
                 widthPct -= cellWidthPct * 0.5;
               }
-              if (seg.isLast) {
+              if (isLast) {
                 widthPct -= cellWidthPct * 0.5;
               }
               // A same-day check-in/check-out would otherwise be invisible.
@@ -266,11 +299,11 @@ export function MonthCalendar({
               // Top offset: row index * 88px (cell height) + 38px (vertical offset)
               const topPx = seg.rowIdx * 88 + 38;
               // Border radius logic
-              const isSingleRow = seg.isFirst && seg.isLast;
+              const isSingleRow = isFirst && isLast;
               let borderRadius = '0';
               if (isSingleRow) borderRadius = '13px';else
-              if (seg.isFirst) borderRadius = '13px 0 0 13px';else
-              if (seg.isLast) borderRadius = '0 13px 13px 0';
+              if (isFirst) borderRadius = '13px 0 0 13px';else
+              if (isLast) borderRadius = '0 13px 13px 0';
               return (
                 <BookingBar
                   key={`${seg.booking.id}-${sIdx}`}

@@ -97,11 +97,16 @@ export async function loadCalendarData(): Promise<void> {
   if (bookingsRes.ok) {
     const bData = await bookingsRes.json();
     const bArray: any[] = (bData.bookings || bData).filter((b: any) => b.status !== 'cancelled');
-    bookings = bArray.map((b) => ({
+    bookings = bArray.map((b) => {
+      const type = mapPlatform(b.platform);
+      return {
       id: String(b.id),
       propId: b.property_id,
-      type: mapPlatform(b.platform),
-      name: b.guest_name || 'Guest',
+      type,
+      // A block has no guest, so the old `|| 'Guest'` fallback labelled
+      // every maintenance and renovation hold as one — a blocked week
+      // read as an occupied week with an anonymous visitor in it.
+      name: b.guest_name || (type === 'blocked' ? 'Blocked' : 'Guest'),
       checkIn: new Date(b.check_in + 'T00:00:00'),
       checkOut: new Date(b.check_out + 'T00:00:00'),
       // converted_* are in the display currency; net_payout and deductions
@@ -112,7 +117,8 @@ export async function loadCalendarData(): Promise<void> {
       netPayout: b.net_payout ?? b.converted_total_price ?? b.total_price ?? 0,
       numGuests: b.num_guests ?? null,
       children: b.children || 0,
-    }));
+      };
+    });
   }
 
   if (ratesRes.ok) {

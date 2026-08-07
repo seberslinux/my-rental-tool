@@ -52,12 +52,12 @@ export function TimelineView({
                   key={idx}
                   className={`w-[50px] shrink-0 py-2 px-1 text-center ${isWeekend ? 'bg-[#FAFAFA]' : 'bg-white'}`}>
                   
-                  <div className="text-[9px] text-[#B0B0B0] uppercase leading-tight font-medium">
+                  <div className="text-[9px] text-[#717171] uppercase leading-tight font-semibold">
                     {dayNames[date.getDay()]}
                   </div>
                   <div
                     className={`mt-0.5 text-[13px] font-normal mx-auto flex items-center justify-center
-                    ${isToday ? 'w-[26px] h-[26px] bg-[#FF385C] text-white rounded-full font-medium' : 'text-[#222222]'}
+                    ${isToday ? 'w-[26px] h-[26px] bg-[#222222] text-white rounded-full font-semibold' : 'text-[#222222]'}
                     ${isPast && !isToday ? 'opacity-30' : ''}
                   `}>
                     
@@ -94,19 +94,22 @@ export function TimelineView({
                     startIdx: idx,
                     endIdx: idx,
                     isFirst: date.getTime() === booking.checkIn.getTime(),
-                    isLast: false
+                    isLast: date.getTime() === booking.checkOut.getTime()
                   };
                 } else {
                   currentSegment.endIdx = idx;
+                  // Only the real check-out closes the bar. Running off the
+                  // end of the 28-day strip must not trim it — that made an
+                  // ongoing stay look like it ended at the window edge.
+                  currentSegment.isLast =
+                  date.getTime() === booking.checkOut.getTime();
                 }
               } else if (currentSegment) {
-                currentSegment.isLast = true;
                 segments.push(currentSegment);
                 currentSegment = null;
               }
             });
             if (currentSegment) {
-              currentSegment.isLast = true;
               segments.push(currentSegment);
             }
           });
