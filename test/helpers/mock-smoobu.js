@@ -29,11 +29,24 @@ let propertiesFixture = [];
 let propertyDetailsFixture = {};
 let failWith = null;       // { name?: 'getBookings', error: Error } — throws when set
 
+// Every mocked side-effectful call is appended here so tests can assert on
+// what was invoked. Reset per test via `mockSmoobu.reset()`.
+const calls = {
+  setRates: [],
+  blockDates: [],
+  unblockDates: [],
+  sendGuestMessage: [],
+};
+
 function reset() {
   bookingsQueue = [];
   propertiesFixture = [];
   propertyDetailsFixture = {};
   failWith = null;
+  calls.setRates.length = 0;
+  calls.blockDates.length = 0;
+  calls.unblockDates.length = 0;
+  calls.sendGuestMessage.length = 0;
   // Re-install stubs each reset in case a previous test replaced them.
   smoobu.getBookings = async ({ page = 1 } = {}) => {
     if (failWith && (!failWith.name || failWith.name === 'getBookings')) throw failWith.error;
@@ -57,10 +70,22 @@ function reset() {
     return propertyDetailsFixture[id] || null;
   };
   smoobu.getRates = async () => ({});
-  smoobu.setRates = async () => ({ ok: true });
-  smoobu.blockDates = async () => ({ id: 999999 });
-  smoobu.unblockDates = async () => ({ ok: true });
-  smoobu.sendGuestMessage = async () => ({ ok: true });
+  smoobu.setRates = async (apartmentId, from, to, price) => {
+    calls.setRates.push({ apartmentId, from, to, price });
+    return { ok: true };
+  };
+  smoobu.blockDates = async (apartmentId, from, to, note) => {
+    calls.blockDates.push({ apartmentId, from, to, note });
+    return { id: 999999 };
+  };
+  smoobu.unblockDates = async (reservationId) => {
+    calls.unblockDates.push({ reservationId });
+    return { ok: true };
+  };
+  smoobu.sendGuestMessage = async (reservationId, subject, messageBody) => {
+    calls.sendGuestMessage.push({ reservationId, subject, messageBody });
+    return { ok: true };
+  };
 }
 
 /**
@@ -110,4 +135,5 @@ module.exports = {
   setPropertyDetails,
   makeFail,
   restore,
+  calls,
 };
