@@ -159,20 +159,20 @@ test('GB: England & Wales regional holidays are kept, Scotland-only dropped', as
   );
 });
 
-test('CH: cantonal holidays are kept and de-duplicated across canton groups', async () => {
-  // Nager lists some Swiss holidays once per canton group — the same date
-  // and name appearing twice must collapse to one row.
-  await withAxios(
+test('regional holidays outside the kept regions are dropped', () => {
+  // Switzerland is no longer tracked; the rule that matters now is that a
+  // regional entry from an untracked country never slips through.
+  const { getHolidays } = require('../../src/services/holidays-store');
+  return withAxios(
     async () => ({
       data: [
-        { date: '2026-04-06', localName: 'Ostermontag', name: 'Easter Monday', global: false, counties: ['CH-ZH', 'CH-BE'] },
-        { date: '2026-04-06', localName: 'Ostermontag', name: 'Easter Monday', global: false, counties: ['CH-UR', 'CH-SZ'] },
+        { date: '2026-04-06', localName: 'Ostermontag', name: 'Easter Monday', global: false, counties: ['CH-ZH'] },
         { date: '2026-08-01', localName: 'Bundesfeier', name: 'Swiss National Day', global: true, counties: null },
       ],
     }),
     async () => {
       const out = await getHolidays('CH', 2026);
-      assert.equal(out.length, 2, 'duplicate canton-group entries collapse');
+      assert.deepEqual(out.map((h) => h.date), ['2026-08-01'], 'only the nationwide entry survives');
     }
   );
 });

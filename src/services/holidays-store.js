@@ -14,8 +14,7 @@
  *                      rather than backing them up.
  *   3. Computed rules — services/holidays.js. Used when the API is
  *                      unreachable and the cache is cold. Verified
- *                      against the API for 2025–2027 across all six
- *                      countries.
+ *                      against the API for 2025–2027.
  *
  * Holiday data for a given year never changes once published, so cached
  * rows are never invalidated — only future years are ever missing.
@@ -29,22 +28,22 @@ const API_BASE = 'https://date.nager.at/api/v3/PublicHolidays';
 const API_TIMEOUT_MS = 5000;
 
 /**
- * Nager splits some holidays by region: `global: false` with a `counties`
- * list. Those are kept when they cover the country's main population —
- * England & Wales for the UK, most cantons for Switzerland — because the
- * point of this list is travel demand, not a payroll calendar. Purely
- * local observances are dropped.
+ * Nager marks some holidays regional: `global: false` plus a `counties`
+ * list. Only the UK needs this — Nager flags Easter Monday, New Year and
+ * the late-August bank holiday as regional because Scotland keeps a
+ * different calendar. We follow England and Wales, which hold the great
+ * majority of the population.
+ *
+ * Regional entries from any other country are dropped: this list is a
+ * travel-demand signal, and a holiday one region observes does not move
+ * bookings in Cape Town.
  */
-const REGIONAL_KEEP = {
-  GB: ['GB-ENG', 'GB-WLS'],
-  CH: null, // keep all — Swiss holidays are cantonal almost by definition
-};
+const REGIONAL_KEEP = { GB: ['GB-ENG', 'GB-WLS'] };
 
 function shouldKeep(country, entry) {
   if (entry.global) return true;
-  if (!(country in REGIONAL_KEEP)) return false;
   const wanted = REGIONAL_KEEP[country];
-  if (wanted === null) return true;
+  if (!wanted) return false;
   return (entry.counties || []).some((c) => wanted.includes(c));
 }
 

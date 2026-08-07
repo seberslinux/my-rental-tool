@@ -11,15 +11,10 @@ const {
  * Public holiday rules.
  *
  * The output of this module was diffed against the Nager.Date public
- * dataset for 2025–2027 across all six countries. ZA, DE, NL and US match
- * exactly. GB and CH differ only where that dataset splits by region:
- *
- *   GB — Easter Monday, New Year and the late-August bank holiday are
- *        marked regional because Scotland differs (its summer holiday is
- *        the first Monday in August). Ours follow England & Wales.
- *   CH — Good Friday, Easter Monday, Whit Monday and Stephanstag are
- *        cantonal rather than federal. They are included deliberately;
- *        each covers a large majority of cantons and moves travel demand.
+ * dataset for 2025–2027 across all six countries. ZA and DE match
+ * exactly. GB differs only where that dataset splits by region: Easter
+ * Monday, New Year and the late-August bank holiday are marked regional
+ * because Scotland keeps a different calendar. Ours follow England & Wales.
  *
  * The tests below pin the rules that a hand-maintained list gets wrong:
  * weekend observance shifts, Easter arithmetic, and nth-weekday rules.
@@ -100,26 +95,8 @@ test('ZA: 12 public holidays a year', () => {
   }
 });
 
-// --- United States: federal weekend observance --------------------------
 
-test('US: a fixed holiday on a Saturday is observed the Friday before', () => {
-  // 4 July 2026 is a Saturday → observed Friday 3 July.
-  const july4 = holidaysForCountry('US', 2026).find((h) => h.name === 'Independence Day');
-  assert.equal(july4.date, '2026-07-03');
-});
 
-test('US: a fixed holiday on a Sunday is observed the Monday after', () => {
-  // 1 January 2028 is a Saturday; use Christmas 2022 (a Sunday) instead.
-  const xmas = holidaysForCountry('US', 2022).find((h) => h.name === 'Christmas Day');
-  assert.equal(xmas.date, '2022-12-26');
-});
-
-test('US: Thanksgiving is the 4th Thursday of November', () => {
-  assert.equal(
-    holidaysForCountry('US', 2026).find((h) => h.name === 'Thanksgiving').date,
-    '2026-11-26'
-  );
-});
 
 // --- United Kingdom: substitute days ------------------------------------
 
@@ -149,30 +126,8 @@ test('GB: bank holidays use last-Monday rules for spring and summer', () => {
   assert.equal(gb.find((h) => h.name === 'Summer Bank Holiday').date, '2026-08-31');
 });
 
-// --- Netherlands: King's Day moves backwards ----------------------------
 
-test("NL: King's Day on a Sunday moves BACK to the Saturday", () => {
-  // The opposite direction to South Africa's rule — a good reason not to
-  // share one shift helper across countries.
-  // 27 April 2025 was a Sunday → celebrated Saturday the 26th.
-  const nl = holidaysForCountry('NL', 2025);
-  assert.equal(nl.find((h) => h.name === 'Koningsdag').date, '2025-04-26');
-});
 
-test("NL: King's Day on a weekday stays put", () => {
-  // 27 April 2026 is a Monday.
-  const nl = holidaysForCountry('NL', 2026);
-  assert.equal(nl.find((h) => h.name === 'Koningsdag').date, '2026-04-27');
-});
-
-test('NL: both days of Easter and Pentecost are observed', () => {
-  // Regression guard — the first cut only had the Mondays, which the
-  // Nager.Date cross-check caught.
-  const nl = holidaysForCountry('NL', 2026).map((h) => h.name);
-  for (const name of ['Eerste Paasdag', 'Tweede Paasdag', 'Eerste Pinksterdag', 'Tweede Pinksterdag']) {
-    assert.ok(nl.includes(name), `missing ${name}`);
-  }
-});
 
 // --- metadata ------------------------------------------------------------
 
@@ -215,16 +170,19 @@ test('upcomingHolidays: sorted by date, then country', () => {
   assert.deepEqual(dates, [...dates].sort(), 'not sorted by date');
 });
 
-test('upcomingHolidays: defaults to all six countries', () => {
+test('upcomingHolidays: defaults to the tracked source markets', () => {
+  // Switzerland, the Netherlands and the US were dropped: each sent 4–6
+  // bookings against Germany's 42, and Switzerland's cantonal calendar
+  // alone contributed enough entries to push Germany off the panel.
   const out = upcomingHolidays('2026-01-01', { days: 400 });
   const seen = new Set(out.map((h) => h.country));
-  assert.deepEqual([...seen].sort(), ['CH', 'DE', 'GB', 'NL', 'US', 'ZA']);
+  assert.deepEqual([...seen].sort(), ['DE', 'GB', 'ZA']);
 });
 
 test('upcomingHolidays: countries can be narrowed', () => {
-  const out = upcomingHolidays('2026-01-01', { countries: ['ZA', 'US'], days: 400 });
+  const out = upcomingHolidays('2026-01-01', { countries: ['ZA', 'DE'], days: 400 });
   const seen = new Set(out.map((h) => h.country));
-  assert.deepEqual([...seen].sort(), ['US', 'ZA']);
+  assert.deepEqual([...seen].sort(), ['DE', 'ZA']);
 });
 
 test('upcomingHolidays: empty window returns empty', () => {

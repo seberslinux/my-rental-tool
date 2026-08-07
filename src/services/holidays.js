@@ -6,15 +6,21 @@
  *
  *   - **South Africa** is where the properties are. A local public holiday
  *     affects cleaner availability and local weekend demand.
- *   - **Guest-source countries** (DE, GB, CH, NL, US) drive inbound demand.
- *     German Easter and US Thanksgiving fill rooms in Cape Town.
+ *   - **Guest-source countries** drive inbound demand: German Easter
+ *     fills rooms in Cape Town. Only Germany and the UK are tracked —
+ *     they are the source markets with real volume (42 and 11 bookings
+ *     against 4–6 each for Switzerland, the Netherlands and the US), and
+ *     every extra country dilutes a short list. Switzerland in particular
+ *     drowned it: its holidays are cantonal, so it contributed 23 entries
+ *     against Germany's 9 and pushed Germany off the panel.
  *
  * Everything is computed from rules rather than listed, so the data never
  * expires and never needs maintenance. The rules are of four kinds:
  *
  *   1. Fixed date            — 25 Dec
  *   2. Easter-relative       — Good Friday is Easter − 2
- *   3. Nth weekday of month  — US Thanksgiving is the 4th Thursday in Nov
+ *   3. Nth weekday of month  — the UK's Spring Bank Holiday is the last
+ *                              Monday in May
  *   4. Observance shifts     — a holiday landing on a weekend moves, and
  *                              each country has its own rule for how
  *
@@ -22,9 +28,9 @@
  * Public Holidays Act moves a Sunday holiday to the Monday, which is why
  * Women's Day (9 August) is observed on Monday 10 August 2026.
  *
- * Scope note: Germany and Switzerland devolve most holidays to states and
- * cantons. Only the nationwide ones are included — the goal is a demand
- * signal, not a payroll calendar.
+ * Scope note: Germany devolves some holidays to its states. Only the
+ * nationwide ones are included — the goal is a demand signal, not a
+ * payroll calendar.
  */
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -37,9 +43,6 @@ const COUNTRY_NAMES = {
   ZA: 'South Africa',
   DE: 'Germany',
   GB: 'United Kingdom',
-  CH: 'Switzerland',
-  NL: 'Netherlands',
-  US: 'United States',
 };
 
 // --- date helpers --------------------------------------------------------
@@ -108,14 +111,6 @@ function easterSunday(year) {
 /** South Africa: a holiday falling on a Sunday is observed on the Monday. */
 function shiftSundayToMonday(dateStr) {
   return dayOfWeek(dateStr) === 0 ? addDays(dateStr, 1) : dateStr;
-}
-
-/** US federal: Saturday → observed Friday, Sunday → observed Monday. */
-function shiftUsFederal(dateStr) {
-  const dow = dayOfWeek(dateStr);
-  if (dow === 6) return addDays(dateStr, -1);
-  if (dow === 0) return addDays(dateStr, 1);
-  return dateStr;
 }
 
 /**
@@ -192,73 +187,10 @@ function unitedKingdom(year) {
 
   return out;
 }
-
-function switzerland(year) {
-  // Only New Year, Ascension, 1 August and Christmas are federal. The four
-  // Easter-relative/Stephanstag entries below are cantonal, but near-
-  // universal — Good Friday is observed in 24 of 26 cantons, Easter and
-  // Whit Monday in 20, Stephanstag in 16 — and all of them move travel
-  // demand, which is what this list is for.
-  const easter = easterSunday(year);
-  return [
-    { date: ymd(year, 1, 1), name: 'Neujahr' },
-    { date: addDays(easter, -2), name: 'Karfreitag' },
-    { date: addDays(easter, 1), name: 'Ostermontag' },
-    { date: addDays(easter, 39), name: 'Auffahrt' },
-    { date: addDays(easter, 50), name: 'Pfingstmontag' },
-    { date: ymd(year, 8, 1), name: 'Bundesfeier' },
-    { date: ymd(year, 12, 25), name: 'Weihnachten' },
-    { date: ymd(year, 12, 26), name: 'Stephanstag' },
-  ];
-}
-
-function netherlands(year) {
-  const easter = easterSunday(year);
-  // King's Day moves BACK to the Saturday when 27 April is a Sunday —
-  // the opposite direction to South Africa's rule.
-  const kingsDay = ymd(year, 4, 27);
-  return [
-    { date: ymd(year, 1, 1), name: 'Nieuwjaarsdag' },
-    { date: addDays(easter, -2), name: 'Goede Vrijdag' },
-    // The Netherlands observes both days of Easter and Pentecost, not just
-    // the Mondays.
-    { date: easter, name: 'Eerste Paasdag' },
-    { date: addDays(easter, 1), name: 'Tweede Paasdag' },
-    { date: dayOfWeek(kingsDay) === 0 ? addDays(kingsDay, -1) : kingsDay, name: 'Koningsdag' },
-    { date: ymd(year, 5, 5), name: 'Bevrijdingsdag' },
-    { date: addDays(easter, 39), name: 'Hemelvaartsdag' },
-    { date: addDays(easter, 49), name: 'Eerste Pinksterdag' },
-    { date: addDays(easter, 50), name: 'Tweede Pinksterdag' },
-    { date: ymd(year, 12, 25), name: 'Eerste Kerstdag' },
-    { date: ymd(year, 12, 26), name: 'Tweede Kerstdag' },
-  ];
-}
-
-function unitedStates(year) {
-  const fixed = [
-    [ymd(year, 1, 1), "New Year's Day"],
-    [ymd(year, 6, 19), 'Juneteenth'],
-    [ymd(year, 7, 4), 'Independence Day'],
-    [ymd(year, 11, 11), 'Veterans Day'],
-    [ymd(year, 12, 25), 'Christmas Day'],
-  ];
-  const out = fixed.map(([date, name]) => ({ date: shiftUsFederal(date), name }));
-  out.push({ date: nthWeekday(year, 1, 1, 3), name: 'Martin Luther King Jr. Day' });
-  out.push({ date: nthWeekday(year, 2, 1, 3), name: "Presidents' Day" });
-  out.push({ date: nthWeekday(year, 5, 1, -1), name: 'Memorial Day' });
-  out.push({ date: nthWeekday(year, 9, 1, 1), name: 'Labor Day' });
-  out.push({ date: nthWeekday(year, 10, 1, 2), name: 'Columbus Day' });
-  out.push({ date: nthWeekday(year, 11, 4, 4), name: 'Thanksgiving' });
-  return out;
-}
-
 const RULES = {
   ZA: southAfrica,
   DE: germany,
   GB: unitedKingdom,
-  CH: switzerland,
-  NL: netherlands,
-  US: unitedStates,
 };
 
 const DEFAULT_COUNTRIES = Object.keys(RULES);
