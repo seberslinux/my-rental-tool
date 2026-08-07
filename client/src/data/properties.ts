@@ -1,3 +1,4 @@
+import { fmtMoney } from './format';
 export interface Property {
   id: number;
   name: string;
@@ -14,7 +15,22 @@ export interface Booking {
   name: string;
   checkIn: Date;
   checkOut: Date;
+  /** Gross — what the guest was charged, before platform commission. */
   total: number;
+  /** Commission + bank charges + VAT, computed server-side. */
+  deductions: number;
+  /** What actually lands in the account. */
+  netPayout: number;
+  /** Adults, as Smoobu counts them — children are the separate field below. */
+  numGuests: number | null;
+  children: number;
+}
+
+/** One synced day from Smoobu. `available: false` is Smoobu's own block flag. */
+export interface DailyRate {
+  price: number;
+  minStay: number;
+  available: boolean;
 }
 
 export const D = (year: number, month: number, day: number) =>
@@ -22,13 +38,23 @@ new Date(year, month - 1, day);
 
 const now = new Date();
 export const TODAY = D(now.getFullYear(), now.getMonth() + 1, now.getDate());
-export const HOLIDAY = D(2026, 3, 21);
 export const CLEANER_TOGGLE = true;
 
 // Live data — populated by loadCalendarData(), read by all components
 export let properties: Property[] = [];
 export let bookings: Booking[] = [];
 export let cleaners: Record<number, number[]> = {};
+// propId → 'YYYY-MM-DD' → rate. Only days Smoobu has actually published
+// appear; a missing day means "no rate synced", which the calendar draws as
+// blank rather than guessing.
+export let dailyRates: Record<number, Record<string, DailyRate>> = {};
+
+/** Local-time YYYY-MM-DD. `toISOString()` would shift SAST dates back a day. */
+export function dateKey(date: Date): string {
+  const m = String(date.getMonth() + 1).padStart(2, '0');
+  const d = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${m}-${d}`;
+}
 
 // Map API platform string → ChannelType
 function mapPlatform(platform: string): ChannelType {
@@ -44,10 +70,18 @@ function mapPlatform(platform: string): ChannelType {
 
 // Fetch from real API — call once after auth, before rendering calendar
 export async function loadCalendarData(): Promise<void> {
-  const [propsRes, bookingsRes, statsRes] = await Promise.all([
+  // Rates from a month back so paging one month into the past still shows
+  // them, forward to the booking sync's own 180-day horizon.
+  const ratesFrom = dateKey(new Date(now.getTime() - 31 * 86400000));
+  const ratesTo = dateKey(new Date(now.getTime() + 180 * 86400000));
+
+  const [propsRes, bookingsRes, statsRes, ratesRes] = await Promise.all([
     fetch('/api/properties', { credentials: 'same-origin' }),
     fetch('/api/bookings', { credentials: 'same-origin' }),
     fetch('/api/dashboard/stats', { credentials: 'same-origin' }),
+    fetch(`/api/calendar/rates?from=${ratesFrom}&to=${ratesTo}`, {
+      credentials: 'same-origin',
+    }),
   ]);
 
   if (propsRes.ok) {
@@ -63,15 +97,42 @@ export async function loadCalendarData(): Promise<void> {
   if (bookingsRes.ok) {
     const bData = await bookingsRes.json();
     const bArray: any[] = (bData.bookings || bData).filter((b: any) => b.status !== 'cancelled');
-    bookings = bArray.map((b) => ({
+    bookings = bArray.map((b) => {
+      const type = mapPlatform(b.platform);
+      return {
       id: String(b.id),
       propId: b.property_id,
-      type: mapPlatform(b.platform),
-      name: b.guest_name || 'Guest',
+      type,
+      // A block has no guest, so the old `|| 'Guest'` fallback labelled
+      // every maintenance and renovation hold as one — a blocked week
+      // read as an occupied week with an anonymous visitor in it.
+      name: b.guest_name || (type === 'blocked' ? 'Blocked' : 'Guest'),
       checkIn: new Date(b.check_in + 'T00:00:00'),
       checkOut: new Date(b.check_out + 'T00:00:00'),
-      total: b.total_price || 0,
-    }));
+      // converted_* are in the display currency; net_payout and deductions
+      // are computed server-side by calcDeductions — the same function the
+      // dashboard KPIs and the analytics page use. Nothing is recomputed here.
+      total: b.converted_total_price ?? b.total_price ?? 0,
+      deductions: b.deductions ?? 0,
+      netPayout: b.net_payout ?? b.converted_total_price ?? b.total_price ?? 0,
+      numGuests: b.num_guests ?? null,
+      children: b.children || 0,
+      };
+    });
+  }
+
+  if (ratesRes.ok) {
+    const { rates = [] } = await ratesRes.json();
+    const map: Record<number, Record<string, DailyRate>> = {};
+    rates.forEach((r: any) => {
+      if (!map[r.property_id]) map[r.property_id] = {};
+      map[r.property_id][r.date] = {
+        price: Number(r.price) || 0,
+        minStay: Number(r.min_stay) || 1,
+        available: r.available !== 0,
+      };
+    });
+    dailyRates = map;
   }
 
   // Build cleaners map from pending cleaning jobs
@@ -89,22 +150,41 @@ export async function loadCalendarData(): Promise<void> {
   }
 }
 
-// Helper functions (unchanged — they read from the module-level arrays above)
-export function getRate(propId: number, date: Date): number {
-  const prop = properties.find((p) => p.id === propId);
-  if (!prop) return 0;
-  const dayOfWeek = date.getDay();
-  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-  return isWeekend ? Math.round(prop.base * 1.3) : prop.base;
+/**
+ * The nightly rate Smoobu publishes for this day, or null if none is synced.
+ *
+ * This used to be invented: `base_price` for weekdays and `base_price * 1.3`
+ * for weekends. `base_price` is Smoobu's minimum-price *floor*, not a rate —
+ * on The loft it is R80, while the room actually sells around R3,000 — and
+ * the 1.3 weekend multiplier corresponded to nothing at all. The calendar
+ * was quoting R80 a night for a room at R3,012.
+ *
+ * Returning null where nothing is synced is deliberate. A blank cell reads
+ * as "not set"; a wrong number reads as a price.
+ */
+export function getRate(propId: number, date: Date): DailyRate | null {
+  return dailyRates[propId]?.[dateKey(date)] ?? null;
 }
 
-export function formatRate(rate: number): string {
-  return rate >= 1000 ? `R ${(rate / 1000).toFixed(1)}K` : `R ${rate}`;
-}
+// Both are the shared formatter. They kept their own spelling before —
+// "R6.0K" here against the dashboard's "R 6.0K" — for no reason beyond
+// having been written twice.
+export const formatRate = fmtMoney;
+export const formatTotal = fmtMoney;
 
-export function formatTotal(amount: number): string {
-  if (!amount) return '';
-  return amount >= 1000 ? `R${(amount / 1000).toFixed(1)}K` : `R${amount}`;
+/**
+ * Where a stay sits relative to today.
+ *
+ * The detail sheet labelled its channel row "Status" and answered
+ * "Airbnb", which is not a status. Airbnb is who sold it; this is what is
+ * happening. Cancelled bookings never reach the calendar — they are
+ * filtered on load — so the states below are the whole set.
+ */
+export function stayStatus(b: Booking): string {
+  if (b.type === 'blocked') return 'Blocked';
+  if (b.checkOut <= TODAY) return 'Checked out';
+  if (b.checkIn <= TODAY) return 'In house';
+  return 'Confirmed';
 }
 
 export function dateEqual(d1: Date, d2: Date): boolean {

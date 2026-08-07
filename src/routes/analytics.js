@@ -19,6 +19,7 @@ const {
 // Single source of truth for revenue attribution — shared with the Home
 // dashboard KPIs so the two pages can never disagree.
 const { revenueInWindow, nightsSoldInWindow } = require('../services/revenue');
+const { syncRates } = require('../services/rate-sync');
 
 // `to` params are inclusive dates; revenue windows are half-open [from, to).
 function addDaysStr(dateStr, days) {
@@ -51,48 +52,19 @@ function addPropertyFilter(propIds, column, params) {
   return ` AND ${column} IN (${placeholders})`;
 }
 
-// Sync rates from Smoobu for analytics (GET only, no writes to Smoobu)
+// Sync rates from Smoobu (GET only, no writes to Smoobu).
+//
+// The fetch-and-store loop lives in services/rate-sync.js because the
+// booking sync runs it too — this endpoint remains for a manual refresh.
+// Its own copy of the loop had drifted to a 60-day horizon while bookings
+// ran to 180, so the calendar lost rates three months before it lost
+// bookings.
 router.post('/sync-rates', async (req, res) => {
   try {
-    const properties = await getAll('SELECT * FROM properties');
-    const today = new Date().toISOString().split('T')[0];
-    const sixtyDaysOut = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .split('T')[0];
-
-    let totalSynced = 0;
-
-    for (const p of properties) {
-      try {
-        const apiKey = await getApiKeyForProperty(p.id);
-        const ratesData = await smoobu.getRates(p.smoobu_id, today, sixtyDaysOut, apiKey);
-        // Smoobu returns rates keyed by apartment ID
-        const apartmentRates = ratesData?.data?.[p.smoobu_id] || ratesData?.[p.smoobu_id] || {};
-
-        await transaction(async (client) => {
-          for (const [date, info] of Object.entries(apartmentRates)) {
-            const price = info?.price || info?.daily_price || 0;
-            const minStay = info?.min_length_of_stay || info?.minLengthOfStay || 1;
-            const available = info?.available !== undefined ? (info.available ? 1 : 0) : 1;
-            await client.query(
-              `INSERT INTO daily_rates (property_id, date, price, min_stay, available)
-               VALUES ($1, $2, $3, $4, $5)
-               ON CONFLICT(property_id, date) DO UPDATE SET
-                 price = EXCLUDED.price,
-                 min_stay = EXCLUDED.min_stay,
-                 available = EXCLUDED.available,
-                 fetched_at = NOW()`,
-              [p.id, date, price, minStay, available]
-            );
-            totalSynced++;
-          }
-        });
-      } catch (err) {
-        console.error(`Rate sync failed for ${p.name}:`, err.message);
-      }
-    }
-
-    res.json({ synced: totalSynced });
+    const result = await syncRates({
+      apiKeyForProperty: (p) => getApiKeyForProperty(p.id),
+    });
+    res.json({ synced: result.synced, failures: result.failures });
   } catch (err) {
     console.error('Rate sync failed:', err.message);
     res.status(500).json({ error: err.message });

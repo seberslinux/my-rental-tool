@@ -25,11 +25,15 @@ export function BookingBar({ booking, style, onClick }: BookingBarProps) {
           icon: 'bg-[#717171] text-white font-extrabold text-[9px]'
         };
       case 'blocked':
+        // A block is the one bar that means "no money here", so it has to
+        // read as deliberate rather than as a rendering artefact. The old
+        // #F5F5F5-on-#EBEBEB hatch was a 4% contrast step that vanished
+        // outright once the past-dimming was applied on top of it.
         return {
-          bar: 'text-[#999999]',
-          icon: 'bg-black/10 text-[#717171] font-bold text-[9px]',
+          bar: 'text-[#5A5A5A] ring-1 ring-inset ring-[#D0D0D0]',
+          icon: 'bg-[#8A8A8A] text-white font-bold text-[9px]',
           customBg:
-          'repeating-linear-gradient(-45deg, #F5F5F5, #F5F5F5 3px, #EBEBEB 3px, #EBEBEB 6px)'
+          'repeating-linear-gradient(-45deg, #EDEDED, #EDEDED 4px, #D6D6D6 4px, #D6D6D6 8px)'
         };
     }
   };
@@ -58,7 +62,9 @@ export function BookingBar({ booking, style, onClick }: BookingBarProps) {
   return (
     <div
       onClick={() => onClick?.(booking)}
-      className={`absolute h-[26px] flex items-center gap-1.5 px-1.5 overflow-hidden text-[10px] font-semibold cursor-pointer transition-opacity hover:opacity-80 active:opacity-60 shadow-[0_1px_2px_rgba(0,0,0,0.06)] ${styles.bar} ${isPast ? 'grayscale-[50%] opacity-30' : ''}`}
+      // Past stays are de-emphasised, not erased — at opacity-30 a whole
+      // completed week read as a rendering fault rather than as history.
+      className={`absolute h-[26px] flex items-center gap-1.5 px-1.5 overflow-hidden text-[10px] font-semibold cursor-pointer transition-opacity hover:opacity-100 active:opacity-75 shadow-[0_1px_2px_rgba(0,0,0,0.06)] ${styles.bar} ${isPast ? 'grayscale-[40%] opacity-55' : ''}`}
       style={{
         ...style,
         background: styles.customBg || undefined

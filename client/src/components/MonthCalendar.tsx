@@ -2,7 +2,6 @@ import React, { useMemo, useState } from 'react';
 import {
   Booking,
   TODAY,
-  HOLIDAY,
   CLEANER_TOGGLE,
   cleaners,
   getRate,
@@ -42,6 +41,16 @@ export function MonthCalendar({
   const isOnCurrentMonth = useMemo(() => {
     const now = new Date();
     return anchor.getFullYear() === now.getFullYear() && anchor.getMonth() === now.getMonth();
+  }, [anchor]);
+
+  // Names the three months on screen, e.g. "Aug – Oct 2026".
+  const rangeLabel = useMemo(() => {
+    const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+    const last = new Date(anchor.getFullYear(), anchor.getMonth() + 2, 1);
+    const mon = (d: Date) => d.toLocaleDateString('en-ZA', { month: 'short' });
+    return first.getFullYear() === last.getFullYear()
+      ? `${mon(first)} – ${mon(last)} ${last.getFullYear()}`
+      : `${mon(first)} ${first.getFullYear()} – ${mon(last)} ${last.getFullYear()}`;
   }, [anchor]);
 
   const monthsData = useMemo(() => {
@@ -85,23 +94,30 @@ export function MonthCalendar({
         });
       }
       // Calculate booking segments for this month's grid
-      const segments: {
-        booking: Booking;
-        rowIdx: number;
-        startCol: number;
-        endCol: number;
-        isFirst: boolean;
-        isLast: boolean;
-      }[] = [];
+      type Seg = {
+        booking: Booking; rowIdx: number; startCol: number; endCol: number;
+        startDate: Date; endDate: Date;
+      };
+      const segments: Seg[] = [];
       bookings.forEach((booking) => {
-        type Seg = {
-          booking: Booking; rowIdx: number; startCol: number;
-          endCol: number; isFirst: boolean; isLast: boolean;
-        };
         let currentSegment: Seg | null = null;
         cells.forEach((cell, idx) => {
+          // Two conditions, and the first one is easy to miss.
+          //
+          // `!isOtherMonth`: every month's grid pads its first and last
+          // rows with days from the neighbouring months. Those cells are
+          // rendered `invisible`, but the bar layer floats above the grid
+          // and did not consult the flag — so a stay ending 31 July drew
+          // itself across August's leading row, under blank date cells,
+          // looking for all the world like an August booking. It is also
+          // drawn correctly in July's own grid directly above. Clip it.
+          //
+          // Inclusive of check-out: the nights sold run [checkIn,
+          // checkOut), but the bar has to reach into the check-out
+          // morning, and half a cell is trimmed off each end below.
           const isInBooking =
-          cell.date >= booking.checkIn && cell.date < booking.checkOut;
+          !cell.isOtherMonth &&
+          cell.date >= booking.checkIn && cell.date <= booking.checkOut;
           const rowIdx = Math.floor(idx / 7);
           const colIdx = idx % 7;
           if (isInBooking) {
@@ -112,14 +128,14 @@ export function MonthCalendar({
                 rowIdx,
                 startCol: colIdx,
                 endCol: colIdx,
-                isFirst: idx === 0 || cells[idx - 1].date < booking.checkIn,
-                isLast: false
+                startDate: cell.date,
+                endDate: cell.date
               };
             } else {
               currentSegment.endCol = colIdx;
+              currentSegment.endDate = cell.date;
             }
           } else if (currentSegment) {
-            currentSegment.isLast = true;
             segments.push(currentSegment);
             currentSegment = null;
           }
@@ -127,10 +143,7 @@ export function MonthCalendar({
         // TypeScript can't follow the assignments made inside the forEach
         // callback above, so it narrows this to null. Re-widen at the read.
         const trailing = currentSegment as Seg | null;
-        if (trailing) {
-          trailing.isLast = true;
-          segments.push(trailing);
-        }
+        if (trailing) segments.push(trailing);
       });
       return {
         name,
@@ -145,35 +158,54 @@ export function MonthCalendar({
       {/* Paging. Sticky so it stays reachable while scrolling three months
           of grid on a phone. */}
       <div className="sticky top-0 z-20 bg-white/95 backdrop-blur-sm border-b border-[#F0F0F0]">
-      <div className="flex items-center justify-between px-4 py-2.5">
+      {/* The middle slot used to hold a "Today" button that disabled
+          itself whenever you were already on the current month — which is
+          the default view, so it sat there greyed out doing nothing and
+          reading as broken. A pager's centre should name what you are
+          looking at; the jump-back only appears once it has somewhere to
+          jump to. */}
+      <div className="flex items-center gap-1 px-3 py-2.5">
         <button
           onClick={() => shiftAnchor(-1)}
           aria-label="Previous month"
-          className="w-9 h-9 rounded-full flex items-center justify-center text-[#222222] hover:bg-[#F7F7F7] active:bg-[#F0F0F0] transition-colors">
+          className="w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-[#222222] hover:bg-[#F7F7F7] active:bg-[#F0F0F0] transition-colors">
           <ChevronLeft className="w-5 h-5" strokeWidth={2} />
         </button>
 
+        <div className="flex-1 text-center text-[14px] font-semibold text-[#222222] truncate">
+          {rangeLabel}
+        </div>
+
+        {!isOnCurrentMonth &&
         <button
           onClick={goToToday}
-          disabled={isOnCurrentMonth}
-          className={`text-[13px] font-medium px-3 py-1.5 rounded-full transition-colors ${
-            isOnCurrentMonth
-              ? 'text-[#B0B0B0] cursor-default'
-              : 'text-[#FF385C] hover:bg-[#FFF0F3]'
-          }`}>
+          className="shrink-0 text-[12px] font-semibold px-3 py-1.5 rounded-full border border-[#DDDDDD] text-[#222222] hover:bg-[#F7F7F7] active:bg-[#F0F0F0] transition-colors">
           Today
         </button>
+        }
 
         <button
           onClick={() => shiftAnchor(1)}
           aria-label="Next month"
-          className="w-9 h-9 rounded-full flex items-center justify-center text-[#222222] hover:bg-[#F7F7F7] active:bg-[#F0F0F0] transition-colors">
+          className="w-9 h-9 shrink-0 rounded-full flex items-center justify-center text-[#222222] hover:bg-[#F7F7F7] active:bg-[#F0F0F0] transition-colors">
           <ChevronRight className="w-5 h-5" strokeWidth={2} />
         </button>
       </div>
 
-        <div className="grid grid-cols-7 pb-2 text-[11px] font-medium text-[#B0B0B0] text-center uppercase tracking-[0.5px]">
-          <div>S</div><div>M</div><div>T</div><div>W</div><div>T</div><div>F</div><div>S</div>
+        {/* Two letters, not one: "S M T W T F S" repeats T and S, so the
+            column you land on has to be counted rather than read. Bold and
+            near-black — at #B0B0B0 the header was fainter than the dates
+            it labels.
+            Weekends carry the emphasis, not the weekdays. The usual
+            calendar convention greys them out because they are the days
+            off; here they are the nights that earn the premium — R2.1K
+            against R1.6K midweek — and they are what you scan for. The
+            shaded weekend columns say the same thing, so muting their
+            labels had the header arguing with the grid beneath it. */}
+        <div className="grid grid-cols-7 pb-2 px-3 text-[11px] font-semibold text-center uppercase tracking-[0.4px]">
+          {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d, i) =>
+          <div key={d} className={i === 0 || i === 6 ? 'text-[#222222]' : 'text-[#8A8A8A]'}>{d}</div>
+          )}
         </div>
       </div>
 
@@ -183,53 +215,89 @@ export function MonthCalendar({
             {month.name} {month.year}
           </div>
 
-          <div className="relative">
-            {/* Grid */}
-            <div className="grid grid-cols-7 gap-0">
+          <div className="relative px-3">
+            {/* The grid needs to look like one.
+                Cells had no borders at all and neighbouring-month cells
+                were `invisible`, so the month rendered as loose numbers
+                floating in white with holes punched in the corners. Every
+                cell now carries a hairline and the padding cells stay in
+                place, empty, holding the rectangle together.
+
+                Weekend columns previously took a grey fill. Run down a
+                full month at desktop width that became two floor-to-
+                ceiling grey bands reading as damage rather than emphasis —
+                the header already carries that signal in one line. */}
+            <div className="grid grid-cols-7 gap-0 border-t border-l border-[#EBEBEB]">
               {month.cells.map((cell, idx) => {
               const isPast = cell.date < TODAY;
               const isToday = dateEqual(cell.date, TODAY);
-              const isHoliday = dateEqual(cell.date, HOLIDAY);
-              const isWeekend =
-              cell.date.getDay() === 0 || cell.date.getDay() === 6;
+              const rate = getRate(propertyId, cell.date);
               const hasCleaner =
               CLEANER_TOGGLE &&
               !cell.isOtherMonth &&
               cleaners[propertyId]?.includes(cell.date.getDate());
               const isCovered = isDateCovered(cell.date, propertyId);
-              // Add subtle horizontal line between weeks
-              const isFirstRow = idx < 7;
-              const borderTop =
-              !isFirstRow && idx % 7 === 0 ?
-              'border-t border-[#F0F0F0]' :
-              '';
+              // Smoobu's own block flag: the night is not for sale, which
+              // is not the same as having a booking on it.
+              const isClosed = rate ? !rate.available : false;
+              const edges = 'border-r border-b border-[#EBEBEB]';
+
+              if (cell.isOtherMonth) {
+                return <div key={idx} className={`h-[84px] bg-[#FCFCFC] ${edges}`} />;
+              }
+
               return (
                 <div
                   key={idx}
-                  className={`h-[88px] relative flex flex-col items-center pt-2 ${borderTop} ${cell.isOtherMonth ? 'invisible' : ''} ${isPast ? 'opacity-30' : ''}`}>
-                  
-                    {/* Day Number */}
-                    <div
-                    className={`w-[26px] h-[26px] rounded-full flex items-center justify-center text-[13px] font-normal relative z-10
-                        ${isToday ? 'bg-[#FF385C] text-white font-medium' : 'text-[#222222]'}
-                        ${isHoliday && !isToday ? 'shadow-[inset_0_0_0_1.5px_#222222]' : ''}
-                      `}>
-                    
-                      {cell.date.getDate()}
+                  className={`h-[84px] relative ${edges} ${
+                  isToday ? 'bg-[#F7F7F7]' : isClosed ? 'bg-[#F2F2F2]' : ''}`}>
+
+                    {/* Date on the left, price on the right, both on one
+                        line at the top. Centring the date and stacking the
+                        price beneath it left the booking bars nowhere to
+                        sit and wasted the bottom half of every cell. */}
+                    <div className="pl-1.5 pr-2 pt-1.5">
+                      {/* Today used to be a filled #FF385C disc — the same
+                          pink the Airbnb bars use, so the marker read as a
+                          booking on that date. A channel colour cannot also
+                          mean "you are here". */}
+                      <div
+                      className={`w-[24px] h-[24px] rounded-full flex items-center justify-center text-[13px] shrink-0 font-normal
+                          ${isToday ? 'bg-[#222222] text-white font-semibold' : ''}
+                          ${isClosed && !isToday ? 'text-[#8A8A8A] line-through decoration-[1.5px]' : ''}
+                          ${!isClosed && !isToday ? (isPast ? 'text-[#B0B0B0]' : 'text-[#222222]') : ''}
+                        `}>
+                        {cell.date.getDate()}
+                      </div>
+
                     </div>
 
-                    {/* Rate */}
-                    {!cell.isOtherMonth && !isCovered &&
-                  <div
-                    className={`mt-0.5 text-[10px] ${isWeekend ? 'text-[#00A699]' : 'text-[#717171]'}`}>
-                    
-                        {formatRate(getRate(propertyId, cell.date))}
-                      </div>
+                    {/* Nightly rate, straight from Smoobu. Blank where no
+                        rate is synced — the calendar no longer guesses.
+                        Its own line at the foot of the cell: sharing the
+                        top line with the date left it about 20px on a
+                        phone, so "R 1.6K" broke across two lines.
+
+                        It reads at 12px near-black rather than 10px grey.
+                        Both Airbnb's and Booking.com's calendars make the
+                        nightly rate the loudest thing after the date, and
+                        they are right to — on an open night it is the one
+                        number you act on. Ours whispered it. */}
+                    {!isCovered && rate &&
+                  <span
+                    className={`absolute bottom-2 left-2 text-[12px] font-medium tabular-nums whitespace-nowrap ${
+                      isClosed ? 'text-[#8A8A8A]' :
+                      isPast ? 'text-[#B0B0B0]' : 'text-[#222222]'
+                    }`}>
+                        {formatRate(rate.price)}
+                      </span>
                   }
 
                     {/* Cleaner Dot */}
                     {hasCleaner &&
-                  <div className="absolute w-[5px] h-[5px] bg-[#00A699] rounded-full bottom-2 left-1/2 -translate-x-1/2" />
+                  <div
+                    title="Cleaning scheduled"
+                    className="absolute w-[5px] h-[5px] bg-[#00A699] rounded-full top-3.5 right-2" />
                   }
                   </div>);
 
@@ -237,27 +305,42 @@ export function MonthCalendar({
             </div>
 
             {/* Bars Layer */}
-            <div className="absolute inset-0 pointer-events-none z-10">
+            <div className="absolute inset-y-0 left-3 right-3 pointer-events-none z-10">
               {month.segments.map((seg, sIdx) => {
               // Responsive percentage calculations
+              // Trim only where the bar genuinely begins or ends. A
+              // segment cut short by a row break — or by the month edge —
+              // must run flush to that edge and continue in the next row
+              // or the neighbouring month's grid.
+              const isFirst = dateEqual(seg.startDate, seg.booking.checkIn);
+              const isLast = dateEqual(seg.endDate, seg.booking.checkOut);
               const cellWidthPct = 100 / 7;
               let leftPct = seg.startCol * cellWidthPct;
               let widthPct = (seg.endCol - seg.startCol + 1) * cellWidthPct;
-              if (seg.isFirst) {
+              // Half a cell off each end: the bar starts mid-check-in-day
+              // and ends mid-check-out-day, so a departure and an arrival
+              // on the same date visibly share it. The end used to be
+              // trimmed by 0.25 of the *last night's* cell, which stopped
+              // the bar three-quarters of the way through the final night
+              // and never reached the check-out day at all.
+              if (isFirst) {
                 leftPct += cellWidthPct * 0.5;
                 widthPct -= cellWidthPct * 0.5;
               }
-              if (seg.isLast) {
-                widthPct -= cellWidthPct * 0.25;
+              if (isLast) {
+                widthPct -= cellWidthPct * 0.5;
               }
-              // Top offset: row index * 88px (cell height) + 38px (vertical offset)
-              const topPx = seg.rowIdx * 88 + 38;
+              // A same-day check-in/check-out would otherwise be invisible.
+              widthPct = Math.max(widthPct, cellWidthPct * 0.25);
+              // Cell is 84px; the date/price line occupies the top ~30px,
+              // so the bar lane starts below it.
+              const topPx = seg.rowIdx * 84 + 34;
               // Border radius logic
-              const isSingleRow = seg.isFirst && seg.isLast;
+              const isSingleRow = isFirst && isLast;
               let borderRadius = '0';
               if (isSingleRow) borderRadius = '13px';else
-              if (seg.isFirst) borderRadius = '13px 0 0 13px';else
-              if (seg.isLast) borderRadius = '0 13px 13px 0';
+              if (isFirst) borderRadius = '13px 0 0 13px';else
+              if (isLast) borderRadius = '0 13px 13px 0';
               return (
                 <BookingBar
                   key={`${seg.booking.id}-${sIdx}`}
