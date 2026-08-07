@@ -121,10 +121,109 @@ function aggregateRevenueByMonth(bookings, todayStr) {
   return Object.values(revenueByMonth).sort((a, b) => a.month.localeCompare(b.month));
 }
 
+/**
+ * Per-property revenue aggregation.
+ *
+ * Returns an array of { property_id, property, total, bookings, nights,
+ * top_platform } — one entry per property that appears in `bookings`.
+ * Properties with no bookings are not represented.
+ */
+function aggregateRevenueByProperty(bookings) {
+  const byId = new Map();
+  const platformCountsById = new Map();
+  for (const b of bookings) {
+    if (!byId.has(b.property_id)) {
+      byId.set(b.property_id, {
+        property_id: b.property_id,
+        property: b.property_name,
+        total: 0,
+        bookings: 0,
+        nights: 0,
+      });
+    }
+    const row = byId.get(b.property_id);
+    row.total += b.converted_total_price || 0;
+    row.bookings += 1;
+    row.nights += b.length_of_stay || 1;
+
+    const plat = normalizePlatform(b.platform);
+    if (!platformCountsById.has(b.property_id)) platformCountsById.set(b.property_id, new Map());
+    const counts = platformCountsById.get(b.property_id);
+    counts.set(plat, (counts.get(plat) || 0) + 1);
+  }
+  // Attach the most-common platform per property (ties broken by first-seen).
+  for (const [propertyId, counts] of platformCountsById) {
+    const sorted = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+    if (sorted.length > 0) byId.get(propertyId).top_platform = sorted[0][0];
+  }
+  return [...byId.values()];
+}
+
+/**
+ * Per-platform (channel) revenue aggregation.
+ *
+ * Returns an array of { channel, revenue, bookings, nights, adr } — one entry
+ * per canonical platform name (as produced by normalizePlatform). ADR is
+ * revenue / nights, rounded to the nearest integer (0 when no nights).
+ */
+function aggregateRevenueByPlatform(bookings) {
+  const byChannel = new Map();
+  for (const b of bookings) {
+    const ch = normalizePlatform(b.platform);
+    if (!byChannel.has(ch)) {
+      byChannel.set(ch, { channel: ch, revenue: 0, bookings: 0, nights: 0 });
+    }
+    const row = byChannel.get(ch);
+    row.revenue += b.converted_total_price || 0;
+    row.bookings += 1;
+    row.nights += b.length_of_stay || 1;
+  }
+  for (const row of byChannel.values()) {
+    row.adr = row.nights > 0 ? Math.round(row.revenue / row.nights) : 0;
+  }
+  return [...byChannel.values()];
+}
+
+/**
+ * ADR (Average Daily Rate) per month.
+ *
+ * Returns an array of { month, adr } sorted ascending. ADR is the total
+ * revenue for the month divided by total nights booked, rounded.
+ */
+function aggregateAdrByMonth(bookings) {
+  const byMonth = new Map();
+  for (const b of bookings) {
+    const month = b.check_in.substring(0, 7);
+    if (!byMonth.has(month)) byMonth.set(month, { total_revenue: 0, total_nights: 0 });
+    const row = byMonth.get(month);
+    row.total_revenue += b.converted_total_price || 0;
+    row.total_nights += b.length_of_stay || 1;
+  }
+  return [...byMonth.entries()]
+    .map(([month, r]) => ({ month, adr: r.total_nights > 0 ? Math.round(r.total_revenue / r.total_nights) : 0 }))
+    .sort((a, b) => a.month.localeCompare(b.month));
+}
+
+/**
+ * Portfolio-wide total revenue across all bookings (no grouping).
+ *
+ * The single-source-of-truth number that every facet aggregation must
+ * reconcile against. Used by the reconciliation tests.
+ */
+function portfolioTotalRevenue(bookings) {
+  let total = 0;
+  for (const b of bookings) total += b.converted_total_price || 0;
+  return total;
+}
+
 module.exports = {
   calcDeductions,
   isBlockedPlatform,
   normalizePlatform,
   analyzeSentiment,
   aggregateRevenueByMonth,
+  aggregateRevenueByProperty,
+  aggregateRevenueByPlatform,
+  aggregateAdrByMonth,
+  portfolioTotalRevenue,
 };
