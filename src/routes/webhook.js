@@ -58,15 +58,16 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
     }
 
     if (action === 'newReservation' || action === 'new') {
+      const commission = bookingData['commission-included'] || bookingData.commissionIncluded || 0;
       // Upsert booking
       await run(
-        `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed', $8)
+        `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, commission)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed', $8, $9)
          ON CONFLICT(smoobu_id) DO UPDATE SET
            guest_name = CASE WHEN EXCLUDED.guest_name = '' THEN bookings.guest_name ELSE EXCLUDED.guest_name END, check_in = EXCLUDED.check_in,
            check_out = EXCLUDED.check_out, platform = EXCLUDED.platform,
            total_price = EXCLUDED.total_price, status = 'confirmed',
-           num_guests = EXCLUDED.num_guests`,
+           num_guests = EXCLUDED.num_guests, commission = EXCLUDED.commission`,
         [
           smoobuId,
           property.id,
@@ -75,7 +76,8 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
           bookingData.departure || bookingData.departureDate,
           bookingData['channel']?.name || bookingData.channel || '',
           bookingData.price || 0,
-          bookingData.adults || 1
+          bookingData.adults || 1,
+          commission
         ]
       );
 

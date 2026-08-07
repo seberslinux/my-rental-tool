@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const {
   revenueEarned,
   revenueComing,
+  revenueEarnedNet,
+  revenueComingNet,
   avgRateEarned,
 } = require('../src/services/dashboard-calc');
 
@@ -159,4 +161,80 @@ test('avgRateEarned: future/cancelled/blocked bookings not averaged in', async (
     b({ check_out: '2025-06-15', converted_price_per_night: 9000, platform: 'Blocked' }),
   ];
   assert.equal(avgRateEarned(rows, '2025-06-30', 30), 1000);
+});
+
+// --- revenueEarnedNet / revenueComingNet --------------------------------
+
+// Booking with airbnb rates configured on the property so calcDeductions
+// has something to subtract from gross.
+function bWithFees(overrides = {}) {
+  return b({
+    platform: 'Airbnb',
+    prop_commission_airbnb: 15,   // 15% commission
+    bank_charge_airbnb: 2,        // 2% bank charge
+    vat_airbnb: 15,               // 15% VAT on comm + bank
+    ...overrides,
+  });
+}
+
+test('revenueEarnedNet: subtracts commission + bank + VAT from gross', async () => {
+  // gross 1000 → comm 150 + bank 20 + vat (150+20)*15% = 25.5 → deductions 195.5
+  // net = 1000 - 195.5 = 804.5
+  const rows = [bWithFees({ check_out: '2025-06-13', converted_total_price: 1000 })];
+  assert.equal(revenueEarnedNet(rows, '2025-06-30', 30), 804.5);
+});
+
+test('revenueEarnedNet: direct bookings contribute full gross (0 deductions)', async () => {
+  const rows = [bWithFees({
+    check_out: '2025-06-13',
+    converted_total_price: 1000,
+    platform: 'Direct booking',
+  })];
+  assert.equal(revenueEarnedNet(rows, '2025-06-30', 30), 1000);
+});
+
+test('revenueEarnedNet: falls back to Smoobu\'s converted_commission when no property rate configured', async () => {
+  // No prop_commission_airbnb set → calcDeductions uses converted_commission.
+  // gross 5000, Smoobu commission 750 → net = 5000 - 750 = 4250
+  const rows = [b({
+    platform: 'Booking.com',
+    check_out: '2025-06-13',
+    converted_total_price: 5000,
+    converted_commission: 750,
+  })];
+  assert.equal(revenueEarnedNet(rows, '2025-06-30', 30), 4250);
+});
+
+test('revenueEarnedNet: excludes cancelled and blocked, respects window', async () => {
+  const rows = [
+    bWithFees({ check_out: '2025-06-13', converted_total_price: 1000 }),        // in
+    bWithFees({ check_out: '2025-07-10', converted_total_price: 1000 }),        // future — excluded
+    bWithFees({ check_out: '2025-05-01', converted_total_price: 1000 }),        // too old — excluded
+    bWithFees({ check_out: '2025-06-14', converted_total_price: 1000, status: 'cancelled' }),
+    bWithFees({ check_out: '2025-06-15', converted_total_price: 1000, platform: 'Blocked' }),
+  ];
+  assert.equal(revenueEarnedNet(rows, '2025-06-30', 30), 804.5);
+});
+
+test('revenueComingNet: sums (gross - deductions) across future bookings only', async () => {
+  const rows = [
+    bWithFees({ check_out: '2025-07-10', converted_total_price: 1000 }),        // net 804.5
+    b({ platform: 'Direct booking', check_out: '2025-07-15', converted_total_price: 500 }), // net 500
+    bWithFees({ check_out: '2025-06-13', converted_total_price: 1000 }),        // past — excluded
+  ];
+  assert.equal(revenueComingNet(rows, '2025-06-30'), 1304.5);
+});
+
+test('gross vs net invariant: gross >= net on realistic input', async () => {
+  const rows = [
+    bWithFees({ check_out: '2025-06-13', converted_total_price: 3000 }),
+    bWithFees({ check_out: '2025-06-20', converted_total_price: 5000 }),
+  ];
+  const gross = revenueEarned(rows, '2025-06-30', 30);
+  const net = revenueEarnedNet(rows, '2025-06-30', 30);
+  assert.ok(gross >= net, `net (${net}) should never exceed gross (${gross})`);
+  assert.equal(gross, 8000);
+  // Both bookings: comm 15% + bank 2% + vat 15% of (comm+bank) → 19.55%
+  // 8000 * 0.1955 = 1564 → net = 8000 - 1564 = 6436
+  assert.equal(net, 6436);
 });

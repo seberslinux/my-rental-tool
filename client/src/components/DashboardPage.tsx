@@ -25,6 +25,11 @@ export function DashboardPage() {
             <div className="text-[20px] font-bold tracking-[-0.3px] text-[#222222] truncate">
               {kpi.value}
             </div>
+            {kpi.subvalue &&
+            <div className="text-[11px] text-[#717171] mt-0.5 truncate">
+              {kpi.subvalue}
+            </div>
+            }
             {kpi.trend &&
             <div
             className={`text-[11px] font-medium mt-0.5 ${kpi.isPositive ? 'text-[#00A699]' : 'text-[#D93900]'}`}>

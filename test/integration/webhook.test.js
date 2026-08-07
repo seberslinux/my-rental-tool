@@ -139,6 +139,33 @@ test('newReservation replay with empty guest_name PRESERVES the original name', 
   assert.equal(row.rows[0].guest_name, 'Original');
 });
 
+test('newReservation stores commission-included from Smoobu payload', async () => {
+  const app = await getApp();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+
+  await request(app)
+    .post(goodUrl())
+    .send({
+      action: 'newReservation',
+      data: {
+        id: 8888,
+        apartment: { id: property.smoobu_id },
+        'guest-name': 'Commission Test',
+        arrival: '2025-06-10',
+        departure: '2025-06-13',
+        channel: { name: 'Booking.com' },
+        price: 5000,
+        adults: 2,
+        'commission-included': 750,
+      },
+    })
+    .expect(200);
+
+  const row = await pool.query('SELECT commission FROM bookings WHERE smoobu_id = $1', [8888]);
+  assert.equal(Number(row.rows[0].commission), 750);
+});
+
 // --- modifyReservation ----------------------------------------------------
 
 test('modifyReservation updates the row in place — no duplicate', async () => {
