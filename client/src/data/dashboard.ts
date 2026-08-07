@@ -104,11 +104,21 @@ function relativeDay(dateStr: string): string {
   return fmtDate(dateStr);
 }
 
+// Build the KPI endpoint URL, including a property_id filter when the user
+// has selected a single property (activePropertyFilter > 0). The server
+// scopes to the user's accessible properties in either case.
+function kpiUrl(propertyFilter: number): string {
+  return propertyFilter > 0
+    ? `/api/dashboard/kpis?property_id=${propertyFilter}`
+    : '/api/dashboard/kpis';
+}
+
 export async function loadDashboardData(): Promise<void> {
   try {
-    const [bookingsRes, statsRes] = await Promise.all([
+    const [bookingsRes, statsRes, kpisRes] = await Promise.all([
       fetch('/api/bookings', { credentials: 'same-origin' }),
       fetch('/api/dashboard/stats', { credentials: 'same-origin' }),
+      fetch(kpiUrl(activePropertyFilter), { credentials: 'same-origin' }),
     ]);
 
     const today = new Date().toISOString().split('T')[0];
@@ -171,63 +181,51 @@ export async function loadDashboardData(): Promise<void> {
       }
     }
 
-    // --- KPIs (current 30 days vs prior 30 days) ---
-    const realBookings = allBookings.filter((b: any) => !(b.platform || '').toLowerCase().includes('block'));
-    const thirtyDaysAgoStr = new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0];
-    const sixtyDaysAgoStr = new Date(Date.now() - 60 * 86400000).toISOString().split('T')[0];
-
-    const currentPeriod = realBookings.filter((b: any) => b.check_in >= thirtyDaysAgoStr);
-    const priorPeriod = realBookings.filter((b: any) => b.check_in >= sixtyDaysAgoStr && b.check_in < thirtyDaysAgoStr);
-
-    const totalRevenue = currentPeriod.reduce((s: number, b: any) => s + (b.total_price || 0), 0);
-    const priorRevenue = priorPeriod.reduce((s: number, b: any) => s + (b.total_price || 0), 0);
-    const revChange = priorRevenue > 0 ? Math.round(((totalRevenue - priorRevenue) / priorRevenue) * 100) : 0;
-
-    const avgOccupancy = stats.occupancy.length > 0
-      ? Math.round(stats.occupancy.reduce((s: number, o: any) => s + o.occupancy_rate, 0) / stats.occupancy.length)
-      : 0;
-
-    // Compute prior 30-day occupancy from bookings
-    const priorOccDays = 30;
-    const priorOccStart = sixtyDaysAgoStr;
-    const priorOccEnd = thirtyDaysAgoStr;
-    let priorBookedNights = 0;
-    const occProps = activePropertyFilter > 0
-      ? allProperties.filter((p) => p.id === activePropertyFilter)
-      : allProperties;
-    for (const p of occProps) {
-      const propBookings = realBookings.filter((b: any) =>
-        b.property_id === p.id && b.check_out >= priorOccStart && b.check_in <= priorOccEnd
-      );
-      for (const b of propBookings) {
-        const start = new Date(Math.max(new Date(b.check_in).getTime(), new Date(priorOccStart).getTime()));
-        const end = new Date(Math.min(new Date(b.check_out).getTime(), new Date(priorOccEnd).getTime()));
-        priorBookedNights += Math.max(0, Math.round((end.getTime() - start.getTime()) / 86400000));
-      }
-    }
-    const priorOccupancy = occProps.length > 0
-      ? Math.round((priorBookedNights / (priorOccDays * occProps.length)) * 100)
-      : 0;
-    const occChange = priorOccupancy > 0 ? Math.round(((avgOccupancy - priorOccupancy) / priorOccupancy) * 100) : 0;
-
-    const avgRate = currentPeriod.length > 0
-      ? Math.round(currentPeriod.reduce((s: number, b: any) => s + (b.price_per_night || 0), 0) / currentPeriod.length)
-      : 0;
-    const priorAvgRate = priorPeriod.length > 0
-      ? Math.round(priorPeriod.reduce((s: number, b: any) => s + (b.price_per_night || 0), 0) / priorPeriod.length)
-      : 0;
-    const rateChange = priorAvgRate > 0 ? Math.round(((avgRate - priorAvgRate) / priorAvgRate) * 100) : 0;
+    // --- KPIs (server-side, currency-corrected) ---
+    // GET /api/dashboard/kpis returns pre-computed values in the display
+    // currency; see the response shape in src/routes/api.js. This replaces
+    // the previous client-side reduction that (a) had an unbounded window
+    // filter and (b) summed raw `total_price` across mixed currencies.
+    let kpiBody: any = null;
+    if (kpisRes.ok) kpiBody = await kpisRes.json();
 
     function fmtChange(pct: number): string {
       if (pct === 0) return '';
       return `${pct > 0 ? '+' : ''}${pct}% vs prior 30d`;
     }
 
-    kpis = [
-      { label: 'Revenue', value: fmtMoney(totalRevenue), trend: fmtChange(revChange), isPositive: revChange >= 0, period: 'Last 30 days' },
-      { label: 'Occupancy', value: `${avgOccupancy}%`, trend: fmtChange(occChange), isPositive: occChange >= 0, period: 'Next 30 days' },
-      { label: 'Avg Rate', value: fmtMoney(avgRate), trend: fmtChange(rateChange), isPositive: rateChange >= 0, period: 'Last 30 days' },
-    ];
+    kpis = kpiBody ? [
+      {
+        label: 'Revenue Earned',
+        value: fmtMoney(kpiBody.revenue_earned.value),
+        trend: fmtChange(kpiBody.revenue_earned.change_pct),
+        isPositive: kpiBody.revenue_earned.change_pct >= 0,
+        period: 'Last 30 days',
+      },
+      // "Coming" has no natural prior baseline (future bookings drift as
+      // guests book), so no trend is shown.
+      {
+        label: 'Revenue Coming',
+        value: fmtMoney(kpiBody.revenue_coming.value),
+        trend: '',
+        isPositive: true,
+        period: 'All future stays',
+      },
+      {
+        label: 'Occupancy',
+        value: `${kpiBody.occupancy.value}%`,
+        trend: fmtChange(kpiBody.occupancy.change_pct),
+        isPositive: kpiBody.occupancy.change_pct >= 0,
+        period: 'Next 30 days',
+      },
+      {
+        label: 'Avg Rate',
+        value: fmtMoney(kpiBody.avg_rate.value),
+        trend: fmtChange(kpiBody.avg_rate.change_pct),
+        isPositive: kpiBody.avg_rate.change_pct >= 0,
+        period: 'Last 30 days',
+      },
+    ] : [];
 
     // --- Needs Attention ---
     const attentionItems: typeof needsAttention = [];
