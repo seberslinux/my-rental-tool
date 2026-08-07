@@ -175,7 +175,7 @@ export function App() {
 
       <main className="flex-1 overflow-y-auto overflow-x-hidden pb-[64px] lg:pb-0">
         <div className="mx-auto w-full max-w-[1280px]">
-        {activeTab === 'home' && <DashboardPage key={dashboardVersion} />}
+        {activeTab === 'home' && <DashboardPage key={dashboardVersion} onNavigate={setActiveTab} />}
 
         {activeTab === 'calendar' && (
         mode === 'single' ?

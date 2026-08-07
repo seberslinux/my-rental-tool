@@ -5,7 +5,20 @@ import { filterDismissed, dismiss } from './dismissed';
 
 export let kpis: { label: string; value: string; subvalue?: string; trend: string; isPositive: boolean; period: string }[] = [];
 
-export let needsAttention: { id: number; key: string; title: string; subtitle: string; dotColor: string }[] = [];
+export let needsAttention: {
+  id: number; key: string; title: string; subtitle: string; dotColor: string;
+  // Where acting on this item takes you. Every attention item should have
+  // one — an item you can't act on is a notification, not a task.
+  action?: { label: string; tab: string };
+}[] = [];
+
+// Today's operations: who is arriving or leaving in the next 48 hours and
+// whether the property is ready for them. This is the reason to open the
+// app on a weekday morning.
+export let todayBoard: {
+  id: string; kind: 'in' | 'out'; when: string; guest: string;
+  property: string; detail: string; ready: boolean | null; readyLabel: string;
+}[] = [];
 
 export let currentlyStaying: {
   id: number; property: string; platform: string; guestName: string;
@@ -249,6 +262,58 @@ export async function loadDashboardData(): Promise<void> {
       };
     });
 
+    // --- Today's board ---
+    // Arrivals and departures over the next 48 hours, each tagged with
+    // whether the property is ready. A departure is "ready" once a cleaning
+    // job exists for that date; an arrival is ready once the preceding
+    // turnover is covered. Missing cleaner is the failure that actually
+    // hurts — a guest walking into an uncleaned property.
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+    const jobsByPropDate = new Map<string, any>();
+    (stats.pending_cleaning_jobs || []).forEach((j: any) => {
+      const d = String(j.cleaning_date).slice(0, 10);
+      jobsByPropDate.set(`${j.property_id}|${d}`, j);
+    });
+
+    const boardItems: typeof todayBoard = [];
+    allBookings
+      .filter((b: any) => !(b.platform || '').toLowerCase().includes('block'))
+      .forEach((b: any) => {
+        const propName = b.property_name || `Property ${b.property_id}`;
+        if (b.check_in === today || b.check_in === tomorrow) {
+          boardItems.push({
+            id: `in:${b.id}`,
+            kind: 'in',
+            when: relativeDay(b.check_in),
+            guest: b.guest_name || platformLabel(b.platform),
+            property: propName,
+            detail: fmtGuests(b.num_guests),
+            ready: null,
+            readyLabel: '',
+          });
+        }
+        if (b.check_out === today || b.check_out === tomorrow) {
+          const job = jobsByPropDate.get(`${b.property_id}|${b.check_out}`);
+          const hasCleaner = !!(job && job.cleaner_name);
+          boardItems.push({
+            id: `out:${b.id}`,
+            kind: 'out',
+            when: relativeDay(b.check_out),
+            guest: b.guest_name || platformLabel(b.platform),
+            property: propName,
+            detail: 'Turnover',
+            ready: hasCleaner,
+            readyLabel: hasCleaner ? `Cleaner: ${job.cleaner_name}` : 'No cleaner assigned',
+          });
+        }
+      });
+    // Today before tomorrow, departures before arrivals within a day —
+    // the turnover has to happen before the next guest walks in.
+    const dayRank = (w: string) => (w === 'today' ? 0 : 1);
+    todayBoard = boardItems.sort(
+      (a, b) => dayRank(a.when) - dayRank(b.when) || (a.kind === 'out' ? -1 : 1)
+    );
+
     // --- Needs Attention ---
     const attentionItems: typeof needsAttention = [];
     let attId = 1;
@@ -262,6 +327,7 @@ export async function loadDashboardData(): Promise<void> {
         title: 'No cleaner assigned',
         subtitle: `${j.property_name} · ${relativeDay(j.cleaning_date)}`,
         dotColor: 'bg-[#D93900]',
+        action: { label: 'Assign', tab: 'cleaners' },
       });
     });
 
@@ -271,10 +337,28 @@ export async function loadDashboardData(): Promise<void> {
         id: attId++,
         key: `attn:gap:${g.property_id}:${g.gap_start}`,
         title: `${g.nights}-night gap ${fmtDate(g.gap_start)}`,
-        subtitle: `${g.property_name} · offer discount?`,
+        subtitle: `${g.property_name} · ${fmtDate(g.gap_start)}–${fmtDate(g.gap_end)}`,
         dotColor: 'bg-[#E8913A]',
+        action: { label: 'View', tab: 'calendar' },
       });
     });
+
+    // Months with nothing sold yet. Skipped for the current month, which is
+    // largely already spent, and capped at two so a quiet season doesn't
+    // bury the operational items above.
+    forwardOccupancy
+      .filter((m) => !m.isPartial && m.nightsBooked === 0 && m.nightsAvailable > 0)
+      .slice(0, 2)
+      .forEach((m) => {
+        attentionItems.push({
+          id: attId++,
+          key: `attn:empty:${m.month}`,
+          title: `${m.label} has no bookings yet`,
+          subtitle: `${m.nightsAvailable} nights unsold · review pricing`,
+          dotColor: 'bg-[#E8913A]',
+          action: { label: 'Analytics', tab: 'analytics' },
+        });
+      });
 
     // Hide items the user dismissed today (they reappear tomorrow if still unresolved)
     allAttentionItems = attentionItems;
@@ -465,7 +549,13 @@ export async function loadDashboardData(): Promise<void> {
         subtitle: `${relativeDay(j.cleaning_date)} · ${j.cleaner_name || 'Unassigned'}`,
       });
     });
+    // The next 48 hours already have their own block at the top of the page,
+    // with cleaner-readiness detail this list doesn't carry. Repeating them
+    // here just costs scrolling — most of it on a phone — so Upcoming picks
+    // up where that block leaves off.
+    const agendaFrom = new Date(Date.now() + 2 * 86400000).toISOString().split('T')[0];
     agenda = agendaItems
+      .filter((a) => a.date >= agendaFrom)
       .sort((a, b) => (a.date || '').localeCompare(b.date || ''))
       .slice(0, 6);
 

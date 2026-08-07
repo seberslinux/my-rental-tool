@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Check } from 'lucide-react';
+import { X, Check, AlertTriangle, ArrowRight, LogIn, LogOut } from 'lucide-react';
 import {
   kpis,
   needsAttention,
@@ -7,80 +7,54 @@ import {
   agenda,
   upcomingHolidays,
   forwardOccupancy,
+  todayBoard,
   recentCancellations,
   dismissDashboardItem } from
 '../data/dashboard';
-export function DashboardPage() {
+export function DashboardPage({ onNavigate }: { onNavigate?: (tab: string) => void }) {
   return (
     <div className="p-4 lg:px-8 lg:py-6 bg-[#F7F7F7] min-h-full">
-      {/* KPIs */}
-      <div className="flex gap-2 mb-6">
-        {kpis.map((kpi, idx) =>
-        <div
-          key={idx}
-          className="flex-1 bg-white rounded-[10px] p-3 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] min-w-0">
-
-            <div className="text-[11px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0] mb-1">
-              {kpi.label}
-            </div>
-            <div className="text-[20px] font-bold tracking-[-0.3px] text-[#222222] truncate">
-              {kpi.value}
-            </div>
-            {kpi.subvalue &&
-            <div className="text-[11px] text-[#717171] mt-0.5 truncate">
-              {kpi.subvalue}
-            </div>
-            }
-            {kpi.trend &&
-            <div
-            className={`text-[11px] font-medium mt-0.5 ${kpi.isPositive ? 'text-[#00A699]' : 'text-[#D93900]'}`}>
-              {kpi.trend}
-            </div>
-            }
-            <div className="text-[10px] text-[#B0B0B0] mt-0.5">
-              {kpi.period}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Forward outlook — the months you can still fill. Sits directly
-          under the KPIs because an empty month here is the most
-          actionable thing on the page. */}
-      {forwardOccupancy.length > 0 &&
-      <div className="bg-white rounded-[10px] p-4 mb-6 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)]">
-        <div className="flex items-baseline justify-between mb-3">
-          <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0]">
-            Nights Still To Sell
-          </div>
-          <div className="text-[11px] text-[#B0B0B0]">next 6 months</div>
+      {/* Today — arrivals, departures and whether the property is ready.
+          First because this is what makes someone open the app on a
+          weekday morning. */}
+      {todayBoard.length > 0 &&
+      <div className="mb-6">
+        <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
+          Next 48 Hours
         </div>
-        <div className="flex items-end gap-2 sm:gap-3">
-          {forwardOccupancy.map((m) => {
-            // Empty months are the point of this strip — make them loud.
-            const isEmpty = m.occupancyRate === 0;
-            const isLow = m.occupancyRate > 0 && m.occupancyRate < 30;
-            const barColor = isEmpty ? 'bg-[#D93900]' : isLow ? 'bg-[#E8913A]' : 'bg-[#00A699]';
-            return (
-              <div key={m.month} className="flex-1 min-w-0 flex flex-col items-center">
-                <div className="text-[11px] font-semibold text-[#222222] mb-1">
-                  {m.occupancyRate}%
-                </div>
-                <div className="w-full h-[72px] bg-[#F0F0F0] rounded-[4px] flex items-end overflow-hidden">
-                  <div
-                    className={`w-full ${barColor} rounded-[4px] transition-all`}
-                    style={{ height: `${Math.max(m.occupancyRate, 2)}%` }}
-                    title={`${m.nightsBooked} of ${m.nightsAvailable} nights booked · ${m.revenue}`} />
-                </div>
-                <div className="text-[10px] text-[#717171] mt-1.5 truncate w-full text-center">
-                  {m.label}
-                </div>
-                <div className="text-[10px] text-[#B0B0B0] truncate w-full text-center">
-                  {m.nightsAvailable - m.nightsBooked} free
-                </div>
+        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] overflow-hidden">
+          {todayBoard.map((item, idx) =>
+          <div
+            key={item.id}
+            className={`flex items-center gap-3 px-4 py-3 ${idx > 0 ? 'border-t border-[#F0F0F0]' : ''}`}>
+            <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${item.kind === 'in' ? 'bg-[#00A6991A] text-[#00A699]' : 'bg-[#E8913A1A] text-[#E8913A]'}`}>
+              {item.kind === 'in'
+                ? <LogIn className="w-[14px] h-[14px]" strokeWidth={2.5} />
+                : <LogOut className="w-[14px] h-[14px]" strokeWidth={2.5} />}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="text-[15px] font-medium text-[#222222] tracking-[-0.2px] truncate">
+                {item.guest}
               </div>
-            );
-          })}
+              <div className="text-[13px] text-[#717171] mt-[1px] truncate">
+                {item.kind === 'in' ? 'Check-in' : 'Check-out'} · {item.when} · {item.property} · {item.detail}
+              </div>
+            </div>
+            {/* Only departures carry a readiness state — an unassigned
+                turnover is the failure that actually reaches a guest. */}
+            {item.ready === false &&
+            <span className="flex items-center gap-1 text-[11px] font-semibold text-[#D93900] bg-[#FEF2F2] px-2 py-[3px] rounded-[6px] shrink-0">
+              <AlertTriangle className="w-3 h-3" strokeWidth={2.5} />
+              No cleaner
+            </span>
+            }
+            {item.ready === true &&
+            <span className="text-[11px] font-medium text-[#717171] shrink-0 hidden sm:block">
+              {item.readyLabel}
+            </span>
+            }
+          </div>
+          )}
         </div>
       </div>
       }
@@ -112,6 +86,16 @@ export function DashboardPage() {
                   {item.subtitle}
                 </div>
               </div>
+              {/* An attention item you can't act on is just a notification.
+                  Each carries the tab where the fix lives. */}
+              {item.action && onNavigate &&
+              <button
+              onClick={() => onNavigate(item.action!.tab)}
+              className="flex items-center gap-1 text-[13px] font-medium text-[#FF385C] hover:underline shrink-0">
+                {item.action.label}
+                <ArrowRight className="w-3.5 h-3.5" strokeWidth={2.5} />
+              </button>
+              }
               <button
               onClick={() => dismissDashboardItem(item.key, 'day')}
               aria-label="Dismiss"
@@ -183,6 +167,48 @@ export function DashboardPage() {
           ))}
         </div>
       </div>
+
+      {/* Nights still to sell. Horizontal rows rather than columns: at
+          10–30% occupancy a vertical bar is a sliver in an empty box,
+          while a horizontal track reads cleanly at any fill level and
+          leaves room for the free-night count, which is the number you
+          can actually act on. */}
+      {forwardOccupancy.length > 0 &&
+      <div className="mb-6">
+        <div className="flex items-baseline justify-between pb-2">
+          <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0]">
+            Nights Still To Sell
+          </div>
+          <div className="text-[11px] text-[#B0B0B0]">next 6 months</div>
+        </div>
+        <div className="bg-white rounded-[12px] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)]">
+          {forwardOccupancy.map((m, idx) =>
+          <div
+            key={m.month}
+            title={`${m.nightsBooked} of ${m.nightsAvailable} nights booked · ${m.revenue}`}
+            className={`flex items-center gap-3 ${idx > 0 ? 'mt-2.5' : ''}`}>
+            <div className="w-[68px] shrink-0 text-[13px] text-[#717171] truncate">
+              {m.label}
+            </div>
+            <div className="flex-1 h-[8px] bg-[#F0F0F0] rounded-full overflow-hidden">
+              {/* A booked month is teal; nothing sold yet stays empty
+                  rather than shouting, since a quiet month can be
+                  deliberate. */}
+              <div
+                className="h-full bg-[#00A699] rounded-full transition-all"
+                style={{ width: `${m.occupancyRate}%` }} />
+            </div>
+            <div className="w-[34px] shrink-0 text-right text-[12px] font-medium text-[#222222] tabular-nums">
+              {m.occupancyRate}%
+            </div>
+            <div className={`w-[64px] shrink-0 text-right text-[12px] tabular-nums ${m.occupancyRate === 0 ? 'text-[#E8913A] font-medium' : 'text-[#B0B0B0]'}`}>
+              {m.nightsAvailable - m.nightsBooked} free
+            </div>
+          </div>
+          )}
+        </div>
+      </div>
+      }
 
       </div>{/* end left column */}
       <div className="lg:col-span-1">
@@ -288,6 +314,41 @@ export function DashboardPage() {
       }
       </div>{/* end right column */}
       </div>{/* end 2-column grid */}
+
+      {/* Performance. Last, and smaller: these numbers describe what has
+          already happened and cannot change today's decisions. */}
+      {kpis.length > 0 &&
+      <div>
+        <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
+          Performance
+        </div>
+        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] grid grid-cols-2 lg:grid-cols-4 divide-x divide-y lg:divide-y-0 divide-[#F0F0F0]">
+          {kpis.map((kpi, idx) =>
+          <div key={idx} className="p-3 min-w-0">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0] truncate">
+              {kpi.label}
+            </div>
+            <div className="text-[17px] font-bold tracking-[-0.3px] text-[#222222] truncate mt-0.5">
+              {kpi.value}
+            </div>
+            <div className="flex items-baseline gap-1.5 flex-wrap">
+              {kpi.subvalue &&
+              <span className="text-[11px] text-[#717171]">{kpi.subvalue}</span>
+              }
+              {kpi.trend &&
+              <span className={`text-[11px] font-medium ${kpi.isPositive ? 'text-[#00A699]' : 'text-[#D93900]'}`}>
+                {kpi.trend}
+              </span>
+              }
+            </div>
+            <div className="text-[10px] text-[#B0B0B0] mt-0.5 truncate">
+              {kpi.period}
+            </div>
+          </div>
+          )}
+        </div>
+      </div>
+      }
     </div>);
 
 }
