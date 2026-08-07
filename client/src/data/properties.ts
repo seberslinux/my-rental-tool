@@ -26,6 +26,20 @@ export interface Booking {
   children: number;
 }
 
+/**
+ * A holiday window, public or school, as /api/dashboard/stats returns it.
+ * Single-day public holidays carry start === end.
+ */
+export interface HolidayWindow {
+  start: string; // YYYY-MM-DD
+  end: string;
+  name: string;
+  /** Region or country it belongs to — "Hamburg", "South Africa". */
+  label: string;
+  kind: 'public' | 'school';
+  isLocal: boolean;
+}
+
 /** One synced day from Smoobu. `available: false` is Smoobu's own block flag. */
 export interface DailyRate {
   price: number;
@@ -48,6 +62,9 @@ export let cleaners: Record<number, number[]> = {};
 // appear; a missing day means "no rate synced", which the calendar draws as
 // blank rather than guessing.
 export let dailyRates: Record<number, Record<string, DailyRate>> = {};
+// Public holidays run 90 days ahead and school breaks 150 — see
+// holidaysDuring() for what that horizon means.
+export let holidays: HolidayWindow[] = [];
 
 /** Local-time YYYY-MM-DD. `toISOString()` would shift SAST dates back a day. */
 export function dateKey(date: Date): string {
@@ -147,7 +164,35 @@ export async function loadCalendarData(): Promise<void> {
       if (!map[propId].includes(day)) map[propId].push(day);
     });
     cleaners = map;
+
+    holidays = (stats.holidays || []).map((h: any) => ({
+      start: h.start,
+      end: h.end || h.start,
+      name: h.name,
+      label: h.label,
+      kind: h.kind === 'school' ? 'school' : 'public',
+      isLocal: !!h.is_local,
+    }));
   }
+}
+
+/**
+ * Holiday windows overlapping the nights of a stay.
+ *
+ * A holiday starting on the check-out day is excluded: the nights sold
+ * are [checkIn, checkOut), so nobody is in the house for it. One ending
+ * on the check-in day is kept — that night is the guest's first.
+ *
+ * Horizon: the server sends public holidays 90 days out and school
+ * breaks 150, both counted from today. A stay in the past or beyond
+ * those windows simply matches nothing, which is why the row is hidden
+ * rather than showing "none" — absence here means "not known", not
+ * "no holiday".
+ */
+export function holidaysDuring(b: Booking): HolidayWindow[] {
+  const from = dateKey(b.checkIn);
+  const to = dateKey(b.checkOut);
+  return holidays.filter((h) => h.start < to && h.end >= from);
 }
 
 /**
