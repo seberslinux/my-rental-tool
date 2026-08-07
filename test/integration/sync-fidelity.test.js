@@ -427,6 +427,58 @@ test('commission: missing on payload → stored as 0', async () => {
 });
 
 // ==========================================================================
+// Section 9c — children round-trip
+// ==========================================================================
+
+test('children: stored separately from num_guests, which holds adults only', async () => {
+  // Regression guard for a real under-report. Smoobu sends adults and
+  // children as separate fields; this sync wrote only adults, so a family
+  // of 2 + 2 was announced on the dashboard as "2 guests". Worse, because
+  // the sync deletes and re-inserts its window, it also wiped the values
+  // the historical sync had already stored.
+  await syncAsAdmin([
+    {
+      id: 960, apartment: { id: 42 },
+      arrival: todayPlus(1), departure: todayPlus(3),
+      price: 5000, adults: 2, children: 2,
+    },
+  ]);
+
+  const b = await loadBooking(960);
+  assert.equal(b.num_guests, 2, 'num_guests holds adults');
+  assert.equal(b.children, 2, 'children stored in its own column');
+});
+
+test('children: absent on the payload → 0, never null', async () => {
+  await syncAsAdmin([
+    { id: 961, apartment: { id: 42 }, arrival: todayPlus(1), departure: todayPlus(3),
+      price: 100, adults: 1 },
+  ]);
+  assert.equal((await loadBooking(961)).children, 0);
+});
+
+test('children: a re-sync does not wipe a previously stored value', async () => {
+  // The specific way this broke in production: the routine sync ran after
+  // the historical one and silently zeroed the column.
+  const payload = (children) => ([{
+    id: 962, apartment: { id: 42 },
+    arrival: todayPlus(1), departure: todayPlus(3),
+    price: 5000, adults: 2, children,
+  }]);
+
+  const { admin, property } = await syncAsAdmin(payload(3));
+  assert.equal((await loadBooking(962)).children, 3);
+
+  // Same booking comes round again on the next sync.
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  mockSmoobu.setBookings(payload(3));
+  await agent.post('/api/sync/bookings').expect(200);
+
+  assert.equal((await loadBooking(962)).children, 3, 're-sync must preserve children');
+});
+
+// ==========================================================================
 // Section 10 — property linking robustness
 // ==========================================================================
 

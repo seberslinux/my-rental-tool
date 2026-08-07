@@ -59,15 +59,17 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
 
     if (action === 'newReservation' || action === 'new') {
       const commission = bookingData['commission-included'] || bookingData.commissionIncluded || 0;
+      const children = bookingData.children || 0;
       // Upsert booking
       await run(
-        `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, commission)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed', $8, $9)
+        `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, commission, children)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed', $8, $9, $10)
          ON CONFLICT(smoobu_id) DO UPDATE SET
            guest_name = CASE WHEN EXCLUDED.guest_name = '' THEN bookings.guest_name ELSE EXCLUDED.guest_name END, check_in = EXCLUDED.check_in,
            check_out = EXCLUDED.check_out, platform = EXCLUDED.platform,
            total_price = EXCLUDED.total_price, status = 'confirmed',
-           num_guests = EXCLUDED.num_guests, commission = EXCLUDED.commission`,
+           num_guests = EXCLUDED.num_guests, commission = EXCLUDED.commission,
+           children = EXCLUDED.children`,
         [
           smoobuId,
           property.id,
@@ -77,7 +79,8 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
           bookingData['channel']?.name || bookingData.channel || '',
           bookingData.price || 0,
           bookingData.adults || 1,
-          commission
+          commission,
+          children
         ]
       );
 
@@ -115,14 +118,16 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
       // Update booking data
       await run(
         `UPDATE bookings SET
-           guest_name = $1, check_in = $2, check_out = $3, total_price = $4, num_guests = $5
-         WHERE smoobu_id = $6`,
+           guest_name = $1, check_in = $2, check_out = $3, total_price = $4,
+           num_guests = $5, children = $6
+         WHERE smoobu_id = $7`,
         [
           bookingData['guest-name'] || bookingData.guestName || '',
           bookingData.arrival || bookingData.arrivalDate,
           bookingData.departure || bookingData.departureDate,
           bookingData.price || 0,
           bookingData.adults || 1,
+          bookingData.children || 0,
           smoobuId
         ]
       );

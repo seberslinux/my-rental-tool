@@ -166,6 +166,63 @@ test('newReservation stores commission-included from Smoobu payload', async () =
   assert.equal(Number(row.rows[0].commission), 750);
 });
 
+test('newReservation stores children separately from adults', async () => {
+  const app = await getApp();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+
+  await request(app)
+    .post(goodUrl())
+    .send({
+      action: 'newReservation',
+      data: {
+        id: 7777,
+        apartment: { id: property.smoobu_id },
+        'guest-name': 'Family Booking',
+        arrival: '2025-06-10',
+        departure: '2025-06-13',
+        price: 5000,
+        adults: 2,
+        children: 2,
+      },
+    })
+    .expect(200);
+
+  const row = await pool.query(
+    'SELECT num_guests, children FROM bookings WHERE smoobu_id = $1', [7777]);
+  assert.equal(row.rows[0].num_guests, 2);
+  assert.equal(row.rows[0].children, 2, 'a party of four must not be recorded as two');
+});
+
+test('modifyReservation updates children too', async () => {
+  const app = await getApp();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  await seedBooking({ property, smoobu_id: 7778, num_guests: 2 });
+
+  await request(app)
+    .post(goodUrl())
+    .send({
+      action: 'modifyReservation',
+      data: {
+        id: 7778,
+        apartment: { id: property.smoobu_id },
+        'guest-name': 'Family Booking',
+        arrival: '2025-06-10',
+        departure: '2025-06-13',
+        price: 5000,
+        adults: 3,
+        children: 1,
+      },
+    })
+    .expect(200);
+
+  const row = await pool.query(
+    'SELECT num_guests, children FROM bookings WHERE smoobu_id = $1', [7778]);
+  assert.equal(row.rows[0].num_guests, 3);
+  assert.equal(row.rows[0].children, 1);
+});
+
 // --- modifyReservation ----------------------------------------------------
 
 test('modifyReservation updates the row in place — no duplicate', async () => {

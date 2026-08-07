@@ -149,10 +149,16 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
         // so KPIs / analytics can compute net revenue without re-deriving it
         // from per-property rates.
         const commission = b['commission-included'] || b.commissionIncluded || 0;
+        // Smoobu reports adults and children separately. `num_guests` holds
+        // adults; children go in their own column. Dropping them here used
+        // to under-report a family booking — 2 adults + 2 children showed
+        // as "2 guests" — and, because this sync deletes and re-inserts its
+        // window, it also wiped the values the historical sync had stored.
+        const children = b.children || 0;
 
         await client.query(
-          `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, currency, modified_at, commission)
-           VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+          `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, currency, modified_at, commission, children)
+           VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
            ON CONFLICT(smoobu_id) DO UPDATE SET
              guest_name = CASE WHEN excluded.guest_name = '' THEN bookings.guest_name ELSE excluded.guest_name END,
              check_in = excluded.check_in,
@@ -167,7 +173,8 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
              price_per_night = excluded.price_per_night,
              currency = excluded.currency,
              modified_at = excluded.modified_at,
-             commission = excluded.commission`,
+             commission = excluded.commission,
+             children = excluded.children`,
           [
             b.id,
             aptId,
@@ -184,7 +191,8 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
             ppn,
             currency,
             modifiedAt,
-            commission
+            commission,
+            children
           ]
         );
       }
