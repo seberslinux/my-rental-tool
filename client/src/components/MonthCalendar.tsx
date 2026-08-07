@@ -202,7 +202,7 @@ export function MonthCalendar({
             against R1.6K midweek — and they are what you scan for. The
             shaded weekend columns say the same thing, so muting their
             labels had the header arguing with the grid beneath it. */}
-        <div className="grid grid-cols-7 pb-2 text-[11px] font-semibold text-center uppercase tracking-[0.4px]">
+        <div className="grid grid-cols-7 pb-2 px-3 text-[11px] font-semibold text-center uppercase tracking-[0.4px]">
           {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d, i) =>
           <div key={d} className={i === 0 || i === 6 ? 'text-[#222222]' : 'text-[#8A8A8A]'}>{d}</div>
           )}
@@ -215,59 +215,79 @@ export function MonthCalendar({
             {month.name} {month.year}
           </div>
 
-          <div className="relative">
-            {/* Grid */}
-            <div className="grid grid-cols-7 gap-0">
+          <div className="relative px-3">
+            {/* The grid needs to look like one.
+                Cells had no borders at all and neighbouring-month cells
+                were `invisible`, so the month rendered as loose numbers
+                floating in white with holes punched in the corners. Every
+                cell now carries a hairline and the padding cells stay in
+                place, empty, holding the rectangle together.
+
+                Weekend columns previously took a grey fill. Run down a
+                full month at desktop width that became two floor-to-
+                ceiling grey bands reading as damage rather than emphasis —
+                the header already carries that signal in one line. */}
+            <div className="grid grid-cols-7 gap-0 border-t border-l border-[#EBEBEB]">
               {month.cells.map((cell, idx) => {
               const isPast = cell.date < TODAY;
               const isToday = dateEqual(cell.date, TODAY);
-              const isWeekend = cell.date.getDay() === 0 || cell.date.getDay() === 6;
               const rate = getRate(propertyId, cell.date);
               const hasCleaner =
               CLEANER_TOGGLE &&
               !cell.isOtherMonth &&
               cleaners[propertyId]?.includes(cell.date.getDate());
               const isCovered = isDateCovered(cell.date, propertyId);
-              // Add subtle horizontal line between weeks
-              const isFirstRow = idx < 7;
-              const borderTop =
-              !isFirstRow && idx % 7 === 0 ?
-              'border-t border-[#F0F0F0]' :
-              '';
+              const edges = 'border-r border-b border-[#EBEBEB]';
+
+              if (cell.isOtherMonth) {
+                return <div key={idx} className={`h-[84px] bg-[#FCFCFC] ${edges}`} />;
+              }
+
               return (
                 <div
                   key={idx}
-                  className={`h-[88px] relative flex flex-col items-center pt-2 ${borderTop} ${cell.isOtherMonth ? 'invisible' : ''} ${isPast ? 'opacity-45' : ''} ${isWeekend && !isToday ? 'bg-[#FAFAFA]' : ''} ${isToday ? 'bg-[#F0F0F0]' : ''}`}>
+                  className={`h-[84px] relative ${edges} ${isToday ? 'bg-[#F7F7F7]' : ''}`}>
 
-                    {/* Day number.
-                        Today used to be a filled #FF385C disc — the same
-                        pink the Airbnb bars use, so the marker read as a
-                        booking on that date rather than as the date. A
-                        channel colour cannot also mean "you are here".
-                        Neutral charcoal instead: unmistakable, and it says
-                        nothing about who sold the night. */}
-                    <div
-                    className={`w-[26px] h-[26px] rounded-full flex items-center justify-center text-[13px] relative z-10
-                        ${isToday ? 'bg-[#222222] text-white font-semibold' : 'text-[#222222] font-normal'}
-                      `}>
-                    
-                      {cell.date.getDate()}
+                    {/* Date on the left, price on the right, both on one
+                        line at the top. Centring the date and stacking the
+                        price beneath it left the booking bars nowhere to
+                        sit and wasted the bottom half of every cell. */}
+                    <div className="pl-1.5 pr-2 pt-1.5">
+                      {/* Today used to be a filled #FF385C disc — the same
+                          pink the Airbnb bars use, so the marker read as a
+                          booking on that date. A channel colour cannot also
+                          mean "you are here". */}
+                      <div
+                      className={`w-[24px] h-[24px] rounded-full flex items-center justify-center text-[13px] shrink-0
+                          ${isToday ?
+                          'bg-[#222222] text-white font-semibold' :
+                          isPast ? 'text-[#B0B0B0] font-normal' : 'text-[#222222] font-normal'}
+                        `}>
+                        {cell.date.getDate()}
+                      </div>
+
                     </div>
 
                     {/* Nightly rate, straight from Smoobu. Blank where no
-                        rate is synced — the calendar no longer guesses. */}
-                    {!cell.isOtherMonth && !isCovered && rate &&
-                  <div
-                    className={`mt-0.5 text-[10px] tabular-nums ${
-                      rate.available ? 'text-[#717171]' : 'text-[#C13515]'
+                        rate is synced — the calendar no longer guesses.
+                        Its own line at the foot of the cell: sharing the
+                        top line with the date left it about 20px on a
+                        phone, so "R 1.6K" broke across two lines. */}
+                    {!isCovered && rate &&
+                  <span
+                    className={`absolute bottom-2 left-2 text-[10px] tabular-nums whitespace-nowrap ${
+                      !rate.available ? 'text-[#C13515]' :
+                      isPast ? 'text-[#C0C0C0]' : 'text-[#717171]'
                     }`}>
                         {rate.available ? formatRate(rate.price) : 'Closed'}
-                      </div>
+                      </span>
                   }
 
                     {/* Cleaner Dot */}
                     {hasCleaner &&
-                  <div className="absolute w-[5px] h-[5px] bg-[#00A699] rounded-full bottom-2 left-1/2 -translate-x-1/2" />
+                  <div
+                    title="Cleaning scheduled"
+                    className="absolute w-[5px] h-[5px] bg-[#00A699] rounded-full top-3.5 right-2" />
                   }
                   </div>);
 
@@ -275,7 +295,7 @@ export function MonthCalendar({
             </div>
 
             {/* Bars Layer */}
-            <div className="absolute inset-0 pointer-events-none z-10">
+            <div className="absolute inset-y-0 left-3 right-3 pointer-events-none z-10">
               {month.segments.map((seg, sIdx) => {
               // Responsive percentage calculations
               // Trim only where the bar genuinely begins or ends. A
@@ -302,8 +322,9 @@ export function MonthCalendar({
               }
               // A same-day check-in/check-out would otherwise be invisible.
               widthPct = Math.max(widthPct, cellWidthPct * 0.25);
-              // Top offset: row index * 88px (cell height) + 38px (vertical offset)
-              const topPx = seg.rowIdx * 88 + 38;
+              // Cell is 84px; the date/price line occupies the top ~30px,
+              // so the bar lane starts below it.
+              const topPx = seg.rowIdx * 84 + 34;
               // Border radius logic
               const isSingleRow = isFirst && isLast;
               let borderRadius = '0';
