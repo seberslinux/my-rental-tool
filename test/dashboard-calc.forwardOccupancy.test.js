@@ -6,9 +6,16 @@ const { forwardOccupancy } = require('../src/services/dashboard-calc');
  * Forward occupancy — one row per upcoming calendar month.
  *
  * Exists because a 30-day occupancy figure cannot answer "is my calendar
- * filling up?". An empty month four months out is still sellable; by the
- * time a 30-day window reaches it, it is not.
+ * filling up?". The horizon is deliberately short: measured against this
+ * portfolio, booking lead time is median 25 days and p75 61 days, so a
+ * month three or more out is expected to look empty and flagging it would
+ * cry wolf daily. These tests pass the horizon explicitly; production
+ * uses the default of 3.
  */
+
+test('defaults to the booking window rather than a long horizon', () => {
+  assert.equal(forwardOccupancy([], 1, '2026-08-07').length, 3);
+});
 
 function b(overrides = {}) {
   return {

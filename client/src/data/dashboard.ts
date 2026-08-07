@@ -343,22 +343,22 @@ export async function loadDashboardData(): Promise<void> {
       });
     });
 
-    // Months with nothing sold yet. Skipped for the current month, which is
-    // largely already spent, and capped at two so a quiet season doesn't
-    // bury the operational items above.
-    forwardOccupancy
-      .filter((m) => !m.isPartial && m.nightsBooked === 0 && m.nightsAvailable > 0)
-      .slice(0, 2)
-      .forEach((m) => {
-        attentionItems.push({
-          id: attId++,
-          key: `attn:empty:${m.month}`,
-          title: `${m.label} has no bookings yet`,
-          subtitle: `${m.nightsAvailable} nights unsold · review pricing`,
-          dotColor: 'bg-[#E8913A]',
-          action: { label: 'Analytics', tab: 'analytics' },
-        });
+    // Only the NEXT month can be meaningfully behind. Median booking lead
+    // time here is 25 days, so by the time a month is ~30 days out most of
+    // its bookings should already have landed; still empty is a real
+    // signal. Months beyond that are expected to be sparse — flagging them
+    // would cry wolf every single day.
+    const nextMonth = forwardOccupancy.find((m) => !m.isPartial);
+    if (nextMonth && nextMonth.nightsBooked === 0 && nextMonth.nightsAvailable > 0) {
+      attentionItems.push({
+        id: attId++,
+        key: `attn:empty:${nextMonth.month}`,
+        title: `${nextMonth.label} still has no bookings`,
+        subtitle: `${nextMonth.nightsAvailable} nights unsold · review pricing`,
+        dotColor: 'bg-[#E8913A]',
+        action: { label: 'Analytics', tab: 'analytics' },
       });
+    }
 
     // Hide items the user dismissed today (they reappear tomorrow if still unresolved)
     allAttentionItems = attentionItems;

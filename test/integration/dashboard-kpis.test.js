@@ -322,7 +322,7 @@ test('avg_rate is ADR (revenue over nights), not a mean of per-booking rates', a
 
 // --- forward occupancy ---------------------------------------------------
 
-test('forward_occupancy returns six months, flagging the current one partial', async () => {
+test('forward_occupancy covers the booking window, flagging the current month partial', async () => {
   const admin = await seedUser({ role: 'admin' });
   await seedProperty({ owner: admin });
 
@@ -330,7 +330,9 @@ test('forward_occupancy returns six months, flagging the current one partial', a
   await loginAs(agent, admin);
   const { body } = await agent.get('/api/dashboard/kpis').expect(200);
 
-  assert.equal(body.forward_occupancy.length, 6);
+  // Three months: median booking lead time here is 25 days and p75 is 61,
+  // so beyond ~2 months an empty month carries no signal.
+  assert.equal(body.forward_occupancy.length, 3);
   assert.equal(body.forward_occupancy[0].is_partial ||
     new Date().getUTCDate() === 1, true, 'current month is partial unless today is the 1st');
   assert.equal(body.forward_occupancy[1].is_partial, false);
@@ -341,11 +343,11 @@ test('forward_occupancy surfaces an empty month as 0% rather than omitting it', 
   // visible while there is still time to fill it.
   const admin = await seedUser({ role: 'admin' });
   const property = await seedProperty({ owner: admin });
-  // One booking ~2 months out; the months either side stay empty.
+  // One booking next month; the remaining month in the window stays empty.
   await seedBooking({
     property,
-    check_in: todayPlus(60),
-    check_out: todayPlus(65),
+    check_in: todayPlus(40),
+    check_out: todayPlus(45),
     total_price: 5000,
   });
 

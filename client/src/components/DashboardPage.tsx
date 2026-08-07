@@ -179,7 +179,7 @@ export function DashboardPage({ onNavigate }: { onNavigate?: (tab: string) => vo
           <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0]">
             Nights Still To Sell
           </div>
-          <div className="text-[11px] text-[#B0B0B0]">next 6 months</div>
+          <div className="text-[11px] text-[#B0B0B0]">next {forwardOccupancy.length} months</div>
         </div>
         <div className="bg-white rounded-[12px] p-4 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)]">
           {forwardOccupancy.map((m, idx) =>
