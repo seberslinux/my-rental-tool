@@ -19,7 +19,6 @@ const { occupancyByProperty, forwardOccupancy, detectGaps, addDays } = require('
 const { revenueEarned, revenueComing, avgRateEarned } = require('../services/revenue');
 const { getUpcomingHolidays } = require('../services/holidays-store');
 const { getUpcomingSchoolHolidays } = require('../services/school-holidays');
-const COUNTRY_LABEL = { ZA: 'South Africa', DE: 'Germany', GB: 'United Kingdom' };
 // One mapper for every Smoobu write path — see its header for why.
 const { mapSmoobuBooking } = require('../services/smoobu-mapper');
 
@@ -303,22 +302,21 @@ router.get('/dashboard/stats', scopeProperties, async (req, res) => {
 
   const lastSyncedRow = await getOne("SELECT value FROM app_settings WHERE key = 'last_synced_at'", []);
 
-  // Two kinds of holiday answer two different questions, so each country
-  // contributes only the kind that means something here:
+  // Two kinds of holiday answer different questions, so each contributes
+  // only where it means something:
   //
-  //   ZA  public — cleaner availability and local weekend demand
-  //       school — domestic family travel
-  //   DE  school only. Nobody flies eleven hours for a single public
-  //       holiday; they come for the six-week Sommerferien.
-  //   GB  public only, because no free source publishes English term
-  //       dates — they are set by ~150 local authorities.
+  //   ZA public — cleaner availability and local weekend demand
+  //   ZA school — domestic family travel
+  //   DE school — inbound demand, split into Hamburg and Bavaria rather
+  //      than aggregated: the sixteen states stagger deliberately, so a
+  //      national view smears into "sometime in summer" and prices nothing.
   //
   // Neither lookup may take down the dashboard.
   let holidays = [];
   try {
-    const [publicDays, schoolDays] = await Promise.all([
-      getUpcomingHolidays(today, { countries: ['ZA', 'GB'], days: 90 }),
-      getUpcomingSchoolHolidays(today, { countries: ['ZA', 'DE'], days: 120 }),
+    const [publicDays, schoolBreaks] = await Promise.all([
+      getUpcomingHolidays(today, { countries: ['ZA'], days: 90 }),
+      getUpcomingSchoolHolidays(today, { days: 150 }),
     ]);
 
     holidays = [
@@ -326,23 +324,19 @@ router.get('/dashboard/stats', scopeProperties, async (req, res) => {
         start: h.date,
         end: h.date,
         name: h.name,
-        country: h.country,
-        country_name: h.country_name,
+        label: h.country_name,
         is_local: h.is_local,
         kind: 'public',
-        regions: 0,
       })),
-      ...schoolDays.map((h) => ({
+      ...schoolBreaks.map((h) => ({
         start: h.start,
         end: h.end,
         name: h.name,
-        country: h.country,
-        country_name: COUNTRY_LABEL[h.country] || h.country,
+        label: h.region,
         is_local: h.country === 'ZA',
         kind: 'school',
-        regions: h.regions,
       })),
-    ].sort((a, b) => a.start.localeCompare(b.start) || a.country.localeCompare(b.country));
+    ].sort((a, b) => a.start.localeCompare(b.start) || a.label.localeCompare(b.label));
   } catch (err) {
     console.error('Holiday lookup failed:', err.message);
   }
