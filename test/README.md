@@ -157,6 +157,80 @@ end-to-end.
 
 ---
 
+## `test/integration/sync-fidelity.test.js` — every Smoobu field lands correctly
+
+The critical safety net: if a Smoobu field lands in the wrong DB column, the wrong format, or with the wrong default, every downstream number (analytics chart, dashboard occupancy, cleaner payouts, P&L) is silently wrong. These tests pin the per-field mapping so a regression fails here first, not in production.
+
+### Field mapping (both dialects)
+
+Smoobu returns two payload shapes. Both must land in the same DB columns.
+
+| # | test | asserts |
+|---|---|---|
+| 1 | Kebab-case payload → all fields land | `apartment.id`, `guest-name`, `arrival`, `departure`, `channel.name`, `created-at`, `modified-at`, `price-details`, plus computed `length_of_stay`, `price_per_night`, `currency`. |
+| 2 | camelCase payload → all fields land | `apartmentId`, `guestName`, `arrivalDate`, `departureDate`, `channel` (string), `createdAt`, `modifiedAt`, `priceDetails`. If any fallback breaks, live bookings silently drop. |
+
+### `length_of_stay`
+
+| # | scenario | expected |
+|---|---|---|
+| 3 | 1-night stay | `1` |
+| 4 | 7-night stay | `7` |
+| 5 | Same-day (check_in == check_out) | `1` (via `Math.max(1, …)`) — **regression guard against divide-by-zero in `price_per_night`**. |
+
+### `price_per_night`
+
+| # | scenario | expected |
+|---|---|---|
+| 6 | 1000 / 3 nights | `333.33` (rounded to 2 dp) |
+| 7 | Zero price | `0` (never NaN) |
+
+### `lead_time_days`
+
+| # | scenario | expected |
+|---|---|---|
+| 8 | check_in 30 days after created_at | `30` |
+| 9 | Missing created_at | `0` |
+| 10 | Booked AFTER check-in (weird but possible) | `0` — clamped via `Math.max(0, …)` so it doesn't corrupt averages. |
+
+### Currency detection + fallback chain
+
+`detectCurrency(payload) → property.base_currency → 'ZAR'`
+
+| # | scenario | expected |
+|---|---|---|
+| 11 | `price-details: 'Total EUR 100'` on ZAR-based property | `EUR` (payload wins) |
+| 12 | No payload currency, property is GBP | `GBP` |
+| 13 | No payload currency, property has empty currency | `ZAR` (final fallback) |
+| 14 | All 11 supported currencies (EUR, ZAR, USD, GBP, CHF, AUD, NZD, SEK, NOK, DKK, CAD) | Each parsed correctly — regression guard for the `SUPPORTED_CURRENCIES` regex. |
+
+### Defaults for missing fields
+
+| # | missing field | expected default |
+|---|---|---|
+| 15 | `guest_name`, `adults`, `platform` | `''`, `1`, `''` |
+| 16 | `price` | `0` |
+
+### Cancellation classification
+
+| # | payload | expected `status` |
+|---|---|---|
+| 17 | `type: 'cancellation'` | `'cancelled'` |
+| 18 | No `type`, or `type: 'reservation'` | `'confirmed'` |
+
+### Update semantics
+
+| # | test | asserts |
+|---|---|---|
+| 19 | **Sync semantic**: re-sync with empty guest_name → name is wiped | Documents the "sync = wholesale refresh" contract — Smoobu is source of truth in the window. Contrast with the webhook test that **preserves** on empty. |
+| 20 | Modify via sync overwrites check_in / check_out / price / num_guests / platform in place | Update path covers every mutable column. |
+
+### Property linking robustness
+
+| # | test | asserts |
+|---|---|---|
+| 21 | Bookings for two apartments (10001 + 10002) land on the correct `property_id` | The `INSERT ... (SELECT id FROM properties WHERE smoobu_id = $2)` subselect resolves against the right row. FK safety net. |
+
 ---
 
 ## `smoke.test.js`

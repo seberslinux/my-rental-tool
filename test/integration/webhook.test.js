@@ -116,6 +116,29 @@ test('newReservation is idempotent — replaying the same payload produces one r
   assert.equal(rows.rows[0].count, 1);
 });
 
+test('newReservation replay with empty guest_name PRESERVES the original name', async () => {
+  // Regression guard. Webhook route uses:
+  //   guest_name = CASE WHEN EXCLUDED.guest_name = '' THEN bookings.guest_name ELSE EXCLUDED.guest_name END
+  // so a follow-up webhook missing the guest name (which Smoobu sometimes
+  // sends on channel-specific events) doesn't wipe it.
+  const app = await getApp();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+
+  await request(app)
+    .post(goodUrl())
+    .send(newReservationEvent(property, { id: 66, 'guest-name': 'Original' }))
+    .expect(200);
+
+  await request(app)
+    .post(goodUrl())
+    .send(newReservationEvent(property, { id: 66, 'guest-name': '' }))
+    .expect(200);
+
+  const row = await pool.query('SELECT guest_name FROM bookings WHERE smoobu_id = $1', [66]);
+  assert.equal(row.rows[0].guest_name, 'Original');
+});
+
 // --- modifyReservation ----------------------------------------------------
 
 test('modifyReservation updates the row in place — no duplicate', async () => {
