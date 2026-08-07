@@ -440,11 +440,10 @@ router.get('/dashboard/kpis', scopeProperties, async (req, res) => {
       ? Math.round(priorOcc.reduce((s, o) => s + o.occupancy_rate, 0) / priorOcc.length)
       : 0;
 
-    // Six months of forward occupancy. The 30-day figure above cannot show
-    // an empty month far enough ahead to still be fillable; this can.
-    // Uses the same booking set — the query has no upper bound on
-    // check_out, so every future stay is already loaded.
-    const outlook = forwardOccupancy(bookings, properties.length, today, 6);
+    // Forward occupancy over the booking window (see dashboard-calc for why
+    // three months). Uses the same booking set — the query has no upper
+    // bound on check_out, so every future stay is already loaded.
+    const outlook = forwardOccupancy(bookings, properties.length, today, 3);
 
     const pctChange = (now, prior) => (prior > 0 ? Math.round(((now - prior) / prior) * 100) : 0);
 

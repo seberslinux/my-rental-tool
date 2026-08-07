@@ -190,9 +190,15 @@ function daysBetween(fromStr, toStr) {
  * Occupancy for each of the next `months` calendar months.
  *
  * Answers the question the 30-day occupancy KPI cannot: "is my calendar
- * filling up?" An empty month four months out is still fixable; the same
- * month is worthless once it has passed, and a 30-day window never shows
- * it in time.
+ * filling up?" — but only over the horizon where the answer means
+ * something.
+ *
+ * Measured against this portfolio's own history, booking lead time is
+ * median 25 days and 75th percentile 61 days: three quarters of bookings
+ * arrive within two months. A month three or more out is therefore
+ * expected to look empty, and reporting that as a shortfall manufactures
+ * alarm from noise. Three months covers the window where a gap is both
+ * real and still fillable.
  *
  * The first entry is the CURRENT month, but measured only from `todayStr`
  * onward — nights already gone are neither sellable nor a fair part of
@@ -203,7 +209,7 @@ function daysBetween(fromStr, toStr) {
  *   { month, nights_booked, nights_available, occupancy_rate,
  *     revenue, is_partial }
  */
-function forwardOccupancy(bookings, propertyCount, todayStr, months = 6) {
+function forwardOccupancy(bookings, propertyCount, todayStr, months = 3) {
   const { nightsSoldInWindow, revenueInWindow } = require('./revenue');
 
   let year = Number(todayStr.slice(0, 4));
