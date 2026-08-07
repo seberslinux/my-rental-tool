@@ -17,6 +17,7 @@ const { occupancyByProperty, detectGaps, addDays } = require('../services/dashbo
 // All revenue figures resolve through this one module — see its header for
 // the attribution rule. Analytics uses the same functions.
 const { revenueEarned, revenueComing, avgRateEarned } = require('../services/revenue');
+const { getUpcomingHolidays } = require('../services/holidays-store');
 
 // Sync properties — uses the requesting user's API key (or env var fallback)
 router.post('/sync/properties', requireRole('admin'), async (req, res) => {
@@ -317,10 +318,20 @@ router.get('/dashboard/stats', scopeProperties, async (req, res) => {
 
   const lastSyncedRow = await getOne("SELECT value FROM app_settings WHERE key = 'last_synced_at'", []);
 
+  // Holidays affect cleaner availability locally and inbound demand from
+  // guest-source countries. Failure here must not take down the dashboard.
+  let holidays = [];
+  try {
+    holidays = await getUpcomingHolidays(today, { days: 90 });
+  } catch (err) {
+    console.error('Holiday lookup failed:', err.message);
+  }
+
   res.json({
     upcoming_checkouts: upcomingCheckouts,
     occupancy,
     gaps,
+    holidays,
     pending_cleaning_jobs: pendingJobs,
     display_currency: displayCurrency,
     last_synced_at: lastSyncedRow?.value || null,

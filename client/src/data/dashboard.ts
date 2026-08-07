@@ -50,16 +50,10 @@ export async function setPropertyFilter(propertyId: number): Promise<void> {
   await loadDashboardData();
 }
 
-// Holidays are static — no API needed
-const allHolidays = [
-  { id: 1, title: 'Human Rights Day', subtitle: 'Mar 21 · South Africa · expect higher demand', date: '2026-03-21' },
-  { id: 2, title: 'Good Friday', subtitle: 'Apr 18 · International · long weekend', date: '2026-04-18' },
-  { id: 3, title: 'Easter Weekend', subtitle: 'Apr 18–21 · Europe + SA · peak bookings', date: '2026-04-21' },
-  { id: 4, title: 'Freedom Day', subtitle: 'Apr 27 · South Africa · public holiday', date: '2026-04-27' },
-  { id: 5, title: 'Workers\' Day', subtitle: 'May 1 · South Africa · public holiday', date: '2026-05-01' },
-  { id: 6, title: 'Youth Day', subtitle: 'Jun 16 · South Africa · public holiday', date: '2026-06-16' },
-];
-export const upcomingHolidays = allHolidays.filter((h) => h.date >= new Date().toISOString().split('T')[0]);
+// Holidays come from the server (/api/dashboard/stats), which resolves
+// them via cache → Nager.Date → computed rules. Previously this was a
+// hardcoded array that silently went empty once its dates passed.
+export let upcomingHolidays: { id: number; title: string; subtitle: string; date: string }[] = [];
 
 function fmtDate(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00');
@@ -168,7 +162,7 @@ export async function loadDashboardData(): Promise<void> {
       recentCancellations = filterDismissed(cancelledItems, (c) => c.key).slice(0, 5);
     }
 
-    let stats: any = { occupancy: [], gaps: [], pending_cleaning_jobs: [], upcoming_checkouts: [] };
+    let stats: any = { occupancy: [], gaps: [], pending_cleaning_jobs: [], upcoming_checkouts: [], holidays: [] };
     if (statsRes.ok) {
       stats = await statsRes.json();
       lastSyncedAt = stats.last_synced_at || null;
@@ -407,6 +401,16 @@ export async function loadDashboardData(): Promise<void> {
       });
     });
     cleaningJobs = jobItems;
+
+    // --- Upcoming Holidays ---
+    // Local (SA) holidays affect cleaner availability and local demand;
+    // guest-source countries signal inbound demand. The subtitle says which.
+    upcomingHolidays = (stats.holidays || []).slice(0, 8).map((h: any, i: number) => ({
+      id: i + 1,
+      title: h.name,
+      subtitle: `${fmtDate(h.date)} · ${h.country_name} · ${h.is_local ? 'local public holiday' : 'expect inbound demand'}`,
+      date: h.date,
+    }));
 
     // --- Upcoming agenda (check-ins, check-outs and cleanings, merged by date) ---
     const agendaItems: typeof agenda = [];
