@@ -2,7 +2,14 @@ const express = require('express');
 const router = express.Router();
 const { getAll, getOne, run, transaction, inParams } = require('../db/database');
 const smoobu = require('../services/smoobu');
-const { requireRole, scopeProperties } = require('../middleware/auth');
+const { requireRole, scopeProperties, enforcePropertyScope } = require('../middleware/auth');
+
+// Parse ?property_id= query param — comma-separated list or 'all' → null.
+// Returns null for "no explicit filter" (server-side scoping will still apply).
+function parsePropertyIds(raw) {
+  if (!raw || raw === 'all') return null;
+  return String(raw).split(',').map((s) => s.trim()).filter(Boolean);
+}
 const { detectCurrency } = require('../services/currency-detect');
 const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
 const { getApiKeyForUser } = require('../services/api-key-resolver');
@@ -335,22 +342,34 @@ router.get('/dashboard/kpis', scopeProperties, async (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const displayCurrency = await getDisplayCurrency();
 
-    // Property scope — same logic as /dashboard/stats.
+    // Property scope. Two inputs:
+    //   1. User's accessible properties (from scopeProperties middleware).
+    //   2. Requested property_id filter from the query string.
+    // enforcePropertyScope intersects them: honours the filter when
+    // present, denies out-of-scope requests, and falls through to full
+    // user scope when no filter is set.
+    const requested = parsePropertyIds(req.query.property_id);
+    const scopedIds = enforcePropertyScope(req, requested);
+
+    const emptyKpis = {
+      display_currency: displayCurrency,
+      revenue_earned: { value: 0, prior_value: 0, change_pct: 0 },
+      revenue_coming: { value: 0 },
+      avg_rate:       { value: 0, prior_value: 0, change_pct: 0 },
+      occupancy:      { value: 0, prior_value: 0, change_pct: 0 },
+    };
+
     let properties;
-    if (req.accessiblePropertyIds === null) {
+    if (scopedIds === null) {
+      // Admin, no filter — every property in the system.
       properties = await getAll('SELECT * FROM properties');
+    } else if (scopedIds.length === 0) {
+      // User has no accessible properties, or requested only properties
+      // they don't own → nothing to compute.
+      return res.json(emptyKpis);
     } else {
-      if (req.accessiblePropertyIds.length === 0) {
-        return res.json({
-          display_currency: displayCurrency,
-          revenue_earned: { value: 0, prior_value: 0, change_pct: 0 },
-          revenue_coming: { value: 0 },
-          avg_rate:       { value: 0, prior_value: 0, change_pct: 0 },
-          occupancy:      { value: 0, prior_value: 0, change_pct: 0 },
-        });
-      }
-      const ph = inParams(req.accessiblePropertyIds, 1);
-      properties = await getAll(`SELECT * FROM properties WHERE id IN (${ph})`, req.accessiblePropertyIds);
+      const ph = inParams(scopedIds, 1);
+      properties = await getAll(`SELECT * FROM properties WHERE id IN (${ph})`, scopedIds);
     }
 
     // Fetch every confirmed booking whose stay overlaps the 60-day earned
