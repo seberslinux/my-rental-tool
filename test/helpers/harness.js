@@ -48,7 +48,12 @@ let cachedApp = null;
 async function getApp() {
   if (cachedApp) return cachedApp;
   await runMigrations();
-  cachedApp = buildApp({ sessionSecret: process.env.SESSION_SECRET });
+  cachedApp = buildApp({
+    sessionSecret: process.env.SESSION_SECRET,
+    // A single test file can easily exceed the production 20 req / 15 min
+    // auth limit. Rate limiting itself is covered by a dedicated test.
+    disableRateLimits: true,
+  });
   return cachedApp;
 }
 

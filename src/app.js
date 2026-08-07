@@ -22,10 +22,18 @@ const { requireAuth } = require('./middleware/auth');
  * Build the app synchronously. Callers are responsible for running migrations
  * before serving traffic — see server.js and test/helpers/harness.js.
  *
- * `sessionSecret` defaults to `process.env.SESSION_SECRET`; tests can pass in
- * a fixed value so the env-var contract doesn't leak into fixtures.
+ * Options:
+ *   - `sessionSecret`: overrides process.env.SESSION_SECRET; tests pass a
+ *     fixed value so the env-var contract doesn't leak into fixtures.
+ *   - `disableRateLimits`: when true, replaces the rate-limit middleware
+ *     with a no-op. Tests need this because a single test file can easily
+ *     make more than 20 login attempts, tripping the production limiter.
+ *     Rate-limit behaviour is exercised by a dedicated test elsewhere.
  */
-function buildApp({ sessionSecret = process.env.SESSION_SECRET } = {}) {
+function buildApp({
+  sessionSecret = process.env.SESSION_SECRET,
+  disableRateLimits = false,
+} = {}) {
   if (!sessionSecret) {
     throw new Error('SESSION_SECRET must be set — refusing to build app with an insecure default');
   }
@@ -38,8 +46,10 @@ function buildApp({ sessionSecret = process.env.SESSION_SECRET } = {}) {
 
   app.use(express.json({ limit: '10mb' }));
 
+  const noopLimiter = (req, res, next) => next();
+
   // Rate limiting: auth endpoints (brute-force protection).
-  const authLimiter = rateLimit({
+  const authLimiter = disableRateLimits ? noopLimiter : rateLimit({
     windowMs: 15 * 60 * 1000,
     limit: 20,
     standardHeaders: true,
@@ -48,7 +58,7 @@ function buildApp({ sessionSecret = process.env.SESSION_SECRET } = {}) {
   });
 
   // Rate limiting: public webhook + ical endpoints.
-  const publicLimiter = rateLimit({
+  const publicLimiter = disableRateLimits ? noopLimiter : rateLimit({
     windowMs: 60 * 1000,
     limit: 60,
     standardHeaders: true,
