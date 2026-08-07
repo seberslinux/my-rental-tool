@@ -72,18 +72,8 @@ export function CalendarHeader({
         </div>
       </div>
 
-      {/* Days of week header - only in single mode */}
-      {mode === 'single' &&
-      <div className="grid grid-cols-7 pt-1 pb-2 text-[11px] font-medium text-[#B0B0B0] text-center uppercase tracking-[0.5px]">
-          <div>S</div>
-          <div>M</div>
-          <div>T</div>
-          <div>W</div>
-          <div>T</div>
-          <div>F</div>
-          <div>S</div>
-        </div>
-      }
+      {/* The weekday row lives in MonthCalendar, directly above the grid
+          it labels — here it sat above the month paging instead. */}
     </header>);
 
 }
