@@ -167,6 +167,53 @@ test('change_pct is 0 when prior_value is 0 (avoid divide-by-zero)', async () =>
 
 // --- avg_rate ------------------------------------------------------------
 
+// --- property_id filter (regression: was ignored, always returned portfolio) ---
+
+test('?property_id= filter returns only the requested property\'s revenue', async () => {
+  const admin = await seedUser({ role: 'admin' });
+  const villa = await seedProperty({ owner: admin, name: 'Villa' });
+  const cottage = await seedProperty({ owner: admin, name: 'Cottage' });
+
+  await seedBooking({ property: villa, check_in: todayPlus(-5), check_out: todayPlus(-2), total_price: 10000 });
+  await seedBooking({ property: cottage, check_in: todayPlus(-5), check_out: todayPlus(-2), total_price: 3000 });
+
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+
+  const villaOnly = (await agent.get(`/api/dashboard/kpis?property_id=${villa.id}`).expect(200)).body;
+  const cottageOnly = (await agent.get(`/api/dashboard/kpis?property_id=${cottage.id}`).expect(200)).body;
+  const all = (await agent.get('/api/dashboard/kpis').expect(200)).body;
+
+  assert.equal(villaOnly.revenue_earned.value, 10000, 'villa-only earned');
+  assert.equal(cottageOnly.revenue_earned.value, 3000, 'cottage-only earned');
+  assert.equal(all.revenue_earned.value, 13000, 'unfiltered = sum of both');
+});
+
+test('?property_id=all is treated as "no filter"', async () => {
+  const admin = await seedUser({ role: 'admin' });
+  const p = await seedProperty({ owner: admin });
+  await seedBooking({ property: p, check_in: todayPlus(-5), check_out: todayPlus(-2), total_price: 5000 });
+
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get('/api/dashboard/kpis?property_id=all').expect(200);
+  assert.equal(body.revenue_earned.value, 5000);
+});
+
+test('filter honours scoping: non-admin cannot request another user\'s property', async () => {
+  const alice = await seedUser({ role: 'property_manager' });
+  const bob = await seedUser({ role: 'property_manager' });
+  const aliceProp = await seedProperty({ owner: alice });
+  await seedBooking({ property: aliceProp, check_in: todayPlus(-5), check_out: todayPlus(-2), total_price: 10000 });
+
+  const agent = await getAgent();
+  await loginAs(agent, bob);
+  // Bob explicitly requests alice's property → scoping intersects to empty.
+  const { body } = await agent.get(`/api/dashboard/kpis?property_id=${aliceProp.id}`).expect(200);
+  assert.equal(body.revenue_earned.value, 0, 'must not leak alice\'s revenue');
+  assert.equal(body.revenue_coming.value, 0);
+});
+
 test('avg_rate is the mean nightly rate of earned stays', async () => {
   const admin = await seedUser({ role: 'admin' });
   const property = await seedProperty({ owner: admin });
