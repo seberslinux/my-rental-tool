@@ -186,6 +186,61 @@ function daysBetween(fromStr, toStr) {
   return Math.round((to - from) / MS_PER_DAY);
 }
 
+/**
+ * Occupancy for each of the next `months` calendar months.
+ *
+ * Answers the question the 30-day occupancy KPI cannot: "is my calendar
+ * filling up?" An empty month four months out is still fixable; the same
+ * month is worthless once it has passed, and a 30-day window never shows
+ * it in time.
+ *
+ * The first entry is the CURRENT month, but measured only from `todayStr`
+ * onward — nights already gone are neither sellable nor a fair part of
+ * the denominator. It is flagged `is_partial` so the UI can label it
+ * ("rest of Aug") rather than implying a full-month comparison.
+ *
+ * Returns one row per month:
+ *   { month, nights_booked, nights_available, occupancy_rate,
+ *     revenue, is_partial }
+ */
+function forwardOccupancy(bookings, propertyCount, todayStr, months = 6) {
+  const { nightsSoldInWindow, revenueInWindow } = require('./revenue');
+
+  let year = Number(todayStr.slice(0, 4));
+  let month = Number(todayStr.slice(5, 7));
+  const out = [];
+
+  for (let i = 0; i < months; i++) {
+    const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+    const nextYear = month === 12 ? year + 1 : year;
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const monthEnd = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+
+    // Only the current month is clipped; later months count in full.
+    const isPartial = i === 0 && todayStr > monthStart;
+    const windowStart = isPartial ? todayStr : monthStart;
+
+    const nightsAvailable = daysBetween(windowStart, monthEnd) * propertyCount;
+    const nightsBooked = nightsSoldInWindow(bookings, windowStart, monthEnd);
+
+    out.push({
+      month: monthStart.slice(0, 7),
+      nights_booked: nightsBooked,
+      nights_available: nightsAvailable,
+      occupancy_rate: nightsAvailable > 0
+        ? Math.round((nightsBooked / nightsAvailable) * 100)
+        : 0,
+      revenue: Math.round(revenueInWindow(bookings, windowStart, monthEnd)),
+      is_partial: isPartial,
+    });
+
+    year = nextYear;
+    month = nextMonth;
+  }
+
+  return out;
+}
+
 module.exports = {
   // predicates
   isCancelled,
@@ -202,6 +257,7 @@ module.exports = {
   nextArrivalByProperty,
   activeBlockOn,
   occupancyByProperty,
+  forwardOccupancy,
   detectGaps,
   // date utilities
   addDays,

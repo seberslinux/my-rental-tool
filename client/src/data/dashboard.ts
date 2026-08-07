@@ -25,6 +25,14 @@ export let recentCancellations: { id: number; key: string; guestName: string; pr
 // ISO timestamp of the last completed bookings sync (or null if never synced).
 export let lastSyncedAt: string | null = null;
 
+// Six months of forward occupancy — the signal the 30-day KPI can't give:
+// an empty month far enough ahead that it can still be filled.
+export let forwardOccupancy: {
+  month: string; label: string; occupancyRate: number;
+  nightsBooked: number; nightsAvailable: number; revenue: string;
+  isPartial: boolean;
+}[] = [];
+
 let activePropertyFilter = 0; // 0 = all properties
 let onDataChanged: (() => void) | null = null;
 
@@ -224,6 +232,22 @@ export async function loadDashboardData(): Promise<void> {
         period: 'Last 30 days',
       },
     ] : [];
+
+    forwardOccupancy = ((kpiBody && kpiBody.forward_occupancy) || []).map((m: any) => {
+      const d = new Date(m.month + '-01T00:00:00');
+      const name = d.toLocaleDateString('en-ZA', { month: 'short' });
+      return {
+        month: m.month,
+        // The current month only counts nights still to come, so say so
+        // rather than implying a full-month comparison.
+        label: m.is_partial ? `rest of ${name}` : name,
+        occupancyRate: m.occupancy_rate,
+        nightsBooked: m.nights_booked,
+        nightsAvailable: m.nights_available,
+        revenue: fmtMoney(m.revenue),
+        isPartial: m.is_partial,
+      };
+    });
 
     // --- Needs Attention ---
     const attentionItems: typeof needsAttention = [];

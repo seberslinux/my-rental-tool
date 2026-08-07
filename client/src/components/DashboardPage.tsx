@@ -6,6 +6,7 @@ import {
   currentlyStaying,
   agenda,
   upcomingHolidays,
+  forwardOccupancy,
   recentCancellations,
   dismissDashboardItem } from
 '../data/dashboard';
@@ -42,6 +43,47 @@ export function DashboardPage() {
           </div>
         )}
       </div>
+
+      {/* Forward outlook — the months you can still fill. Sits directly
+          under the KPIs because an empty month here is the most
+          actionable thing on the page. */}
+      {forwardOccupancy.length > 0 &&
+      <div className="bg-white rounded-[10px] p-4 mb-6 shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)]">
+        <div className="flex items-baseline justify-between mb-3">
+          <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0]">
+            Nights Still To Sell
+          </div>
+          <div className="text-[11px] text-[#B0B0B0]">next 6 months</div>
+        </div>
+        <div className="flex items-end gap-2 sm:gap-3">
+          {forwardOccupancy.map((m) => {
+            // Empty months are the point of this strip — make them loud.
+            const isEmpty = m.occupancyRate === 0;
+            const isLow = m.occupancyRate > 0 && m.occupancyRate < 30;
+            const barColor = isEmpty ? 'bg-[#D93900]' : isLow ? 'bg-[#E8913A]' : 'bg-[#00A699]';
+            return (
+              <div key={m.month} className="flex-1 min-w-0 flex flex-col items-center">
+                <div className="text-[11px] font-semibold text-[#222222] mb-1">
+                  {m.occupancyRate}%
+                </div>
+                <div className="w-full h-[72px] bg-[#F0F0F0] rounded-[4px] flex items-end overflow-hidden">
+                  <div
+                    className={`w-full ${barColor} rounded-[4px] transition-all`}
+                    style={{ height: `${Math.max(m.occupancyRate, 2)}%` }}
+                    title={`${m.nightsBooked} of ${m.nightsAvailable} nights booked · ${m.revenue}`} />
+                </div>
+                <div className="text-[10px] text-[#717171] mt-1.5 truncate w-full text-center">
+                  {m.label}
+                </div>
+                <div className="text-[10px] text-[#B0B0B0] truncate w-full text-center">
+                  {m.nightsAvailable - m.nightsBooked} free
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      }
 
       {/* Desktop: 2-column layout (left: attention + staying, right: the rest). Mobile: single column. */}
       <div className="lg:grid lg:grid-cols-3 lg:gap-6 lg:items-start">
