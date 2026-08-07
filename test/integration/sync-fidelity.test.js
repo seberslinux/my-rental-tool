@@ -427,6 +427,124 @@ test('commission: missing on payload → stored as 0', async () => {
 });
 
 // ==========================================================================
+// Section 9c — children round-trip
+// ==========================================================================
+
+test('children: stored separately from num_guests, which holds adults only', async () => {
+  // Regression guard for a real under-report. Smoobu sends adults and
+  // children as separate fields; this sync wrote only adults, so a family
+  // of 2 + 2 was announced on the dashboard as "2 guests". Worse, because
+  // the sync deletes and re-inserts its window, it also wiped the values
+  // the historical sync had already stored.
+  await syncAsAdmin([
+    {
+      id: 960, apartment: { id: 42 },
+      arrival: todayPlus(1), departure: todayPlus(3),
+      price: 5000, adults: 2, children: 2,
+    },
+  ]);
+
+  const b = await loadBooking(960);
+  assert.equal(b.num_guests, 2, 'num_guests holds adults');
+  assert.equal(b.children, 2, 'children stored in its own column');
+});
+
+test('children: absent on the payload → 0, never null', async () => {
+  await syncAsAdmin([
+    { id: 961, apartment: { id: 42 }, arrival: todayPlus(1), departure: todayPlus(3),
+      price: 100, adults: 1 },
+  ]);
+  assert.equal((await loadBooking(961)).children, 0);
+});
+
+test('children: a re-sync does not wipe a previously stored value', async () => {
+  // The specific way this broke in production: the routine sync ran after
+  // the historical one and silently zeroed the column.
+  const payload = (children) => ([{
+    id: 962, apartment: { id: 42 },
+    arrival: todayPlus(1), departure: todayPlus(3),
+    price: 5000, adults: 2, children,
+  }]);
+
+  const { admin, property } = await syncAsAdmin(payload(3));
+  assert.equal((await loadBooking(962)).children, 3);
+
+  // Same booking comes round again on the next sync.
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  mockSmoobu.setBookings(payload(3));
+  await agent.post('/api/sync/bookings').expect(200);
+
+  assert.equal((await loadBooking(962)).children, 3, 're-sync must preserve children');
+});
+
+// ==========================================================================
+// Section 9d — record everything
+// ==========================================================================
+
+test('language and guest_country are stored, not dropped', async () => {
+  // Both were being written by the historical resync and then erased by the
+  // routine one, which rewrites the same window.
+  await syncAsAdmin([
+    {
+      id: 970, apartment: { id: 42 },
+      arrival: todayPlus(1), departure: todayPlus(3),
+      price: 5000, adults: 2, language: 'de', phone: '+49 30 123456',
+    },
+  ]);
+  const b = await loadBooking(970);
+  assert.equal(b.language, 'de');
+  assert.equal(b.guest_country, 'Germany');
+});
+
+test('the whole Smoobu payload is retained, including unmapped fields', async () => {
+  // Smoobu serves a limited window, so anything not captured at sync time
+  // cannot be fetched later. Fields without a column of their own must
+  // still be recoverable.
+  await syncAsAdmin([
+    {
+      id: 971, apartment: { id: 42 },
+      arrival: todayPlus(1), departure: todayPlus(3),
+      price: 5000, adults: 2,
+      'reference-id': '5075623517',
+      email: 'guest@example.com',
+      'check-in': '15:00',
+      'city-tax': 42,
+    },
+  ]);
+
+  const b = await loadBooking(971);
+  assert.ok(b.raw_payload, 'raw payload must be stored');
+  assert.equal(b.raw_payload['reference-id'], '5075623517');
+  assert.equal(b.raw_payload.email, 'guest@example.com');
+  assert.equal(b.raw_payload['check-in'], '15:00', 'guest arrival time has no column but is kept');
+  assert.equal(b.raw_payload['city-tax'], 42);
+});
+
+test('a re-sync preserves language, country and the raw payload', async () => {
+  // The exact failure mode: the routine sync running after the historical
+  // one and zeroing what it had stored.
+  const payload = () => ([{
+    id: 972, apartment: { id: 42 },
+    arrival: todayPlus(1), departure: todayPlus(3),
+    price: 5000, adults: 2, children: 1,
+    language: 'fr', phone: '+33 1 23 45 67 89', 'reference-id': 'ABC123',
+  }]);
+
+  const { admin } = await syncAsAdmin(payload());
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  mockSmoobu.setBookings(payload());
+  await agent.post('/api/sync/bookings').expect(200);
+
+  const b = await loadBooking(972);
+  assert.equal(b.language, 'fr');
+  assert.equal(b.guest_country, 'France');
+  assert.equal(b.children, 1);
+  assert.equal(b.raw_payload['reference-id'], 'ABC123');
+});
+
+// ==========================================================================
 // Section 10 — property linking robustness
 // ==========================================================================
 

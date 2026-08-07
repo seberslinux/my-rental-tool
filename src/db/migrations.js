@@ -338,6 +338,11 @@ async function runMigrations() {
     ['commission', 'REAL DEFAULT 0'],
     ['language', "TEXT DEFAULT ''"],
     ['children', 'INTEGER DEFAULT 0'],
+    // The complete Smoobu payload, verbatim. Mapped columns above exist for
+    // querying; this exists so nothing is ever lost. Smoobu's API only
+    // serves a limited window, so a field we did not think to map today
+    // cannot be fetched again later — but it can be backfilled from here.
+    ['raw_payload', 'JSONB'],
     ['guest_country', "TEXT DEFAULT ''"],
     ['currency', "TEXT DEFAULT 'ZAR'"],
     ['modified_at', "TEXT DEFAULT ''"],

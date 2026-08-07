@@ -38,8 +38,8 @@ export let recentCancellations: { id: number; key: string; guestName: string; pr
 // ISO timestamp of the last completed bookings sync (or null if never synced).
 export let lastSyncedAt: string | null = null;
 
-// Six months of forward occupancy — the signal the 30-day KPI can't give:
-// an empty month far enough ahead that it can still be filled.
+// Forward occupancy across the booking window — the signal the 30-day KPI
+// can't give: a month far enough ahead that it can still be filled.
 export let forwardOccupancy: {
   month: string; label: string; occupancyRate: number;
   nightsBooked: number; nightsAvailable: number; revenue: string;
@@ -81,10 +81,19 @@ function fmtDate(dateStr: string): string {
   return d.toLocaleDateString('en-ZA', { month: 'short', day: 'numeric' });
 }
 
-// "1 guest", "2 guests", "? guests" (unknown count)
-function fmtGuests(n: any): string {
-  if (!n && n !== 0) return '? guests';
-  return `${n} ${n === 1 ? 'guest' : 'guests'}`;
+// Total people arriving. Smoobu splits the party into adults and children,
+// and `num_guests` holds only the adults — so a family of two adults plus
+// two children was being announced as "2 guests", which is the number that
+// matters least to whoever is making up the beds. Children are called out
+// separately because they change what the property needs (cot, high chair),
+// not just how many towels.
+function fmtParty(b: any): string {
+  const adults = b.num_guests ?? null;
+  const kids = b.children || 0;
+  if (adults === null) return '? guests';
+  const total = adults + kids;
+  const base = `${total} ${total === 1 ? 'guest' : 'guests'}`;
+  return kids > 0 ? `${base} · ${kids} ${kids === 1 ? 'child' : 'children'}` : base;
 }
 
 function fmtMoney(amount: number): string {
@@ -287,7 +296,7 @@ export async function loadDashboardData(): Promise<void> {
             when: relativeDay(b.check_in),
             guest: b.guest_name || platformLabel(b.platform),
             property: propName,
-            detail: fmtGuests(b.num_guests),
+            detail: fmtParty(b),
             ready: null,
             readyLabel: '',
           });
@@ -397,7 +406,7 @@ export async function loadDashboardData(): Promise<void> {
         property: b.property_name || `Property ${b.property_id}`,
         platform: platformLabel(b.platform),
         guestName: b.guest_name,
-        meta: `${fmtGuests(b.num_guests)} · ${fmtDate(b.check_in)}–${fmtDate(b.check_out)}`,
+        meta: `${fmtParty(b)} · ${fmtDate(b.check_in)}–${fmtDate(b.check_out)}`,
         rate: b.price_per_night ? fmtMoney(b.price_per_night) : undefined,
         total: b.total_price ? `${fmtMoney(b.total_price)} total` : undefined,
         isVacant: false,
@@ -483,7 +492,7 @@ export async function loadDashboardData(): Promise<void> {
         type: 'in',
         label: `Check-in · ${relativeDay(b.check_in)}`,
         name: b.guest_name,
-        detail: `${b.property_name || ''} · ${fmtGuests(b.num_guests)}`,
+        detail: `${b.property_name || ''} · ${fmtParty(b)}`,
         sortDate: b.check_in,
       });
     });
