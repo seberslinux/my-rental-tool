@@ -317,7 +317,13 @@ export async function loadDashboardData(): Promise<void> {
           b.property_id === p.id && b.check_in > today && !((b.platform || '').toLowerCase().includes('block'))
         );
         const reason = activeBlock ? 'Blocked' : 'Empty';
-        const rate = p.base ? fmtMoney(p.base) + '/night' : '';
+        // Show the nightly rate of the booking that's actually arriving, not
+        // the property's `base_price` — that field is Smoobu's minimum-price
+        // floor (The loft's is R80) and has nothing to do with what the next
+        // guest is paying.
+        const rate = nextCheckIn?.price_per_night
+          ? fmtMoney(Math.round(nextCheckIn.price_per_night)) + '/night'
+          : '';
         const metaParts: string[] = [];
         if (activeBlock) metaParts.push(`Until ${fmtDate(activeBlock.check_out)}`);
         if (nextCheckIn) metaParts.push(`Next check-in ${fmtDate(nextCheckIn.check_in)}`);

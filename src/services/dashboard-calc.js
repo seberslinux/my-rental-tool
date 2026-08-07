@@ -186,98 +186,6 @@ function daysBetween(fromStr, toStr) {
   return Math.round((to - from) / MS_PER_DAY);
 }
 
-// --- KPI aggregations -----------------------------------------------------
-
-// Loaded lazily to avoid a require cycle at module load — analytics-calc
-// doesn't depend on this file today, but we don't want to preclude that.
-let _calcDeductions = null;
-function calcDeductions(b) {
-  if (!_calcDeductions) _calcDeductions = require('./analytics-calc').calcDeductions;
-  return _calcDeductions(b);
-}
-
-/**
- * Sum of `converted_total_price` across bookings whose stay has completed
- * in the last `days` days: check_out ∈ [todayStr - days, todayStr].
- * Cancelled and blocked-platform bookings are excluded.
- *
- * "Earned" = money against completed stays. Ignores in-progress and
- * future — those roll into `revenueComing`.
- */
-function revenueEarned(bookings, todayStr, days = 30) {
-  const fromStr = addDays(todayStr, -days);
-  let total = 0;
-  for (const b of bookings) {
-    if (isCancelled(b) || isBlocked(b)) continue;
-    if (b.check_out > todayStr) continue;
-    if (b.check_out < fromStr) continue;
-    total += b.converted_total_price || 0;
-  }
-  return total;
-}
-
-/**
- * Sum of `converted_total_price` across bookings whose stay hasn't
- * completed yet: check_out > todayStr. Includes in-progress guests and
- * future bookings.
- */
-function revenueComing(bookings, todayStr) {
-  let total = 0;
-  for (const b of bookings) {
-    if (isCancelled(b) || isBlocked(b)) continue;
-    if (b.check_out <= todayStr) continue;
-    total += b.converted_total_price || 0;
-  }
-  return total;
-}
-
-/**
- * Average `converted_price_per_night` across completed stays in the
- * last `days` days (same set as revenueEarned). Rounded to nearest integer.
- * Returns 0 when the set is empty.
- */
-function avgRateEarned(bookings, todayStr, days = 30) {
-  const fromStr = addDays(todayStr, -days);
-  let sum = 0;
-  let count = 0;
-  for (const b of bookings) {
-    if (isCancelled(b) || isBlocked(b)) continue;
-    if (b.check_out > todayStr) continue;
-    if (b.check_out < fromStr) continue;
-    sum += b.converted_price_per_night || 0;
-    count += 1;
-  }
-  return count > 0 ? Math.round(sum / count) : 0;
-}
-
-/**
- * Same window as revenueEarned, but subtracts calcDeductions (commission +
- * bank charges + VAT) from each booking's gross before summing. Net revenue
- * is what actually reaches the owner's account.
- */
-function revenueEarnedNet(bookings, todayStr, days = 30) {
-  const fromStr = addDays(todayStr, -days);
-  let total = 0;
-  for (const b of bookings) {
-    if (isCancelled(b) || isBlocked(b)) continue;
-    if (b.check_out > todayStr) continue;
-    if (b.check_out < fromStr) continue;
-    total += (b.converted_total_price || 0) - calcDeductions(b);
-  }
-  return total;
-}
-
-/** Same as revenueComing, net of deductions. */
-function revenueComingNet(bookings, todayStr) {
-  let total = 0;
-  for (const b of bookings) {
-    if (isCancelled(b) || isBlocked(b)) continue;
-    if (b.check_out <= todayStr) continue;
-    total += (b.converted_total_price || 0) - calcDeductions(b);
-  }
-  return total;
-}
-
 module.exports = {
   // predicates
   isCancelled,
@@ -295,12 +203,6 @@ module.exports = {
   activeBlockOn,
   occupancyByProperty,
   detectGaps,
-  // KPI aggregations
-  revenueEarned,
-  revenueComing,
-  revenueEarnedNet,
-  revenueComingNet,
-  avgRateEarned,
   // date utilities
   addDays,
   daysBetween,

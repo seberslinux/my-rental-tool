@@ -16,6 +16,19 @@ const {
   aggregateRevenueByPlatform,
   aggregateAdrByMonth,
 } = require('../services/analytics-calc');
+// Single source of truth for revenue attribution — shared with the Home
+// dashboard KPIs so the two pages can never disagree.
+const { revenueInWindow, nightsSoldInWindow } = require('../services/revenue');
+
+// `to` params are inclusive dates; revenue windows are half-open [from, to).
+function addDaysStr(dateStr, days) {
+  const ms = Date.UTC(
+    Number(dateStr.slice(0, 4)),
+    Number(dateStr.slice(5, 7)) - 1,
+    Number(dateStr.slice(8, 10)),
+  );
+  return new Date(ms + days * 86400000).toISOString().slice(0, 10);
+}
 
 // Apply property scoping to all analytics routes
 router.use(scopeProperties);
@@ -397,8 +410,14 @@ router.get('/data', async (req, res) => {
   let bookingFilters = '';
   const bookingParams = [];
   bookingFilters += addPropertyFilter(propIds, 'b.property_id', bookingParams);
+  // Select stays that OVERLAP the range, not just those that start inside
+  // it. Revenue is attributed per-night (see services/revenue.js), so a
+  // long stay spanning the range boundary must be fetched in order to
+  // contribute its in-range nights. Filtering on check_in alone dropped
+  // such bookings entirely — that's why a 100-night stay showed R25.8K on
+  // Home and nothing at all on Analytics.
   if (from) {
-    bookingFilters += ` AND b.check_in >= $${bookingParams.length + 1}`;
+    bookingFilters += ` AND b.check_out > $${bookingParams.length + 1}`;
     bookingParams.push(from);
   }
   if (to) {
@@ -792,10 +811,15 @@ router.get('/data', async (req, res) => {
   }
 
   // --- Summary KPIs ---
-  const totalRevenue = allBookings.reduce((sum, b) => sum + (b.converted_total_price || 0), 0);
-  const totalDeductions = allBookings.reduce((sum, b) => sum + calcDeductions(b), 0);
-  const netRevenue = totalRevenue - totalDeductions;
-  const totalNights = allBookings.reduce((sum, b) => sum + (b.length_of_stay || 0), 0);
+  // Revenue resolves through services/revenue.js — the same module the Home
+  // dashboard KPIs use — so both pages report identical figures for the
+  // same period. Nights are counted the same way, clipped to the range.
+  const revFrom = from || null;
+  const revTo = to ? addDaysStr(to, 1) : null; // `to` is inclusive; window is half-open
+  const totalRevenue = revenueInWindow(allBookings, revFrom, revTo);
+  const netRevenue = revenueInWindow(allBookings, revFrom, revTo, { net: true });
+  const totalDeductions = totalRevenue - netRevenue;
+  const totalNights = nightsSoldInWindow(allBookings, revFrom, revTo);
   const avgAdr = totalNights > 0 ? Math.round(totalRevenue / totalNights) : 0;
   const avgLos = allBookings.length > 0 ? Math.round((totalNights / allBookings.length) * 10) / 10 : 0;
   const avgLeadTime = allBookings.length > 0 ? Math.round(allBookings.reduce((sum, b) => sum + (b.lead_time_days || 0), 0) / allBookings.length) : 0;

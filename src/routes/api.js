@@ -13,16 +13,10 @@ function parsePropertyIds(raw) {
 const { detectCurrency } = require('../services/currency-detect');
 const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
 const { getApiKeyForUser } = require('../services/api-key-resolver');
-const {
-  occupancyByProperty,
-  detectGaps,
-  addDays,
-  revenueEarned,
-  revenueComing,
-  revenueEarnedNet,
-  revenueComingNet,
-  avgRateEarned,
-} = require('../services/dashboard-calc');
+const { occupancyByProperty, detectGaps, addDays } = require('../services/dashboard-calc');
+// All revenue figures resolve through this one module — see its header for
+// the attribution rule. Analytics uses the same functions.
+const { revenueEarned, revenueComing, avgRateEarned } = require('../services/revenue');
 
 // Sync properties — uses the requesting user's API key (or env var fallback)
 router.post('/sync/properties', requireRole('admin'), async (req, res) => {
@@ -412,14 +406,16 @@ router.get('/dashboard/kpis', scopeProperties, async (req, res) => {
     // converted_commission on each row.
     await bulkConvert(bookings, displayCurrency);
 
+    const NET = { net: true };
+    const priorToday = addDays(today, -30);
+
     const earned = revenueEarned(bookings, today, 30);
-    const earnedNet = revenueEarnedNet(bookings, today, 30);
-    const priorEarned = revenueEarned(bookings, addDays(today, -30), 30);
-    const priorEarnedNet = revenueEarnedNet(bookings, addDays(today, -30), 30);
+    const earnedNet = revenueEarned(bookings, today, 30, NET);
+    const priorEarnedNet = revenueEarned(bookings, priorToday, 30, NET);
     const coming = revenueComing(bookings, today);
-    const comingNet = revenueComingNet(bookings, today);
+    const comingNet = revenueComing(bookings, today, NET);
     const avgRate = avgRateEarned(bookings, today, 30);
-    const priorAvgRate = avgRateEarned(bookings, addDays(today, -30), 30);
+    const priorAvgRate = avgRateEarned(bookings, priorToday, 30);
 
     // Occupancy uses the /dashboard/stats math to stay consistent with the
     // "Occupancy per property" list on the same page.

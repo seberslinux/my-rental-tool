@@ -83,18 +83,38 @@ test('revenue_coming counts stays whose check_out is in the future (in-progress 
   const admin = await seedUser({ role: 'admin' });
   const property = await seedProperty({ owner: admin });
 
-  // Currently in house (arrived, hasn't left) → coming.
+  // In-progress stay: 5 nights at R2500 (R500/night), 2 already slept.
+  // Only the 3 remaining nights count as "coming" → R1500.
   await seedBooking({ property, check_in: todayPlus(-2), check_out: todayPlus(3), total_price: 2500 });
-  // Future stay → coming.
+  // Entirely future stay → counts in full.
   await seedBooking({ property, check_in: todayPlus(10), check_out: todayPlus(15), total_price: 5000 });
-  // Fully in the past → NOT coming.
+  // Fully in the past → contributes nothing.
   await seedBooking({ property, check_in: todayPlus(-10), check_out: todayPlus(-7), total_price: 999 });
 
   const agent = await getAgent();
   await loginAs(agent, admin);
   const { body } = await agent.get('/api/dashboard/kpis').expect(200);
 
-  assert.equal(body.revenue_coming.gross, 7500);
+  assert.equal(body.revenue_coming.gross, 6500, '1500 remaining nights + 5000 future');
+});
+
+test('an in-progress stay is split between earned and coming, with no double-count', async () => {
+  const admin = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner: admin });
+  // 5 nights at R2500 → R500/night. Two nights slept, three to go.
+  await seedBooking({ property, check_in: todayPlus(-2), check_out: todayPlus(3), total_price: 2500 });
+
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get('/api/dashboard/kpis').expect(200);
+
+  assert.equal(body.revenue_earned.gross, 1000, '2 nights slept');
+  assert.equal(body.revenue_coming.gross, 1500, '3 nights remaining');
+  assert.equal(
+    body.revenue_earned.gross + body.revenue_coming.gross,
+    2500,
+    'the two cards must account for the booking exactly once'
+  );
 });
 
 test('revenue_coming excludes cancelled and blocked-platform bookings', async () => {
@@ -271,11 +291,14 @@ test('when property has no commission rates set, net falls back to Smoobu\'s com
   assert.equal(body.revenue_earned.value, 4250, 'net = 5000 - 750 Smoobu commission');
 });
 
-test('avg_rate is the mean nightly rate of earned stays', async () => {
+test('avg_rate is ADR (revenue over nights), not a mean of per-booking rates', async () => {
   const admin = await seedUser({ role: 'admin' });
   const property = await seedProperty({ owner: admin });
 
-  // Two earned stays: R1000/night and R1500/night → avg R1250.
+  // 3 nights at R1000/night, and 2 nights at R1500/night.
+  // ADR = (3000 + 3000) / (3 + 2) = R1200.
+  // A mean of the two booking rates would give R1250 — wrong, because it
+  // weights a 2-night stay as heavily as a 3-night one.
   await seedBooking({
     property, check_in: todayPlus(-5), check_out: todayPlus(-2),
     total_price: 3000, length_of_stay: 3, price_per_night: 1000,
@@ -284,7 +307,7 @@ test('avg_rate is the mean nightly rate of earned stays', async () => {
     property, check_in: todayPlus(-10), check_out: todayPlus(-8),
     total_price: 3000, length_of_stay: 2, price_per_night: 1500,
   });
-  // Future stay — must NOT influence the earned average.
+  // Future stay — must NOT influence the earned rate.
   await seedBooking({
     property, check_in: todayPlus(5), check_out: todayPlus(10),
     total_price: 50000, length_of_stay: 5, price_per_night: 10000,
@@ -294,5 +317,5 @@ test('avg_rate is the mean nightly rate of earned stays', async () => {
   await loginAs(agent, admin);
   const { body } = await agent.get('/api/dashboard/kpis').expect(200);
 
-  assert.equal(body.avg_rate.value, 1250);
+  assert.equal(body.avg_rate.value, 1200);
 });
