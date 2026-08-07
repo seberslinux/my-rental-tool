@@ -11,6 +11,10 @@ const {
   isBlockedPlatform,
   normalizePlatform,
   analyzeSentiment,
+  aggregateRevenueByMonth,
+  aggregateRevenueByProperty,
+  aggregateRevenueByPlatform,
+  aggregateAdrByMonth,
 } = require('../services/analytics-calc');
 
 // Apply property scoping to all analytics routes
@@ -454,62 +458,10 @@ router.get('/data', async (req, res) => {
 
   // --- Revenue by month (split into paid vs booked) — only past/current bookings ---
   const allBookingsCombined = [...allBookings, ...futureConfirmedBookings];
-  const revenueByMonth = {};
-  for (const b of allBookings) {
-    const month = b.check_in.substring(0, 7); // YYYY-MM
-    if (!revenueByMonth[month]) revenueByMonth[month] = { month, total: 0, paid: 0, booked: 0, deductions: 0, bookings: 0, nights: 0, first_checkin: b.check_in, last_checkout: b.check_out };
-    const rev = b.converted_total_price || 0;
-    revenueByMonth[month].total += rev;
-    if (b.check_out <= todayStr) {
-      revenueByMonth[month].paid += rev;
-    } else {
-      revenueByMonth[month].booked += rev;
-    }
-    revenueByMonth[month].deductions += calcDeductions(b);
-    revenueByMonth[month].bookings += 1;
-    revenueByMonth[month].nights += b.length_of_stay || 1;
-    if (b.check_in < revenueByMonth[month].first_checkin) revenueByMonth[month].first_checkin = b.check_in;
-    if (b.check_out > revenueByMonth[month].last_checkout) revenueByMonth[month].last_checkout = b.check_out;
-  }
-  // Fill in missing months with 0 values so the chart has no gaps
-  const monthKeys = Object.keys(revenueByMonth).sort();
-  if (monthKeys.length >= 2) {
-    const [startY, startM] = monthKeys[0].split('-').map(Number);
-    const [endY, endM] = monthKeys[monthKeys.length - 1].split('-').map(Number);
-    let y = startY, m = startM;
-    while (y < endY || (y === endY && m <= endM)) {
-      const key = `${y}-${String(m).padStart(2, '0')}`;
-      if (!revenueByMonth[key]) {
-        revenueByMonth[key] = { month: key, total: 0, paid: 0, booked: 0, deductions: 0, bookings: 0, nights: 0 };
-      }
-      m++;
-      if (m > 12) { m = 1; y++; }
-    }
-  }
-  const revenueTimeline = Object.values(revenueByMonth).sort((a, b) => a.month.localeCompare(b.month));
+  const revenueTimeline = aggregateRevenueByMonth(allBookings, todayStr);
 
   // --- Revenue by property (with top platform) ---
-  const revenueByProperty = {};
-  const platformByProperty = {}; // track platform bookings per property
-  for (const b of allBookings) {
-    const key = b.property_name;
-    if (!revenueByProperty[key]) revenueByProperty[key] = { property: key, property_id: b.property_id, total: 0, bookings: 0, nights: 0 };
-    revenueByProperty[key].total += b.converted_total_price || 0;
-    revenueByProperty[key].bookings += 1;
-    revenueByProperty[key].nights += b.length_of_stay || 1;
-
-    // Track platform counts per property
-    const plat = normalizePlatform(b.platform);
-    if (!platformByProperty[key]) platformByProperty[key] = {};
-    platformByProperty[key][plat] = (platformByProperty[key][plat] || 0) + 1;
-  }
-  // Assign top_platform to each property
-  for (const [prop, platforms] of Object.entries(platformByProperty)) {
-    if (revenueByProperty[prop]) {
-      const sorted = Object.entries(platforms).sort((a, b) => b[1] - a[1]);
-      revenueByProperty[prop].top_platform = sorted.length > 0 ? sorted[0][0] : '';
-    }
-  }
+  const revenueByProperty = aggregateRevenueByProperty(allBookings);
 
   // --- Channel performance ---
   const channelStats = {};
@@ -602,16 +554,7 @@ router.get('/data', async (req, res) => {
   }
 
   // --- ADR (Average Daily Rate) by month ---
-  const adrByMonth = {};
-  for (const b of allBookings) {
-    const month = b.check_in.substring(0, 7);
-    if (!adrByMonth[month]) adrByMonth[month] = { month, total_revenue: 0, total_nights: 0 };
-    adrByMonth[month].total_revenue += b.converted_total_price || 0;
-    adrByMonth[month].total_nights += b.length_of_stay || 1;
-  }
-  const adrTimeline = Object.entries(adrByMonth)
-    .map(([month, d]) => ({ month, adr: d.total_nights > 0 ? Math.round(d.total_revenue / d.total_nights) : 0 }))
-    .sort((a, b) => a.month.localeCompare(b.month));
+  const adrTimeline = aggregateAdrByMonth(allBookings);
 
   // --- Day-of-week analysis ---
   const dowStats = Array.from({ length: 7 }, (_, i) => ({ day: i, bookings_starting: 0, revenue: 0, nights: 0 }));
@@ -1026,7 +969,7 @@ router.get('/data', async (req, res) => {
     },
     prior_summary: priorSummary,
     revenue_timeline: revenueTimeline,
-    revenue_by_property: Object.values(revenueByProperty),
+    revenue_by_property: revenueByProperty,
     channel_stats: Object.values(channelStats),
     occupancy_timeline: occupancyTimeline,
     adr_timeline: adrTimeline,
