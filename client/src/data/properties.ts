@@ -176,15 +176,33 @@ export const formatTotal = fmtMoney;
  * Where a stay sits relative to today.
  *
  * The detail sheet labelled its channel row "Status" and answered
- * "Airbnb", which is not a status. Airbnb is who sold it; this is what is
- * happening. Cancelled bookings never reach the calendar — they are
- * filtered on load — so the states below are the whole set.
+ * "Airbnb", which is not a status. Airbnb is who sold it; this is what
+ * is happening.
+ *
+ * The first attempt got the states wrong as well as the words. It read
+ * `checkIn <= TODAY` as "in house", so a guest arriving this afternoon
+ * was reported as already staying — the dashboard showed Hill Top Lodge
+ * as "Empty, next check-in 08 Aug" while this sheet called the very
+ * same booking "In house". Arrival and departure days are their own
+ * states, and they are the two the day actually turns on: one needs a
+ * key handed over, the other needs a clean.
+ *
+ * The words are deliberately plain. "In house" is front-desk jargon for
+ * a guest who has checked in and not yet left; everyone in hotels knows
+ * it and nobody else does. "Confirmed" went for a different reason —
+ * cancelled bookings never reach the calendar, since they are filtered
+ * on load, so every stay drawn here is confirmed and the word carried
+ * no information.
  */
 export function stayStatus(b: Booking): string {
   if (b.type === 'blocked') return 'Blocked';
-  if (b.checkOut <= TODAY) return 'Checked out';
-  if (b.checkIn <= TODAY) return 'In house';
-  return 'Confirmed';
+  if (b.checkOut < TODAY) return 'Checked out';
+  if (b.checkIn > TODAY) return 'Upcoming';
+  // Past here the stay straddles today. Arrival is tested before
+  // departure so a same-day booking reads as arriving.
+  if (dateEqual(b.checkIn, TODAY)) return 'Arriving today';
+  if (dateEqual(b.checkOut, TODAY)) return 'Departing today';
+  return 'Staying now';
 }
 
 export function dateEqual(d1: Date, d2: Date): boolean {
