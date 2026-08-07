@@ -12,7 +12,11 @@
     "setup": "npm install && cd client && npm install && echo '\n--- Setup complete! Run: npm run dev ---'",
     "postinstall": "cd client && npm install",
     "test": "node --test 'test/**/*.test.js'",
-    "test:coverage": "node --test --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout 'test/**/*.test.js'"
+    "test:unit": "node --test 'test/*.test.js'",
+    "test:integration": "node --test 'test/integration/**/*.test.js'",
+    "test:coverage": "node --test --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout 'test/**/*.test.js'",
+    "test:db:up": "docker compose -f docker-compose.test.yml up -d",
+    "test:db:down": "docker compose -f docker-compose.test.yml down -v"
   },
   "keywords": [],
   "author": "",
@@ -33,6 +37,7 @@
     "pg": "^8.20.0"
   },
   "devDependencies": {
-    "concurrently": "^9.2.1"
+    "concurrently": "^9.2.1",
+    "supertest": "^7.2.2"
   }
 }

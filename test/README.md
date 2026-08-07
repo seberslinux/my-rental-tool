@@ -1,18 +1,83 @@
 # Test catalogue
 
-All tests use Node's built-in `node:test` runner. No external test deps.
+Node's built-in `node:test` runner. Only two test-time deps: `supertest`
+(for integration tests) and Docker (for the test Postgres).
 
 ```bash
-npm test                                       # run everything
-node --test test/<file>.test.js                # run one file
+npm test                    # run everything (unit + integration)
+npm run test:unit           # unit tests only, no Docker required
+npm run test:integration    # integration tests (require Docker + DB)
+npm run test:coverage       # add per-file coverage table (see PR #12)
+
+# Bring the test DB up/down manually
+npm run test:db:up
+npm run test:db:down
 ```
 
-Convention: one file per module-or-topic, named `<module>.<topic>.test.js`.
-Runner glob: `test/**/*.test.js`.
+Layout:
+- `test/*.test.js` — pure unit tests, no infrastructure
+- `test/integration/*.test.js` — integration tests, need a running Postgres
+- `test/helpers/harness.js` — supertest + test DB setup, cached app,
+  `resetDb()`
+- `test/helpers/seed.js` — `seedUser`, `seedProperty`, `seedBooking`,
+  `loginAs`
 
 Each test below lists its **input**, **expected output**, and **what it's
-really guarding against**. Formulas match the code in
-`src/services/analytics-calc.js`.
+really guarding against**.
+
+---
+
+## Integration test harness
+
+### `test/helpers/harness.js`
+
+The infrastructure every integration test uses.
+
+- Sets `DATABASE_URL` to a docker-compose Postgres (`localhost:5433`,
+  database `rental_test`) **before** any DB module is imported. Test-only
+  env vars (`SESSION_SECRET`, Google OAuth stubs) are set here too, so
+  running tests never leaks production secrets into fixtures.
+- `getApp()` — builds the app once via `buildApp()`, runs migrations, and
+  caches for the rest of the run.
+- `getAgent()` — returns a supertest agent that shares a cookie jar (needed
+  for the login → authenticated-request flow).
+- `resetDb()` — discovers all tables in the `public` schema at call time
+  and `TRUNCATE ... CASCADE`s them. Call from `beforeEach` for per-test
+  isolation.
+- `closePool()` — closes the DB pool at the end of a suite so Node exits
+  cleanly.
+
+### `test/helpers/seed.js`
+
+Row factories. Each returns the inserted row (with generated id).
+
+- `seedUser({role, email, password, ...})` — inserts a user; returns the
+  row plus `_plaintextPassword` so `loginAs` can log them in.
+- `seedProperty({owner, name, ...})` — inserts a property. If `owner` is
+  passed, also inserts the `user_properties` link with role `owner`.
+- `seedBooking({property, check_in, check_out, ...})` — inserts a booking.
+  Sensible defaults for platform, price, LOS.
+- `loginAs(agent, user)` — POSTs `/api/auth/login` with the user's
+  plaintext password and asserts a 200; the agent now holds an
+  authenticated session cookie.
+
+---
+
+## `test/integration/smoke.test.js` — harness proves itself
+
+One test file that would fail if any layer of the integration stack was
+broken. If a real integration bug regresses these first, the cause is
+almost always in the harness itself, not the code under test.
+
+| # | test | what it proves |
+|---|---|---|
+| 1 | unauthenticated GET `/api/auth/me` → 401 | `requireAuth` middleware fires; `buildApp()` mounts routes correctly. |
+| 2 | seed user → login → `/api/auth/me` returns them | Password hash / bcrypt round-trip works; `PgSession` persists the session; supertest agent carries the cookie. |
+| 3 | wrong password → 401 | Local strategy rejects invalid credentials; failure response shape unchanged. |
+| 4 | nonexistent user → 401 | Same response as wrong password (no user enumeration on the API surface). |
+| 5 | login → logout → next `/api/auth/me` = 401 | `POST /api/auth/logout` actually destroys the session. |
+
+---
 
 ---
 
