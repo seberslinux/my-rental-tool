@@ -6,7 +6,14 @@ const { requireRole, scopeProperties } = require('../middleware/auth');
 const { detectCurrency } = require('../services/currency-detect');
 const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
 const { getApiKeyForUser } = require('../services/api-key-resolver');
-const { occupancyByProperty, detectGaps, addDays } = require('../services/dashboard-calc');
+const {
+  occupancyByProperty,
+  detectGaps,
+  addDays,
+  revenueEarned,
+  revenueComing,
+  avgRateEarned,
+} = require('../services/dashboard-calc');
 
 // Sync properties — uses the requesting user's API key (or env var fallback)
 router.post('/sync/properties', requireRole('admin'), async (req, res) => {
@@ -307,6 +314,110 @@ router.get('/dashboard/stats', scopeProperties, async (req, res) => {
     display_currency: displayCurrency,
     last_synced_at: lastSyncedRow?.value || null,
   });
+});
+
+// Dashboard KPIs (currency-corrected, server-side).
+//
+// Response shape:
+//   {
+//     display_currency: 'ZAR',
+//     revenue_earned:   { value, prior_value, change_pct },
+//     revenue_coming:   { value },
+//     avg_rate:         { value, prior_value, change_pct },
+//     occupancy:        { value, prior_value, change_pct },
+//   }
+//
+// "Earned" = confirmed non-blocked stays whose check_out is in the last 30
+// days. "Coming" = check_out in the future (in-progress + not-yet-arrived).
+// Sums use `converted_total_price` so mixed-currency portfolios are safe.
+router.get('/dashboard/kpis', scopeProperties, async (req, res) => {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    const displayCurrency = await getDisplayCurrency();
+
+    // Property scope — same logic as /dashboard/stats.
+    let properties;
+    if (req.accessiblePropertyIds === null) {
+      properties = await getAll('SELECT * FROM properties');
+    } else {
+      if (req.accessiblePropertyIds.length === 0) {
+        return res.json({
+          display_currency: displayCurrency,
+          revenue_earned: { value: 0, prior_value: 0, change_pct: 0 },
+          revenue_coming: { value: 0 },
+          avg_rate:       { value: 0, prior_value: 0, change_pct: 0 },
+          occupancy:      { value: 0, prior_value: 0, change_pct: 0 },
+        });
+      }
+      const ph = inParams(req.accessiblePropertyIds, 1);
+      properties = await getAll(`SELECT * FROM properties WHERE id IN (${ph})`, req.accessiblePropertyIds);
+    }
+
+    // Fetch every confirmed booking whose stay overlaps the 60-day earned
+    // window OR is in the future. One scoped query, JS math via the
+    // dashboard-calc helpers.
+    const priorFrom = addDays(today, -60);
+    const propertyIds = properties.map((p) => p.id);
+    let bookings = [];
+    if (propertyIds.length > 0) {
+      const ph = inParams(propertyIds, 2);
+      bookings = await getAll(
+        `SELECT b.check_in, b.check_out, b.total_price, b.price_per_night, b.currency,
+                b.platform, b.status, b.property_id
+           FROM bookings b
+          WHERE b.status = 'confirmed'
+            AND b.check_out >= $1
+            AND b.property_id IN (${ph})`,
+        [priorFrom, ...propertyIds]
+      );
+    }
+    // Fill in converted_total_price / converted_price_per_night on each row.
+    await bulkConvert(bookings, displayCurrency);
+
+    const earned = revenueEarned(bookings, today, 30);
+    const priorEarned = revenueEarned(bookings, addDays(today, -30), 30);
+    const coming = revenueComing(bookings, today);
+    const avgRate = avgRateEarned(bookings, today, 30);
+    const priorAvgRate = avgRateEarned(bookings, addDays(today, -30), 30);
+
+    // Occupancy uses the /dashboard/stats math to stay consistent with the
+    // "Occupancy per property" list on the same page.
+    const nowOcc = occupancyByProperty(bookings, propertyIds, today, 30);
+    const priorOcc = occupancyByProperty(bookings, propertyIds, addDays(today, -30), 30);
+    const avgOccupancy = nowOcc.length > 0
+      ? Math.round(nowOcc.reduce((s, o) => s + o.occupancy_rate, 0) / nowOcc.length)
+      : 0;
+    const priorOccupancy = priorOcc.length > 0
+      ? Math.round(priorOcc.reduce((s, o) => s + o.occupancy_rate, 0) / priorOcc.length)
+      : 0;
+
+    const pctChange = (now, prior) => (prior > 0 ? Math.round(((now - prior) / prior) * 100) : 0);
+
+    res.json({
+      display_currency: displayCurrency,
+      revenue_earned: {
+        value: Math.round(earned),
+        prior_value: Math.round(priorEarned),
+        change_pct: pctChange(earned, priorEarned),
+      },
+      revenue_coming: {
+        value: Math.round(coming),
+      },
+      avg_rate: {
+        value: avgRate,
+        prior_value: priorAvgRate,
+        change_pct: pctChange(avgRate, priorAvgRate),
+      },
+      occupancy: {
+        value: avgOccupancy,
+        prior_value: priorOccupancy,
+        change_pct: pctChange(avgOccupancy, priorOccupancy),
+      },
+    });
+  } catch (err) {
+    console.error('KPI computation failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
