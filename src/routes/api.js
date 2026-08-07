@@ -13,7 +13,7 @@ function parsePropertyIds(raw) {
 const { detectCurrency } = require('../services/currency-detect');
 const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
 const { getApiKeyForUser } = require('../services/api-key-resolver');
-const { occupancyByProperty, detectGaps, addDays } = require('../services/dashboard-calc');
+const { occupancyByProperty, forwardOccupancy, detectGaps, addDays } = require('../services/dashboard-calc');
 // All revenue figures resolve through this one module — see its header for
 // the attribution rule. Analytics uses the same functions.
 const { revenueEarned, revenueComing, avgRateEarned } = require('../services/revenue');
@@ -372,6 +372,7 @@ router.get('/dashboard/kpis', scopeProperties, async (req, res) => {
       revenue_coming: { value: 0 },
       avg_rate:       { value: 0, prior_value: 0, change_pct: 0 },
       occupancy:      { value: 0, prior_value: 0, change_pct: 0 },
+      forward_occupancy: [],
     };
 
     let properties;
@@ -439,6 +440,12 @@ router.get('/dashboard/kpis', scopeProperties, async (req, res) => {
       ? Math.round(priorOcc.reduce((s, o) => s + o.occupancy_rate, 0) / priorOcc.length)
       : 0;
 
+    // Six months of forward occupancy. The 30-day figure above cannot show
+    // an empty month far enough ahead to still be fillable; this can.
+    // Uses the same booking set — the query has no upper bound on
+    // check_out, so every future stay is already loaded.
+    const outlook = forwardOccupancy(bookings, properties.length, today, 6);
+
     const pctChange = (now, prior) => (prior > 0 ? Math.round(((now - prior) / prior) * 100) : 0);
 
     // `value` on revenue_earned / revenue_coming is NET (after commission +
@@ -465,6 +472,7 @@ router.get('/dashboard/kpis', scopeProperties, async (req, res) => {
         prior_value: priorOccupancy,
         change_pct: pctChange(avgOccupancy, priorOccupancy),
       },
+      forward_occupancy: outlook,
     });
   } catch (err) {
     console.error('KPI computation failed:', err.message);

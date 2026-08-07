@@ -319,3 +319,63 @@ test('avg_rate is ADR (revenue over nights), not a mean of per-booking rates', a
 
   assert.equal(body.avg_rate.value, 1200);
 });
+
+// --- forward occupancy ---------------------------------------------------
+
+test('forward_occupancy returns six months, flagging the current one partial', async () => {
+  const admin = await seedUser({ role: 'admin' });
+  await seedProperty({ owner: admin });
+
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get('/api/dashboard/kpis').expect(200);
+
+  assert.equal(body.forward_occupancy.length, 6);
+  assert.equal(body.forward_occupancy[0].is_partial ||
+    new Date().getUTCDate() === 1, true, 'current month is partial unless today is the 1st');
+  assert.equal(body.forward_occupancy[1].is_partial, false);
+});
+
+test('forward_occupancy surfaces an empty month as 0% rather than omitting it', async () => {
+  // The reason this feature exists: a month with no bookings must be
+  // visible while there is still time to fill it.
+  const admin = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner: admin });
+  // One booking ~2 months out; the months either side stay empty.
+  await seedBooking({
+    property,
+    check_in: todayPlus(60),
+    check_out: todayPlus(65),
+    total_price: 5000,
+  });
+
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get('/api/dashboard/kpis').expect(200);
+
+  const booked = body.forward_occupancy.filter((m) => m.nights_booked > 0);
+  const empty = body.forward_occupancy.filter((m) => m.nights_booked === 0);
+  assert.ok(booked.length >= 1, 'the booked month appears');
+  assert.ok(empty.length >= 1, 'empty months are reported, not dropped');
+  assert.ok(empty.every((m) => m.occupancy_rate === 0 && m.revenue === 0));
+});
+
+test('forward_occupancy respects the property filter', async () => {
+  const admin = await seedUser({ role: 'admin' });
+  const villa = await seedProperty({ owner: admin });
+  const cottage = await seedProperty({ owner: admin });
+  await seedBooking({ property: villa, check_in: todayPlus(40), check_out: todayPlus(45), total_price: 5000 });
+
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+
+  const all = (await agent.get('/api/dashboard/kpis').expect(200)).body;
+  const villaOnly = (await agent.get(`/api/dashboard/kpis?property_id=${villa.id}`).expect(200)).body;
+
+  const sumAvail = (b) => b.forward_occupancy.reduce((s, m) => s + m.nights_available, 0);
+  assert.ok(
+    sumAvail(all) > sumAvail(villaOnly),
+    'two properties offer more sellable nights than one'
+  );
+  assert.equal(sumAvail(all), sumAvail(villaOnly) * 2, 'denominator scales with property count');
+});
