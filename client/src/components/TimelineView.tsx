@@ -52,7 +52,11 @@ export function TimelineView({
                   key={idx}
                   className={`w-[50px] shrink-0 py-2 px-1 text-center ${isWeekend ? 'bg-[#FAFAFA]' : 'bg-white'}`}>
                   
-                  <div className="text-[9px] text-[#717171] uppercase leading-tight font-semibold">
+                  {/* Weekends emphasised — they are the premium nights,
+                      and the column tint already says so. */}
+                  <div className={`text-[9px] uppercase leading-tight font-semibold ${
+                    isWeekend ? 'text-[#222222]' : 'text-[#8A8A8A]'
+                  }`}>
                     {dayNames[date.getDay()]}
                   </div>
                   <div

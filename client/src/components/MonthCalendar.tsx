@@ -195,10 +195,16 @@ export function MonthCalendar({
         {/* Two letters, not one: "S M T W T F S" repeats T and S, so the
             column you land on has to be counted rather than read. Bold and
             near-black — at #B0B0B0 the header was fainter than the dates
-            it labels. */}
-        <div className="grid grid-cols-7 pb-2 text-[11px] font-semibold text-[#222222] text-center uppercase tracking-[0.4px]">
-          {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d) =>
-          <div key={d} className={d === 'Su' || d === 'Sa' ? 'text-[#717171]' : ''}>{d}</div>
+            it labels.
+            Weekends carry the emphasis, not the weekdays. The usual
+            calendar convention greys them out because they are the days
+            off; here they are the nights that earn the premium — R2.1K
+            against R1.6K midweek — and they are what you scan for. The
+            shaded weekend columns say the same thing, so muting their
+            labels had the header arguing with the grid beneath it. */}
+        <div className="grid grid-cols-7 pb-2 text-[11px] font-semibold text-center uppercase tracking-[0.4px]">
+          {['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].map((d, i) =>
+          <div key={d} className={i === 0 || i === 6 ? 'text-[#222222]' : 'text-[#8A8A8A]'}>{d}</div>
           )}
         </div>
       </div>
