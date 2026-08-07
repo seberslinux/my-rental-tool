@@ -174,6 +174,13 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
     const { runAssignmentForAllCheckouts } = require('../services/cleaner-assignment');
     await runAssignmentForAllCheckouts();
 
+    // Record when this sync completed so the UI can show "Synced X ago"
+    await run(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ('last_synced_at', NOW()::text, NOW())
+       ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
+      []
+    );
+
     res.json({ synced: allBookings.length });
   } catch (err) {
     console.error('Booking sync failed:', err.message);
@@ -308,12 +315,15 @@ router.get('/dashboard/stats', scopeProperties, async (req, res) => {
   const displayCurrency = await getDisplayCurrency();
   await bulkConvert(upcomingCheckouts, displayCurrency);
 
+  const lastSyncedRow = await getOne("SELECT value FROM app_settings WHERE key = 'last_synced_at'", []);
+
   res.json({
     upcoming_checkouts: upcomingCheckouts,
     occupancy,
     gaps,
     pending_cleaning_jobs: pendingJobs,
     display_currency: displayCurrency,
+    last_synced_at: lastSyncedRow?.value || null,
   });
 });
 

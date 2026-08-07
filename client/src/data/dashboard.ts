@@ -22,6 +22,9 @@ export let cleaningJobs: { id: number; title: string; subtitle: string; status: 
 
 export let recentCancellations: { id: number; key: string; guestName: string; property: string; checkIn: string; checkOut: string; platform: string; cancelledAt: string; cancelledDate: string }[] = [];
 
+// ISO timestamp of the last completed bookings sync (or null if never synced).
+export let lastSyncedAt: string | null = null;
+
 let activePropertyFilter = 0; // 0 = all properties
 let onDataChanged: (() => void) | null = null;
 
@@ -61,6 +64,12 @@ export const upcomingHolidays = allHolidays.filter((h) => h.date >= new Date().t
 function fmtDate(dateStr: string): string {
   const d = new Date(dateStr + 'T00:00:00');
   return d.toLocaleDateString('en-ZA', { month: 'short', day: 'numeric' });
+}
+
+// "1 guest", "2 guests", "? guests" (unknown count)
+function fmtGuests(n: any): string {
+  if (!n && n !== 0) return '? guests';
+  return `${n} ${n === 1 ? 'guest' : 'guests'}`;
 }
 
 function fmtMoney(amount: number): string {
@@ -152,6 +161,7 @@ export async function loadDashboardData(): Promise<void> {
     let stats: any = { occupancy: [], gaps: [], pending_cleaning_jobs: [], upcoming_checkouts: [] };
     if (statsRes.ok) {
       stats = await statsRes.json();
+      lastSyncedAt = stats.last_synced_at || null;
       // Apply property filter to stats
       if (activePropertyFilter > 0) {
         stats.occupancy = (stats.occupancy || []).filter((o: any) => o.property_id === activePropertyFilter);
@@ -283,7 +293,7 @@ export async function loadDashboardData(): Promise<void> {
         property: b.property_name || `Property ${b.property_id}`,
         platform: platformLabel(b.platform),
         guestName: b.guest_name,
-        meta: `${b.num_guests || '?'} guests · ${fmtDate(b.check_in)}–${fmtDate(b.check_out)}`,
+        meta: `${fmtGuests(b.num_guests)} · ${fmtDate(b.check_in)}–${fmtDate(b.check_out)}`,
         rate: b.price_per_night ? fmtMoney(b.price_per_night) : undefined,
         total: b.total_price ? `${fmtMoney(b.total_price)} total` : undefined,
         isVacant: false,
@@ -363,7 +373,7 @@ export async function loadDashboardData(): Promise<void> {
         type: 'in',
         label: `Check-in · ${relativeDay(b.check_in)}`,
         name: b.guest_name,
-        detail: `${b.property_name || ''} · ${b.num_guests || '?'} guests`,
+        detail: `${b.property_name || ''} · ${fmtGuests(b.num_guests)}`,
         sortDate: b.check_in,
       });
     });

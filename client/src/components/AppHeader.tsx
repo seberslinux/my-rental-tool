@@ -9,8 +9,9 @@ interface AppHeaderProps {
   };
   onRefresh?: () => Promise<void>;
   hasNotifications?: boolean;
+  syncedLabel?: string;
 }
-export function AppHeader({ title, propertyFilter, onRefresh, hasNotifications }: AppHeaderProps) {
+export function AppHeader({ title, propertyFilter, onRefresh, hasNotifications, syncedLabel }: AppHeaderProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = async () => {
     if (isRefreshing) return;
@@ -62,7 +63,7 @@ export function AppHeader({ title, propertyFilter, onRefresh, hasNotifications }
       )}
       <div className="text-[13px] text-[#B0B0B0] mt-1 flex items-center gap-1">
         <span className="w-[5px] h-[5px] rounded-full bg-[#00A699]"></span>
-        Synced 2 min ago
+        {syncedLabel || 'Not synced yet'}
       </div>
     </div>);
 

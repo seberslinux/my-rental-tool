@@ -16,6 +16,7 @@ interface TopNavProps {
   onTabChange: (tab: string) => void;
   onRefresh?: () => Promise<void>;
   hasNotifications?: boolean;
+  syncedLabel?: string;
   propertyFilter?: {
     properties: { id: number; name: string }[];
     selected: number;
@@ -24,7 +25,7 @@ interface TopNavProps {
 }
 
 // Desktop-only top navigation (hidden below lg). Mirrors the mobile TabBar's tabs.
-export function TopNav({ activeTab, onTabChange, onRefresh, hasNotifications, propertyFilter }: TopNavProps) {
+export function TopNav({ activeTab, onTabChange, onRefresh, hasNotifications, syncedLabel, propertyFilter }: TopNavProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = async () => {
     if (isRefreshing) return;
@@ -49,7 +50,7 @@ export function TopNav({ activeTab, onTabChange, onRefresh, hasNotifications, pr
       <div className="flex items-center gap-8">
         <button
           onClick={() => onTabChange('home')}
-          className="flex items-center gap-2 text-[#FF385C]">
+          className="flex items-center gap-2 text-[#FF385C] focus:outline-none">
           <Home className="w-6 h-6" strokeWidth={2} />
           <span className="text-[18px] font-bold tracking-[-0.3px]">My Rentals</span>
         </button>
@@ -60,7 +61,7 @@ export function TopNav({ activeTab, onTabChange, onRefresh, hasNotifications, pr
               <button
                 key={tab.id}
                 onClick={() => onTabChange(tab.id)}
-                className={`px-3 py-2 rounded-full text-[14px] font-medium transition-colors ${
+                className={`px-3 py-2 rounded-full text-[14px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FF385C66] ${
                 isActive ?
                 'text-[#FF385C] bg-[#FF385C0F]' :
                 'text-[#717171] hover:text-[#222222] hover:bg-[#F7F7F7]'}`}>
@@ -74,6 +75,12 @@ export function TopNav({ activeTab, onTabChange, onRefresh, hasNotifications, pr
 
       {/* Actions */}
       <div className="flex items-center gap-2">
+        {syncedLabel &&
+        <div className="hidden xl:flex items-center gap-1 text-[13px] text-[#B0B0B0] mr-1">
+          <span className="w-[5px] h-[5px] rounded-full bg-[#00A699]"></span>
+          {syncedLabel}
+        </div>
+        }
         {propertyFilter &&
         <div className="relative mr-1">
           <select
