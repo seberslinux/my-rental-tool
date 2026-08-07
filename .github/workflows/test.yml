@@ -1,0 +1,73 @@
+# Runs the full test suite on every push and PR.
+#
+# Uses GitHub Actions' native Postgres service container instead of the
+# docker-compose.test.yml that developers use locally — same Postgres 16
+# image, same schema (via runMigrations), same test env vars.
+
+name: Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# One in-flight run per branch — new pushes cancel the previous run so PR
+# updates don't queue behind stale runs.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      # Mirrors docker-compose.test.yml. GitHub maps the container's 5432
+      # to the host, so the test harness's default
+      # `postgres://postgres:postgres@localhost:5433/rental_test`
+      # would not reach it — we set TEST_DATABASE_URL below to use 5432
+      # directly on the runner.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rental_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d rental_test"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/rental_test
+      # Harness reads these too — provide fixed values so nothing falls back
+      # to real-service defaults.
+      SESSION_SECRET: ci-session-secret
+      WEBHOOK_SECRET: ci-webhook-secret
+      SMOOBU_API_KEY: ci-smoobu-key
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            package-lock.json
+            client/package-lock.json
+
+      # Install root deps only. The `postinstall` script also `cd client &&
+      # npm install`, which pulls in the frontend deps — those aren't needed
+      # for the test suite. --ignore-scripts skips that, keeping CI faster.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run tests
+        run: npm test
