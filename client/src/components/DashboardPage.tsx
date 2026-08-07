@@ -168,16 +168,22 @@ export function DashboardPage({ onNavigate }: { onNavigate?: (tab: string) => vo
         </div>
       </div>
 
-      {/* Nights still to sell. Horizontal rows rather than columns: at
+      {/* Forward occupancy. Horizontal rows rather than columns: at
           10–30% occupancy a vertical bar is a sliver in an empty box,
           while a horizontal track reads cleanly at any fill level and
           leaves room for the free-night count, which is the number you
-          can actually act on. */}
+          can actually act on.
+
+          The heading names occupancy rather than "nights still to sell"
+          because the bar and the percentage both show what is BOOKED. Under
+          the old heading a nearly-empty month drew a nearly-empty bar, which
+          read as "almost nothing left to sell" — the opposite of the truth.
+          The free-night count carries the actionable side. */}
       {forwardOccupancy.length > 0 &&
       <div className="mb-6">
         <div className="flex items-baseline justify-between pb-2">
           <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0]">
-            Nights Still To Sell
+            Booked
           </div>
           <div className="text-[11px] text-[#B0B0B0]">next {forwardOccupancy.length} months</div>
         </div>
@@ -201,8 +207,8 @@ export function DashboardPage({ onNavigate }: { onNavigate?: (tab: string) => vo
             <div className="w-[34px] shrink-0 text-right text-[12px] font-medium text-[#222222] tabular-nums">
               {m.occupancyRate}%
             </div>
-            <div className={`w-[64px] shrink-0 text-right text-[12px] tabular-nums ${m.occupancyRate === 0 ? 'text-[#E8913A] font-medium' : 'text-[#B0B0B0]'}`}>
-              {m.nightsAvailable - m.nightsBooked} free
+            <div className={`w-[86px] shrink-0 text-right text-[12px] tabular-nums ${m.occupancyRate === 0 ? 'text-[#E8913A] font-medium' : 'text-[#B0B0B0]'}`}>
+              {m.nightsAvailable - m.nightsBooked} nights free
             </div>
           </div>
           )}
