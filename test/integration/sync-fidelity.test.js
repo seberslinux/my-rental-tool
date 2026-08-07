@@ -376,6 +376,57 @@ test('update: check_in / check_out / price / num_guests / platform all overwritt
 });
 
 // ==========================================================================
+// Section 9b — commission-included round-trip
+// ==========================================================================
+
+test('commission: Smoobu\'s commission-included field is stored on the row', async () => {
+  // Regression guard for a real bug — the sync used to drop this field,
+  // which broke net-revenue calculations downstream.
+  await syncAsAdmin([
+    {
+      id: 950,
+      apartment: { id: 42 },
+      arrival: todayPlus(1),
+      departure: todayPlus(3),
+      price: 5000,
+      adults: 2,
+      channel: { name: 'Booking.com' },
+      'commission-included': 750,
+    },
+  ]);
+
+  const b = await loadBooking(950);
+  assert.ok(b);
+  assert.equal(Number(b.commission), 750);
+  assert.equal(Number(b.total_price), 5000, 'gross price stays as sent (commission is included in it)');
+});
+
+test('commission: camelCase commissionIncluded also honoured', async () => {
+  await syncAsAdmin([
+    {
+      id: 951,
+      apartmentId: 42,
+      arrivalDate: todayPlus(1),
+      departureDate: todayPlus(3),
+      price: 3000,
+      adults: 2,
+      channel: 'Airbnb',
+      commissionIncluded: 450,
+    },
+  ]);
+  const b = await loadBooking(951);
+  assert.equal(Number(b.commission), 450);
+});
+
+test('commission: missing on payload → stored as 0', async () => {
+  await syncAsAdmin([
+    { id: 952, apartment: { id: 42 }, arrival: todayPlus(1), departure: todayPlus(3), price: 100, adults: 1 },
+  ]);
+  const b = await loadBooking(952);
+  assert.equal(Number(b.commission), 0);
+});
+
+// ==========================================================================
 // Section 10 — property linking robustness
 // ==========================================================================
 

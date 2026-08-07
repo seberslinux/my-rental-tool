@@ -3,7 +3,7 @@ import { filterDismissed, dismiss } from './dismissed';
 
 // Dashboard data — populated by loadDashboardData() from the real API
 
-export let kpis: { label: string; value: string; trend: string; isPositive: boolean; period: string }[] = [];
+export let kpis: { label: string; value: string; subvalue?: string; trend: string; isPositive: boolean; period: string }[] = [];
 
 export let needsAttention: { id: number; key: string; title: string; subtitle: string; dotColor: string }[] = [];
 
@@ -197,7 +197,10 @@ export async function loadDashboardData(): Promise<void> {
     kpis = kpiBody ? [
       {
         label: 'Revenue Earned',
+        // Primary value = net (after commission + bank + VAT).
         value: fmtMoney(kpiBody.revenue_earned.value),
+        // Show gross underneath so the guest-paid figure is still visible.
+        subvalue: `gross ${fmtMoney(kpiBody.revenue_earned.gross)}`,
         trend: fmtChange(kpiBody.revenue_earned.change_pct),
         isPositive: kpiBody.revenue_earned.change_pct >= 0,
         period: 'Last 30 days',
@@ -207,6 +210,7 @@ export async function loadDashboardData(): Promise<void> {
       {
         label: 'Revenue Coming',
         value: fmtMoney(kpiBody.revenue_coming.value),
+        subvalue: `gross ${fmtMoney(kpiBody.revenue_coming.gross)}`,
         trend: '',
         isPositive: true,
         period: 'All future stays',

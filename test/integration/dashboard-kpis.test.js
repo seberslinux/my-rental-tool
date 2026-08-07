@@ -52,7 +52,7 @@ test('scoping: user B only sees their own bookings\' revenue', async () => {
   const agent = await getAgent();
   await loginAs(agent, bob);
   const { body } = await agent.get('/api/dashboard/kpis').expect(200);
-  assert.equal(body.revenue_earned.value, 3000, 'Bob should see only his 3000');
+  assert.equal(body.revenue_earned.gross, 3000, 'Bob should see only his 3000');
 });
 
 // --- Revenue Earned ------------------------------------------------------
@@ -74,7 +74,7 @@ test('revenue_earned counts stays that completed in the last 30 days', async () 
   await loginAs(agent, admin);
   const { body } = await agent.get('/api/dashboard/kpis').expect(200);
 
-  assert.equal(body.revenue_earned.value, 8000, 'only the two in-window past bookings should count');
+  assert.equal(body.revenue_earned.gross, 8000, 'only the two in-window past bookings should count');
 });
 
 // --- Revenue Coming ------------------------------------------------------
@@ -94,7 +94,7 @@ test('revenue_coming counts stays whose check_out is in the future (in-progress 
   await loginAs(agent, admin);
   const { body } = await agent.get('/api/dashboard/kpis').expect(200);
 
-  assert.equal(body.revenue_coming.value, 7500);
+  assert.equal(body.revenue_coming.gross, 7500);
 });
 
 test('revenue_coming excludes cancelled and blocked-platform bookings', async () => {
@@ -106,7 +106,7 @@ test('revenue_coming excludes cancelled and blocked-platform bookings', async ()
   const agent = await getAgent();
   await loginAs(agent, admin);
   const { body } = await agent.get('/api/dashboard/kpis').expect(200);
-  assert.equal(body.revenue_coming.value, 3000);
+  assert.equal(body.revenue_coming.gross, 3000);
 });
 
 // --- Currency correctness — the whole reason this endpoint exists -------
@@ -129,7 +129,7 @@ test('revenue_earned uses converted_total_price (mixed currencies handled)', asy
   const agent = await getAgent();
   await loginAs(agent, admin);
   const { body } = await agent.get('/api/dashboard/kpis').expect(200);
-  assert.equal(body.revenue_earned.value, 3000);
+  assert.equal(body.revenue_earned.gross, 3000);
   assert.equal(body.display_currency, 'ZAR');
 });
 
@@ -148,9 +148,11 @@ test('revenue_earned includes change_pct vs the prior 30 days', async () => {
   await loginAs(agent, admin);
   const { body } = await agent.get('/api/dashboard/kpis').expect(200);
 
-  assert.equal(body.revenue_earned.value, 10000);
-  assert.equal(body.revenue_earned.prior_value, 5000);
-  assert.equal(body.revenue_earned.change_pct, 100); // doubled → +100%
+  assert.equal(body.revenue_earned.gross, 10000);
+  // change_pct compares net now-vs-prior. Both doubled (10000 → 5000 gross),
+  // so proportionally net also doubles → +100% regardless of the exact
+  // net amount.
+  assert.equal(body.revenue_earned.change_pct, 100);
 });
 
 test('change_pct is 0 when prior_value is 0 (avoid divide-by-zero)', async () => {
@@ -184,9 +186,9 @@ test('?property_id= filter returns only the requested property\'s revenue', asyn
   const cottageOnly = (await agent.get(`/api/dashboard/kpis?property_id=${cottage.id}`).expect(200)).body;
   const all = (await agent.get('/api/dashboard/kpis').expect(200)).body;
 
-  assert.equal(villaOnly.revenue_earned.value, 10000, 'villa-only earned');
-  assert.equal(cottageOnly.revenue_earned.value, 3000, 'cottage-only earned');
-  assert.equal(all.revenue_earned.value, 13000, 'unfiltered = sum of both');
+  assert.equal(villaOnly.revenue_earned.gross, 10000, 'villa-only earned');
+  assert.equal(cottageOnly.revenue_earned.gross, 3000, 'cottage-only earned');
+  assert.equal(all.revenue_earned.gross, 13000, 'unfiltered = sum of both');
 });
 
 test('?property_id=all is treated as "no filter"', async () => {
@@ -197,7 +199,7 @@ test('?property_id=all is treated as "no filter"', async () => {
   const agent = await getAgent();
   await loginAs(agent, admin);
   const { body } = await agent.get('/api/dashboard/kpis?property_id=all').expect(200);
-  assert.equal(body.revenue_earned.value, 5000);
+  assert.equal(body.revenue_earned.gross, 5000);
 });
 
 test('filter honours scoping: non-admin cannot request another user\'s property', async () => {
@@ -212,6 +214,61 @@ test('filter honours scoping: non-admin cannot request another user\'s property'
   const { body } = await agent.get(`/api/dashboard/kpis?property_id=${aliceProp.id}`).expect(200);
   assert.equal(body.revenue_earned.value, 0, 'must not leak alice\'s revenue');
   assert.equal(body.revenue_coming.value, 0);
+});
+
+// --- net revenue (deductions applied) -----------------------------------
+
+test('response includes gross alongside net on revenue_earned and revenue_coming', async () => {
+  const admin = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner: admin });
+  // Configure Airbnb fees so calcDeductions produces non-zero deductions.
+  await pool.query(
+    `UPDATE properties SET commission_airbnb = 15, bank_charge_airbnb = 2, vat_airbnb = 15 WHERE id = $1`,
+    [property.id]
+  );
+  await seedBooking({
+    property, check_in: todayPlus(-5), check_out: todayPlus(-2),
+    total_price: 1000, platform: 'Airbnb', currency: 'ZAR',
+  });
+  await seedBooking({
+    property, check_in: todayPlus(5), check_out: todayPlus(10),
+    total_price: 2000, platform: 'Airbnb', currency: 'ZAR',
+  });
+
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get('/api/dashboard/kpis').expect(200);
+
+  // Earned: 1000 gross, deductions = 150 + 20 + 25.5 = 195.5 → net 804.5 → round 805
+  assert.equal(body.revenue_earned.gross, 1000);
+  assert.equal(body.revenue_earned.value, 805);
+  // Coming: 2000 gross, deductions = 300 + 40 + 51 = 391 → net 1609
+  assert.equal(body.revenue_coming.gross, 2000);
+  assert.equal(body.revenue_coming.value, 1609);
+});
+
+test('when property has no commission rates set, net falls back to Smoobu\'s commission-included figure', async () => {
+  const admin = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner: admin });
+  // Explicitly zero out the schema defaults so the Smoobu-commission
+  // fallback in calcDeductions kicks in.
+  await pool.query(
+    `UPDATE properties SET commission_booking = 0, bank_charge_booking = 0,
+                            vat_booking = 0, vat_rate = 0 WHERE id = $1`,
+    [property.id]
+  );
+  await pool.query(
+    `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, length_of_stay, price_per_night, currency, commission)
+     VALUES (99001, $1, 'X', $2, $3, 'Booking.com', 5000, 'confirmed', 2, 2, 2500, 'ZAR', 750)`,
+    [property.id, todayPlus(-5), todayPlus(-3)]
+  );
+
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get('/api/dashboard/kpis').expect(200);
+
+  assert.equal(body.revenue_earned.gross, 5000);
+  assert.equal(body.revenue_earned.value, 4250, 'net = 5000 - 750 Smoobu commission');
 });
 
 test('avg_rate is the mean nightly rate of earned stays', async () => {

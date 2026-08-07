@@ -188,6 +188,14 @@ function daysBetween(fromStr, toStr) {
 
 // --- KPI aggregations -----------------------------------------------------
 
+// Loaded lazily to avoid a require cycle at module load — analytics-calc
+// doesn't depend on this file today, but we don't want to preclude that.
+let _calcDeductions = null;
+function calcDeductions(b) {
+  if (!_calcDeductions) _calcDeductions = require('./analytics-calc').calcDeductions;
+  return _calcDeductions(b);
+}
+
 /**
  * Sum of `converted_total_price` across bookings whose stay has completed
  * in the last `days` days: check_out ∈ [todayStr - days, todayStr].
@@ -242,6 +250,34 @@ function avgRateEarned(bookings, todayStr, days = 30) {
   return count > 0 ? Math.round(sum / count) : 0;
 }
 
+/**
+ * Same window as revenueEarned, but subtracts calcDeductions (commission +
+ * bank charges + VAT) from each booking's gross before summing. Net revenue
+ * is what actually reaches the owner's account.
+ */
+function revenueEarnedNet(bookings, todayStr, days = 30) {
+  const fromStr = addDays(todayStr, -days);
+  let total = 0;
+  for (const b of bookings) {
+    if (isCancelled(b) || isBlocked(b)) continue;
+    if (b.check_out > todayStr) continue;
+    if (b.check_out < fromStr) continue;
+    total += (b.converted_total_price || 0) - calcDeductions(b);
+  }
+  return total;
+}
+
+/** Same as revenueComing, net of deductions. */
+function revenueComingNet(bookings, todayStr) {
+  let total = 0;
+  for (const b of bookings) {
+    if (isCancelled(b) || isBlocked(b)) continue;
+    if (b.check_out <= todayStr) continue;
+    total += (b.converted_total_price || 0) - calcDeductions(b);
+  }
+  return total;
+}
+
 module.exports = {
   // predicates
   isCancelled,
@@ -262,6 +298,8 @@ module.exports = {
   // KPI aggregations
   revenueEarned,
   revenueComing,
+  revenueEarnedNet,
+  revenueComingNet,
   avgRateEarned,
   // date utilities
   addDays,

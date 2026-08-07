@@ -19,6 +19,8 @@ const {
   addDays,
   revenueEarned,
   revenueComing,
+  revenueEarnedNet,
+  revenueComingNet,
   avgRateEarned,
 } = require('../services/dashboard-calc');
 
@@ -146,10 +148,16 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
         const leadTime = createdAt ? Math.max(0, Math.round((new Date(checkIn) - new Date(createdAt)) / (24 * 60 * 60 * 1000))) : 0;
         const aptId = b['apartment']?.id || b.apartmentId;
         const currency = detectCurrency(b) || propCurrencyMap[aptId] || 'ZAR';
+        // Smoobu returns the OTA's own commission in `commission-included` —
+        // it's already baked into `price` (the guest paid the full amount to
+        // the OTA, who then keeps this and pays us the difference). Store it
+        // so KPIs / analytics can compute net revenue without re-deriving it
+        // from per-property rates.
+        const commission = b['commission-included'] || b.commissionIncluded || 0;
 
         await client.query(
-          `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, currency, modified_at)
-           VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, currency, modified_at, commission)
+           VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
            ON CONFLICT(smoobu_id) DO UPDATE SET
              guest_name = CASE WHEN excluded.guest_name = '' THEN bookings.guest_name ELSE excluded.guest_name END,
              check_in = excluded.check_in,
@@ -163,7 +171,8 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
              length_of_stay = excluded.length_of_stay,
              price_per_night = excluded.price_per_night,
              currency = excluded.currency,
-             modified_at = excluded.modified_at`,
+             modified_at = excluded.modified_at,
+             commission = excluded.commission`,
           [
             b.id,
             aptId,
@@ -179,7 +188,8 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
             los,
             ppn,
             currency,
-            modifiedAt
+            modifiedAt,
+            commission
           ]
         );
       }
@@ -374,7 +384,8 @@ router.get('/dashboard/kpis', scopeProperties, async (req, res) => {
 
     // Fetch every confirmed booking whose stay overlaps the 60-day earned
     // window OR is in the future. One scoped query, JS math via the
-    // dashboard-calc helpers.
+    // dashboard-calc helpers. Joins in the per-property fee rates so
+    // calcDeductions can compute net revenue.
     const priorFrom = addDays(today, -60);
     const propertyIds = properties.map((p) => p.id);
     let bookings = [];
@@ -382,20 +393,31 @@ router.get('/dashboard/kpis', scopeProperties, async (req, res) => {
       const ph = inParams(propertyIds, 2);
       bookings = await getAll(
         `SELECT b.check_in, b.check_out, b.total_price, b.price_per_night, b.currency,
-                b.platform, b.status, b.property_id
+                b.platform, b.status, b.property_id, b.commission,
+                p.vat_rate                 AS property_vat_rate,
+                p.commission_airbnb        AS prop_commission_airbnb,
+                p.commission_booking       AS prop_commission_booking,
+                p.commission_vrbo          AS prop_commission_vrbo,
+                p.bank_charge_airbnb, p.bank_charge_booking, p.bank_charge_vrbo,
+                p.vat_airbnb, p.vat_booking, p.vat_vrbo
            FROM bookings b
+           JOIN properties p ON b.property_id = p.id
           WHERE b.status = 'confirmed'
             AND b.check_out >= $1
             AND b.property_id IN (${ph})`,
         [priorFrom, ...propertyIds]
       );
     }
-    // Fill in converted_total_price / converted_price_per_night on each row.
+    // Fill in converted_total_price / converted_price_per_night /
+    // converted_commission on each row.
     await bulkConvert(bookings, displayCurrency);
 
     const earned = revenueEarned(bookings, today, 30);
+    const earnedNet = revenueEarnedNet(bookings, today, 30);
     const priorEarned = revenueEarned(bookings, addDays(today, -30), 30);
+    const priorEarnedNet = revenueEarnedNet(bookings, addDays(today, -30), 30);
     const coming = revenueComing(bookings, today);
+    const comingNet = revenueComingNet(bookings, today);
     const avgRate = avgRateEarned(bookings, today, 30);
     const priorAvgRate = avgRateEarned(bookings, addDays(today, -30), 30);
 
@@ -412,15 +434,19 @@ router.get('/dashboard/kpis', scopeProperties, async (req, res) => {
 
     const pctChange = (now, prior) => (prior > 0 ? Math.round(((now - prior) / prior) * 100) : 0);
 
+    // `value` on revenue_earned / revenue_coming is NET (after commission +
+    // bank + VAT). Gross is exposed alongside so the UI can show both.
     res.json({
       display_currency: displayCurrency,
       revenue_earned: {
-        value: Math.round(earned),
-        prior_value: Math.round(priorEarned),
-        change_pct: pctChange(earned, priorEarned),
+        value: Math.round(earnedNet),
+        gross: Math.round(earned),
+        prior_value: Math.round(priorEarnedNet),
+        change_pct: pctChange(earnedNet, priorEarnedNet),
       },
       revenue_coming: {
-        value: Math.round(coming),
+        value: Math.round(comingNet),
+        gross: Math.round(coming),
       },
       avg_rate: {
         value: avgRate,
