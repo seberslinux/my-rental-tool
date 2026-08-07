@@ -6,6 +6,7 @@ const { requireRole, scopeProperties } = require('../middleware/auth');
 const { detectCurrency } = require('../services/currency-detect');
 const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
 const { getApiKeyForUser } = require('../services/api-key-resolver');
+const { occupancyByProperty, detectGaps, addDays } = require('../services/dashboard-calc');
 
 // Sync properties — uses the requesting user's API key (or env var fallback)
 router.post('/sync/properties', requireRole('admin'), async (req, res) => {
@@ -233,7 +234,9 @@ router.get('/dashboard/stats', scopeProperties, async (req, res) => {
   checkoutQuery += ' ORDER BY b.check_out ASC';
   const upcomingCheckouts = await getAll(checkoutQuery, checkoutParams);
 
-  // Occupancy rate per property (next 30 days)
+  // Occupancy rate per property (next 30 days) and 1-3 night gap detection.
+  // Single scoped query for all bookings from today onwards; JS derivations
+  // via dashboard-calc so the same code path is covered by unit tests.
   let properties;
   if (req.accessiblePropertyIds === null) {
     properties = await getAll('SELECT * FROM properties');
@@ -241,57 +244,36 @@ router.get('/dashboard/stats', scopeProperties, async (req, res) => {
     const ph = inParams(req.accessiblePropertyIds, 1);
     properties = await getAll(`SELECT * FROM properties WHERE id IN (${ph})`, req.accessiblePropertyIds);
   }
-  const thirtyDaysOut = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .split('T')[0];
+  const thirtyDaysOut = addDays(today, 30);
 
-  const occupancy = [];
-  for (const p of properties) {
-    const bookings = await getAll(
-      `SELECT * FROM bookings
-       WHERE property_id = $1 AND check_out >= $2 AND check_in <= $3 AND status = 'confirmed'
-       AND platform NOT LIKE 'Blocked%'`,
-      [p.id, today, thirtyDaysOut]
+  // Fetch all future-relevant bookings for the scoped properties in one query.
+  const propertyIds = properties.map((p) => p.id);
+  let futureBookings = [];
+  if (propertyIds.length > 0) {
+    const ph = inParams(propertyIds, 2);
+    futureBookings = await getAll(
+      `SELECT property_id, check_in, check_out, platform, status
+         FROM bookings
+        WHERE status = 'confirmed'
+          AND check_out >= $1
+          AND property_id IN (${ph})
+        ORDER BY check_in ASC`,
+      [today, ...propertyIds]
     );
-
-    let bookedNights = 0;
-    for (const b of bookings) {
-      const start = new Date(Math.max(new Date(b.check_in), new Date(today)));
-      const end = new Date(Math.min(new Date(b.check_out), new Date(thirtyDaysOut)));
-      bookedNights += Math.max(0, Math.round((end - start) / (24 * 60 * 60 * 1000)));
-    }
-    const rate = Math.round((bookedNights / 30) * 100);
-    occupancy.push({ property_id: p.id, name: p.name, occupancy_rate: rate, booked_nights: bookedNights });
   }
 
-  // Gap detection: 1-3 night gaps between bookings
-  const gaps = [];
-  for (const p of properties) {
-    const pBookings = await getAll(
-      `SELECT * FROM bookings
-       WHERE property_id = $1 AND check_out >= $2 AND status = 'confirmed'
-       AND platform NOT LIKE 'Blocked%'
-       ORDER BY check_in ASC`,
-      [p.id, today]
-    );
+  const propertyNamesById = new Map(properties.map((p) => [p.id, p.name]));
+  const occupancy = occupancyByProperty(futureBookings, propertyIds, today, 30).map((row) => ({
+    property_id: row.property_id,
+    name: propertyNamesById.get(row.property_id),
+    occupancy_rate: row.occupancy_rate,
+    booked_nights: row.booked_nights,
+  }));
 
-    for (let i = 0; i < pBookings.length - 1; i++) {
-      const gapStart = pBookings[i].check_out;
-      const gapEnd = pBookings[i + 1].check_in;
-      const nights = Math.round(
-        (new Date(gapEnd) - new Date(gapStart)) / (24 * 60 * 60 * 1000)
-      );
-      if (nights >= 1 && nights <= 3) {
-        gaps.push({
-          property_id: p.id,
-          property_name: p.name,
-          gap_start: gapStart,
-          gap_end: gapEnd,
-          nights,
-        });
-      }
-    }
-  }
+  const gaps = detectGaps(futureBookings, today, { minNights: 1, maxNights: 3 }).map((g) => ({
+    ...g,
+    property_name: propertyNamesById.get(g.property_id),
+  }));
 
   // Cleaning jobs (scoped to accessible properties)
   let jobQuery = `SELECT cj.*, p.name as property_name, c.name as cleaner_name
