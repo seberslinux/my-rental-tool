@@ -10,7 +10,7 @@ import {
   dateEqual } from
 '../data/properties';
 import { BookingBar } from './BookingBar';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Moon } from 'lucide-react';
 interface MonthCalendarProps {
   propertyId: number;
   bookings: Booking[];
@@ -256,7 +256,7 @@ export function MonthCalendar({
                         line at the top. Centring the date and stacking the
                         price beneath it left the booking bars nowhere to
                         sit and wasted the bottom half of every cell. */}
-                    <div className="pl-1.5 pr-2 pt-1.5">
+                    <div className="flex items-start justify-between pl-1.5 pr-1.5 pt-1.5">
                       {/* Today used to be a filled #FF385C disc — the same
                           pink the Airbnb bars use, so the marker read as a
                           booking on that date. A channel colour cannot also
@@ -270,6 +270,27 @@ export function MonthCalendar({
                         {cell.date.getDate()}
                       </div>
 
+                      {/* Minimum stay, when it is more than one night.
+                          It is often the reason a gap will not fill: a
+                          two-night minimum makes a one-night hole
+                          unsellable at any price, and the nightly rate
+                          alone never explains that. Shown only above 1 —
+                          "1" against a moon on every open day is noise.
+
+                          The moon is the unit. "2n" needed decoding and
+                          a spelt-out "min 2 nights" does not fit a 50px
+                          phone cell; a crescent reads as nights at a
+                          glance in any language. */}
+                      {!isCovered && rate && rate.minStay > 1 &&
+                    <span
+                      title={`Minimum stay ${rate.minStay} nights`}
+                      className={`flex items-center gap-[2px] text-[10px] font-medium tabular-nums pt-[3px] ${
+                        isClosed || isPast ? 'text-[#B0B0B0]' : 'text-[#8A8A8A]'
+                      }`}>
+                          {rate.minStay}
+                          <Moon className="w-[9px] h-[9px]" strokeWidth={2.5} />
+                        </span>
+                    }
                     </div>
 
                     {/* Nightly rate, straight from Smoobu. Blank where no
@@ -297,7 +318,7 @@ export function MonthCalendar({
                     {hasCleaner &&
                   <div
                     title="Cleaning scheduled"
-                    className="absolute w-[5px] h-[5px] bg-[#00A699] rounded-full top-3.5 right-2" />
+                    className="absolute w-[5px] h-[5px] bg-[#00A699] rounded-full bottom-2.5 right-1.5" />
                   }
                   </div>);
 

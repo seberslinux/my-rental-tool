@@ -10,6 +10,7 @@ import {
   dateEqual } from
 '../data/properties';
 import { BookingBar } from './BookingBar';
+import { Moon } from 'lucide-react';
 interface TimelineViewProps {
   properties: Property[];
   bookings: Booking[];
@@ -154,6 +155,15 @@ export function TimelineView({
                         rate.available ? 'text-[#222222]' : 'text-[#8A8A8A] line-through decoration-[1.5px]'
                       }`}>
                           {formatRate(rate.price)}
+                        </div>
+                      }
+                      {/* Minimum stay — see MonthCalendar for why. */}
+                      {!isCovered && rate && rate.minStay > 1 &&
+                      <div
+                        title={`Minimum stay ${rate.minStay} nights`}
+                        className="absolute top-1 right-1 flex items-center gap-[2px] text-[9px] font-medium tabular-nums text-[#8A8A8A]">
+                          {rate.minStay}
+                          <Moon className="w-[8px] h-[8px]" strokeWidth={2.5} />
                         </div>
                       }
                       {hasCleaner &&
