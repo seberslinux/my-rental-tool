@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { X } from 'lucide-react';
-import { Booking, properties, formatTotal, stayStatus } from '../data/properties';
+import { Booking, properties, formatTotal, stayStatus, holidaysDuring } from '../data/properties';
 import { fmtParty } from '../data/format';
 
 interface BookingDetailSheetProps {
@@ -52,6 +52,7 @@ export function BookingDetailSheet({ booking, onClose }: BookingDetailSheetProps
     }
   };
   const platform = getPlatformDetails(booking.type);
+  const overlapping = holidaysDuring(booking);
 
   const fmtDate = (d: Date) =>
     d.toLocaleDateString('en-ZA', { weekday: 'short', month: 'short', day: 'numeric' });
@@ -156,6 +157,37 @@ export function BookingDetailSheet({ booking, onClose }: BookingDetailSheetProps
           <Row
             label="Guests"
             value={fmtParty({ num_guests: booking.numGuests, children: booking.children })} />
+          }
+
+          {/* Holidays the stay runs through.
+              On a booking already made this explains it — a Hamburg
+              family arriving inside the Hamburg school break is not a
+              coincidence, and it is the difference between a rate that
+              was right and one that was left on the table. On a block it
+              is a warning: this is a peak week you have taken off sale.
+
+              Hidden when nothing matches, because nothing matching also
+              means "outside the horizon the server sent" — see
+              holidaysDuring(). An empty row would read as "no holiday",
+              which is a stronger claim than we can make. */}
+          {overlapping.length > 0 &&
+          <Row
+            label={overlapping.length === 1 ? 'Holiday' : 'Holidays'}
+            value={
+            <span className="flex flex-col items-end gap-0.5">
+                {overlapping.slice(0, 3).map((h) =>
+              <span key={`${h.label}-${h.start}-${h.name}`} className="text-[13px]">
+                    {h.name}
+                    <span className="text-[#717171] font-normal"> · {h.label}</span>
+                  </span>
+              )}
+                {overlapping.length > 3 &&
+              <span className="text-[12px] text-[#717171] font-normal">
+                    +{overlapping.length - 3} more
+                  </span>
+              }
+              </span>
+            } />
           }
 
           {/* Money.

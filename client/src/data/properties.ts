@@ -26,6 +26,20 @@ export interface Booking {
   children: number;
 }
 
+/**
+ * A holiday window, public or school, as /api/dashboard/stats returns it.
+ * Single-day public holidays carry start === end.
+ */
+export interface HolidayWindow {
+  start: string; // YYYY-MM-DD
+  end: string;
+  name: string;
+  /** Region or country it belongs to — "Hamburg", "South Africa". */
+  label: string;
+  kind: 'public' | 'school';
+  isLocal: boolean;
+}
+
 /** One synced day from Smoobu. `available: false` is Smoobu's own block flag. */
 export interface DailyRate {
   price: number;
@@ -48,6 +62,9 @@ export let cleaners: Record<number, number[]> = {};
 // appear; a missing day means "no rate synced", which the calendar draws as
 // blank rather than guessing.
 export let dailyRates: Record<number, Record<string, DailyRate>> = {};
+// Public holidays run 90 days ahead and school breaks 150 — see
+// holidaysDuring() for what that horizon means.
+export let holidays: HolidayWindow[] = [];
 
 /** Local-time YYYY-MM-DD. `toISOString()` would shift SAST dates back a day. */
 export function dateKey(date: Date): string {
@@ -147,7 +164,35 @@ export async function loadCalendarData(): Promise<void> {
       if (!map[propId].includes(day)) map[propId].push(day);
     });
     cleaners = map;
+
+    holidays = (stats.holidays || []).map((h: any) => ({
+      start: h.start,
+      end: h.end || h.start,
+      name: h.name,
+      label: h.label,
+      kind: h.kind === 'school' ? 'school' : 'public',
+      isLocal: !!h.is_local,
+    }));
   }
+}
+
+/**
+ * Holiday windows overlapping the nights of a stay.
+ *
+ * A holiday starting on the check-out day is excluded: the nights sold
+ * are [checkIn, checkOut), so nobody is in the house for it. One ending
+ * on the check-in day is kept — that night is the guest's first.
+ *
+ * Horizon: the server sends public holidays 90 days out and school
+ * breaks 150, both counted from today. A stay in the past or beyond
+ * those windows simply matches nothing, which is why the row is hidden
+ * rather than showing "none" — absence here means "not known", not
+ * "no holiday".
+ */
+export function holidaysDuring(b: Booking): HolidayWindow[] {
+  const from = dateKey(b.checkIn);
+  const to = dateKey(b.checkOut);
+  return holidays.filter((h) => h.start < to && h.end >= from);
 }
 
 /**
@@ -176,15 +221,33 @@ export const formatTotal = fmtMoney;
  * Where a stay sits relative to today.
  *
  * The detail sheet labelled its channel row "Status" and answered
- * "Airbnb", which is not a status. Airbnb is who sold it; this is what is
- * happening. Cancelled bookings never reach the calendar — they are
- * filtered on load — so the states below are the whole set.
+ * "Airbnb", which is not a status. Airbnb is who sold it; this is what
+ * is happening.
+ *
+ * The first attempt got the states wrong as well as the words. It read
+ * `checkIn <= TODAY` as "in house", so a guest arriving this afternoon
+ * was reported as already staying — the dashboard showed Hill Top Lodge
+ * as "Empty, next check-in 08 Aug" while this sheet called the very
+ * same booking "In house". Arrival and departure days are their own
+ * states, and they are the two the day actually turns on: one needs a
+ * key handed over, the other needs a clean.
+ *
+ * The words are deliberately plain. "In house" is front-desk jargon for
+ * a guest who has checked in and not yet left; everyone in hotels knows
+ * it and nobody else does. "Confirmed" went for a different reason —
+ * cancelled bookings never reach the calendar, since they are filtered
+ * on load, so every stay drawn here is confirmed and the word carried
+ * no information.
  */
 export function stayStatus(b: Booking): string {
   if (b.type === 'blocked') return 'Blocked';
-  if (b.checkOut <= TODAY) return 'Checked out';
-  if (b.checkIn <= TODAY) return 'In house';
-  return 'Confirmed';
+  if (b.checkOut < TODAY) return 'Checked out';
+  if (b.checkIn > TODAY) return 'Upcoming';
+  // Past here the stay straddles today. Arrival is tested before
+  // departure so a same-day booking reads as arriving.
+  if (dateEqual(b.checkIn, TODAY)) return 'Arriving today';
+  if (dateEqual(b.checkOut, TODAY)) return 'Departing today';
+  return 'Staying now';
 }
 
 export function dateEqual(d1: Date, d2: Date): boolean {
