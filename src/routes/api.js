@@ -18,6 +18,8 @@ const { occupancyByProperty, forwardOccupancy, detectGaps, addDays } = require('
 // the attribution rule. Analytics uses the same functions.
 const { revenueEarned, revenueComing, avgRateEarned } = require('../services/revenue');
 const { getUpcomingHolidays } = require('../services/holidays-store');
+// One mapper for every Smoobu write path — see its header for why.
+const { mapSmoobuBooking } = require('../services/smoobu-mapper');
 
 // Sync properties — uses the requesting user's API key (or env var fallback)
 router.post('/sync/properties', requireRole('admin'), async (req, res) => {
@@ -132,33 +134,15 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
       );
 
       for (const b of allBookings) {
-        const platform = b['channel']?.name || b.channel || '';
-        const checkIn = b.arrival || b.arrivalDate;
-        const checkOut = b.departure || b.departureDate;
-        const createdAt = b['created-at'] || b.createdAt || '';
-        const modifiedAt = b['modified-at'] || b.modifiedAt || '';
-        const los = Math.max(1, Math.round((new Date(checkOut) - new Date(checkIn)) / (24 * 60 * 60 * 1000)));
-        const price = b.price || 0;
-        const ppn = los > 0 ? Math.round((price / los) * 100) / 100 : 0;
-        const leadTime = createdAt ? Math.max(0, Math.round((new Date(checkIn) - new Date(createdAt)) / (24 * 60 * 60 * 1000))) : 0;
-        const aptId = b['apartment']?.id || b.apartmentId;
-        const currency = detectCurrency(b) || propCurrencyMap[aptId] || 'ZAR';
-        // Smoobu returns the OTA's own commission in `commission-included` —
-        // it's already baked into `price` (the guest paid the full amount to
-        // the OTA, who then keeps this and pays us the difference). Store it
-        // so KPIs / analytics can compute net revenue without re-deriving it
-        // from per-property rates.
-        const commission = b['commission-included'] || b.commissionIncluded || 0;
-        // Smoobu reports adults and children separately. `num_guests` holds
-        // adults; children go in their own column. Dropping them here used
-        // to under-report a family booking — 2 adults + 2 children showed
-        // as "2 guests" — and, because this sync deletes and re-inserts its
-        // window, it also wiped the values the historical sync had stored.
-        const children = b.children || 0;
+        const row = mapSmoobuBooking(b, { propertyCurrencyBySmoobuId: propCurrencyMap });
 
         await client.query(
-          `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, currency, modified_at, commission, children)
-           VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+          `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out,
+             platform, total_price, status, num_guests, created_at, lead_time_days,
+             length_of_stay, price_per_night, currency, modified_at, commission,
+             children, language, guest_country, raw_payload)
+           VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7,
+             $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
            ON CONFLICT(smoobu_id) DO UPDATE SET
              guest_name = CASE WHEN excluded.guest_name = '' THEN bookings.guest_name ELSE excluded.guest_name END,
              check_in = excluded.check_in,
@@ -174,25 +158,16 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
              currency = excluded.currency,
              modified_at = excluded.modified_at,
              commission = excluded.commission,
-             children = excluded.children`,
+             children = excluded.children,
+             language = excluded.language,
+             guest_country = excluded.guest_country,
+             raw_payload = excluded.raw_payload`,
           [
-            b.id,
-            aptId,
-            b['guest-name'] || b.guestName || '',
-            checkIn,
-            checkOut,
-            platform,
-            price,
-            b.type === 'cancellation' ? 'cancelled' : 'confirmed',
-            b['adults'] || b.adults || 1,
-            createdAt,
-            leadTime,
-            los,
-            ppn,
-            currency,
-            modifiedAt,
-            commission,
-            children
+            row.smoobu_id, row.apartment_smoobu_id, row.guest_name, row.check_in,
+            row.check_out, row.platform, row.total_price, row.status, row.num_guests,
+            row.created_at, row.lead_time_days, row.length_of_stay, row.price_per_night,
+            row.currency, row.modified_at, row.commission, row.children, row.language,
+            row.guest_country, row.raw_payload,
           ]
         );
       }

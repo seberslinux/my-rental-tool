@@ -8,6 +8,8 @@ const {
   reassignCleanerForBooking,
 } = require('../services/cleaner-assignment');
 const smoobu = require('../services/smoobu');
+// Shared with both sync paths so the three cannot drift apart again.
+const { mapSmoobuBooking } = require('../services/smoobu-mapper');
 
 // Smoobu has no HMAC/signature support in its webhook config — the only
 // control we have is the URL itself. Require a long random secret as part
@@ -58,29 +60,26 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
     }
 
     if (action === 'newReservation' || action === 'new') {
-      const commission = bookingData['commission-included'] || bookingData.commissionIncluded || 0;
-      const children = bookingData.children || 0;
+      const row = mapSmoobuBooking(bookingData);
       // Upsert booking
       await run(
-        `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, commission, children)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed', $8, $9, $10)
+        `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out,
+           platform, total_price, status, num_guests, commission, children,
+           language, guest_country, raw_payload)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed', $8, $9, $10, $11, $12, $13)
          ON CONFLICT(smoobu_id) DO UPDATE SET
-           guest_name = CASE WHEN EXCLUDED.guest_name = '' THEN bookings.guest_name ELSE EXCLUDED.guest_name END, check_in = EXCLUDED.check_in,
+           guest_name = CASE WHEN EXCLUDED.guest_name = '' THEN bookings.guest_name ELSE EXCLUDED.guest_name END,
+           check_in = EXCLUDED.check_in,
            check_out = EXCLUDED.check_out, platform = EXCLUDED.platform,
            total_price = EXCLUDED.total_price, status = 'confirmed',
            num_guests = EXCLUDED.num_guests, commission = EXCLUDED.commission,
-           children = EXCLUDED.children`,
+           children = EXCLUDED.children, language = EXCLUDED.language,
+           guest_country = EXCLUDED.guest_country,
+           raw_payload = EXCLUDED.raw_payload`,
         [
-          smoobuId,
-          property.id,
-          bookingData['guest-name'] || bookingData.guestName || '',
-          bookingData.arrival || bookingData.arrivalDate,
-          bookingData.departure || bookingData.departureDate,
-          bookingData['channel']?.name || bookingData.channel || '',
-          bookingData.price || 0,
-          bookingData.adults || 1,
-          commission,
-          children
+          row.smoobu_id, property.id, row.guest_name, row.check_in, row.check_out,
+          row.platform, row.total_price, row.num_guests, row.commission,
+          row.children, row.language, row.guest_country, row.raw_payload,
         ]
       );
 
@@ -115,20 +114,17 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
       }
 
     } else if (action === 'modifyReservation' || action === 'modify') {
-      // Update booking data
+      const row = mapSmoobuBooking(bookingData);
       await run(
         `UPDATE bookings SET
            guest_name = $1, check_in = $2, check_out = $3, total_price = $4,
-           num_guests = $5, children = $6
-         WHERE smoobu_id = $7`,
+           num_guests = $5, children = $6, commission = $7, language = $8,
+           guest_country = $9, raw_payload = $10
+         WHERE smoobu_id = $11`,
         [
-          bookingData['guest-name'] || bookingData.guestName || '',
-          bookingData.arrival || bookingData.arrivalDate,
-          bookingData.departure || bookingData.departureDate,
-          bookingData.price || 0,
-          bookingData.adults || 1,
-          bookingData.children || 0,
-          smoobuId
+          row.guest_name, row.check_in, row.check_out, row.total_price,
+          row.num_guests, row.children, row.commission, row.language,
+          row.guest_country, row.raw_payload, smoobuId,
         ]
       );
 
