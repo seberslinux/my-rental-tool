@@ -21,12 +21,19 @@ export function fmtMoney(amount: number): string {
 }
 
 /**
- * Party size, children included.
+ * Party size: the head count, then what it is made of.
  *
- * Smoobu's `adults` and `children` are separate fields, and summing only
- * the first undercounts a family: Hill Top Lodge's 2 adults + 2 children
- * showed as "2 guests" while four people were in the house — which is the
- * number that matters for linen, keys and the cleaner's brief.
+ * Smoobu keeps `adults` and `children` as separate fields, and summing
+ * only the first undercounts a family — Hill Top Lodge's 2 adults and 2
+ * children showed as "2 guests" while four people were in the house,
+ * which is the number that decides linen, keys and the cleaner's brief.
+ *
+ * Fixing that produced a second, quieter error. "4 guests · 1 child"
+ * reads just as naturally as four guests *plus* a child, so Mikhail
+ * Ruziakov's party of 3 adults and 1 child looked like five people. The
+ * total and the breakdown were sitting side by side with nothing to say
+ * which was which. Bracketing the composition settles it: the count
+ * comes first, and everything inside the brackets adds up to it.
  */
 export function fmtParty(b: { num_guests?: number | null; children?: number | null }): string {
   const adults = b.num_guests ?? null;
@@ -34,5 +41,7 @@ export function fmtParty(b: { num_guests?: number | null; children?: number | nu
   if (adults === null) return '? guests';
   const total = adults + kids;
   const base = `${total} ${total === 1 ? 'guest' : 'guests'}`;
-  return kids > 0 ? `${base} · ${kids} ${kids === 1 ? 'child' : 'children'}` : base;
+  if (kids === 0) return base;
+  return `${base} (${adults} ${adults === 1 ? 'adult' : 'adults'}, ` +
+    `${kids} ${kids === 1 ? 'child' : 'children'})`;
 }
