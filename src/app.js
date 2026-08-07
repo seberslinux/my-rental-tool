@@ -109,6 +109,7 @@ function buildApp({
   app.use('/api/cleaner-portal', require('./routes/cleaner-portal'));
   app.use('/api/inventory', require('./routes/inventory'));
   app.use('/api/settings', require('./routes/settings'));
+  app.use('/api/admin', require('./routes/admin'));
 
   // SPA fallback — non-API GETs return index.html so React Router owns them.
   if (hasClientBuild) {
