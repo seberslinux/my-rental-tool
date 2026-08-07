@@ -309,6 +309,17 @@ async function runMigrations() {
       UNIQUE(country, date, name)
     );
 
+    -- School holidays are ranges, not days: Germany's summer break runs
+    -- weeks, and it is the window that moves long-haul bookings. The date
+    -- column holds the start; end_date is null for a single-day public
+    -- holiday.
+    ALTER TABLE holidays ADD COLUMN IF NOT EXISTS end_date TEXT;
+    -- 'public' affects local operations; 'school' signals inbound demand.
+    ALTER TABLE holidays ADD COLUMN IF NOT EXISTS kind TEXT NOT NULL DEFAULT 'public';
+    -- How many states/regions observe it. German school holidays are
+    -- staggered deliberately, so "16 states" is part of reading the range.
+    ALTER TABLE holidays ADD COLUMN IF NOT EXISTS regions INTEGER DEFAULT 0;
+
     CREATE INDEX IF NOT EXISTS holidays_country_year_idx ON holidays (country, year);
   `);
 
