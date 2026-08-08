@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const { getAll, getOne, run, transaction, inParams } = require('../db/database');
+// When a clean may be started and finished — see that module for why the
+// window opens before check-out and why "today" is the property's today.
+const { checkCleaningWindow } = require('../services/cleaning-window');
 
 // Resolve the cleaner record for the logged-in user
 async function getMyCleanerRecord(req) {
@@ -178,6 +181,13 @@ router.post('/jobs/:jobId/start', requireCleaner, async (req, res) => {
   if (job.started_at) {
     return res.json({ started_at: job.started_at, already: true });
   }
+
+  // Only on the day, and not while the guest is still in the room. The
+  // check is after the already-started branch on purpose: a job begun
+  // legitimately must stay reportable even if the window has since shut.
+  const property = await getOne('SELECT check_out_time FROM properties WHERE id = $1', [job.property_id]);
+  const window = checkCleaningWindow(job, property);
+  if (!window.ok) return res.status(409).json({ error: window.reason });
   const updated = await getOne(
     `UPDATE cleaning_jobs SET started_at = NOW(), status = 'in_progress'
       WHERE id = $1 AND started_at IS NULL
@@ -204,6 +214,16 @@ router.post('/jobs/:jobId/finish', requireCleaner, async (req, res) => {
   if (job.completed_at) {
     return res.json({ completed_at: job.completed_at, already: true });
   }
+
+  // A clean already under way can always be closed. The window governs
+  // when work may begin; once it legitimately has, a cleaner running past
+  // midnight must not lose their finish to a rule about start times.
+  if (!job.started_at) {
+    const property = await getOne('SELECT check_out_time FROM properties WHERE id = $1', [job.property_id]);
+    const window = checkCleaningWindow(job, property);
+    if (!window.ok) return res.status(409).json({ error: window.reason });
+  }
+
   const updated = await getOne(
     `UPDATE cleaning_jobs
         SET completed_at = NOW(),
@@ -214,6 +234,46 @@ router.post('/jobs/:jobId/finish', requireCleaner, async (req, res) => {
     [job.id]
   );
   res.json(updated || { completed_at: job.completed_at });
+});
+
+/**
+ * Who is staying at the cleaner's properties, and when.
+ *
+ * A clean is scheduled against a check-out, but the calendar has to show
+ * the stays themselves — a cleaner walking in wants to know the place is
+ * occupied until Thursday, how many people are in it, and anything they
+ * have been told about it.
+ *
+ * Every money column is left out. Not filtered in the client: the
+ * cleaner has no business receiving what the guest paid, and a field not
+ * selected cannot leak through a future change to the front end.
+ * Cancellations and blocks are dropped too — neither is somebody
+ * staying.
+ */
+router.get('/bookings', requireCleaner, async (req, res) => {
+  const propRows = await getAll(
+    'SELECT property_id FROM cleaner_properties WHERE cleaner_id = $1',
+    [req.cleaner.id]
+  );
+  const propIds = propRows.map((r) => r.property_id);
+  if (propIds.length === 0) return res.json([]);
+
+  const params = [...propIds];
+  const ph = inParams(propIds, 1);
+  let sql = `SELECT b.id, b.property_id, p.name AS property_name,
+                    b.guest_name, b.check_in, b.check_out,
+                    b.num_guests, b.children, b.special_requirements
+               FROM bookings b
+               JOIN properties p ON p.id = b.property_id
+              WHERE b.property_id IN (${ph})
+                AND b.status = 'confirmed'
+                AND LOWER(COALESCE(b.platform, '')) NOT LIKE 'blocked%'`;
+
+  if (req.query.from) { params.push(req.query.from); sql += ` AND b.check_out >= $${params.length}`; }
+  if (req.query.to) { params.push(req.query.to); sql += ` AND b.check_in <= $${params.length}`; }
+  sql += ' ORDER BY b.check_in ASC';
+
+  res.json(await getAll(sql, params));
 });
 
 // Availability

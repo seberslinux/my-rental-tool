@@ -6,7 +6,7 @@ import {
   cleaners,
   getRate,
   formatRate,
-  isDateCovered,
+  dateKey,
   dateEqual } from
 '../data/properties';
 import { BookingBar } from './BookingBar';
@@ -15,11 +15,34 @@ interface MonthCalendarProps {
   propertyId: number;
   bookings: Booking[];
   onBookingClick: (booking: Booking) => void;
+  /**
+   * Nightly rates. Omit to hide them entirely — the cleaner portal uses
+   * this same grid and must never show money, and the endpoint that
+   * serves rates refuses a cleaner session anyway.
+   */
+  showRates?: boolean;
+  /** How many months to render. The portal wants one, not a quarter. */
+  months?: number;
+  /**
+   * Days to mark with a dot. The manager passes cleaning days from the
+   * shared `cleaners` map; the portal passes its own job dates, which is
+   * the only version it can see.
+   */
+  markedDays?: Set<string>;
+  /**
+   * What a bar says. Defaults to name and total; the portal overrides it
+   * to drop the money.
+   */
+  barLabel?: (booking: Booking) => string;
 }
 export function MonthCalendar({
   propertyId,
   bookings,
-  onBookingClick
+  onBookingClick,
+  showRates = true,
+  months = 3,
+  markedDays,
+  barLabel
 }: MonthCalendarProps) {
   // The months shown were hardcoded to March–May 2026, so the calendar
   // never moved: by August every day it drew was in the past, and the
@@ -41,20 +64,24 @@ export function MonthCalendar({
   const isOnCurrentMonth = useMemo(() => {
     const now = new Date();
     return anchor.getFullYear() === now.getFullYear() && anchor.getMonth() === now.getMonth();
-  }, [anchor]);
+  }, [anchor, months]);
 
   // Names the three months on screen, e.g. "Aug – Oct 2026".
   const rangeLabel = useMemo(() => {
     const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
-    const last = new Date(anchor.getFullYear(), anchor.getMonth() + 2, 1);
+    const last = new Date(anchor.getFullYear(), anchor.getMonth() + months - 1, 1);
     const mon = (d: Date) => d.toLocaleDateString('en-ZA', { month: 'short' });
+    // One month on screen is named, not given a range of itself.
+    if (months === 1) {
+      return first.toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' });
+    }
     return first.getFullYear() === last.getFullYear()
       ? `${mon(first)} – ${mon(last)} ${last.getFullYear()}`
       : `${mon(first)} ${first.getFullYear()} – ${mon(last)} ${last.getFullYear()}`;
   }, [anchor]);
 
   const monthsData = useMemo(() => {
-    return [0, 1, 2].
+    return Array.from({ length: months }, (_, i) => i).
     map((offset) => {
       const first = new Date(anchor.getFullYear(), anchor.getMonth() + offset, 1);
       const year = first.getFullYear();
@@ -152,7 +179,7 @@ export function MonthCalendar({
         segments
       };
     });
-  }, [bookings, anchor]);
+  }, [bookings, anchor, months]);
   return (
     <div className="pb-10 bg-white">
       {/* Paging. Sticky so it stays reachable while scrolling three months
@@ -211,9 +238,11 @@ export function MonthCalendar({
 
       {monthsData.map((month, mIdx) =>
       <div key={mIdx} className="pb-8">
+          {months > 1 &&
           <div className="text-[20px] font-semibold text-[#222222] pt-6 pl-6 pb-4">
             {month.name} {month.year}
           </div>
+          }
 
           <div className="relative px-3">
             {/* The grid needs to look like one.
@@ -231,12 +260,16 @@ export function MonthCalendar({
               {month.cells.map((cell, idx) => {
               const isPast = cell.date < TODAY;
               const isToday = dateEqual(cell.date, TODAY);
-              const rate = getRate(propertyId, cell.date);
+              const rate = showRates ? getRate(propertyId, cell.date) : null;
               const hasCleaner =
-              CLEANER_TOGGLE &&
-              !cell.isOtherMonth &&
-              cleaners[propertyId]?.includes(cell.date.getDate());
-              const isCovered = isDateCovered(cell.date, propertyId);
+              !cell.isOtherMonth && (
+              markedDays ?
+              markedDays.has(dateKey(cell.date)) :
+              CLEANER_TOGGLE && cleaners[propertyId]?.includes(cell.date.getDate()));
+              // Covered by a booking passed in, not by the shared list —
+              // the portal is given only its own properties' stays.
+              const isCovered = bookings.some(
+                (b) => b.propId === propertyId && cell.date >= b.checkIn && cell.date < b.checkOut);
               // Smoobu's own block flag: the night is not for sale, which
               // is not the same as having a booking on it.
               const isClosed = rate ? !rate.available : false;
@@ -366,6 +399,7 @@ export function MonthCalendar({
                 <BookingBar
                   key={`${seg.booking.id}-${sIdx}`}
                   booking={seg.booking}
+                  label={barLabel}
                   onClick={onBookingClick}
                   style={{
                     left: `${leftPct}%`,

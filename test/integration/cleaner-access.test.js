@@ -138,3 +138,29 @@ test('a path merely starting with the allowed prefix is not enough', async () =>
   const res = await agent.get('/api/cleaner-portalx/secrets');
   assert.equal(res.status, 403);
 });
+
+// --- checklists belong to the manager -----------------------------------
+
+test('a cleaner cannot create or edit inventory checklists', async () => {
+  // The cleaner performs the check; the manager decides what is on the
+  // list. /api/inventory is a manager route and stays closed, so this is
+  // enforced by the same allow-list as everything else rather than by a
+  // rule somebody has to remember when adding the next endpoint.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const { cleaner, agent } = await cleanerSession();
+  await linkCleanerToProperty(cleaner, property);
+
+  const create = await agent.post('/api/inventory')
+    .send({ property_id: property.id, item_name: 'Snuck in', expected_quantity: 1 });
+  assert.equal(create.status, 403);
+
+  const list = await agent.get('/api/inventory');
+  assert.equal(list.status, 403);
+
+  // But reading the list for a job, and recording a check, still work —
+  // that is the cleaner's actual job.
+  const read = await agent.get(`/api/cleaner-portal/inventory/${property.id}`);
+  assert.equal(read.status, 200);
+});
