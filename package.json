@@ -16,7 +16,11 @@
     "test:integration": "node --test --test-concurrency=1 'test/integration/**/*.test.js'",
     "test:coverage": "node --test --experimental-test-coverage --test-reporter=spec --test-reporter-destination=stdout 'test/**/*.test.js'",
     "test:db:up": "docker compose -f docker-compose.test.yml up -d",
-    "test:db:down": "docker compose -f docker-compose.test.yml down -v"
+    "test:db:down": "docker compose -f docker-compose.test.yml down -v",
+    "local:db": "docker compose -f docker-compose.local.yml up -d",
+    "local:seed": "DATABASE_URL=postgres://postgres:postgres@localhost:5434/rental_local SESSION_SECRET=local-dev-secret node scripts/seed-local.js",
+    "local:reset": "docker compose -f docker-compose.local.yml down -v && npm run local:db && sleep 3 && npm run local:seed",
+    "local": "npm run local:db && sleep 2 && npm run local:seed && npm run build && DATABASE_URL=postgres://postgres:postgres@localhost:5434/rental_local SESSION_SECRET=local-dev-secret node --watch server.js"
   },
   "keywords": [],
   "author": "",
