@@ -297,7 +297,7 @@ router.get('/bookings', requireCleaner, async (req, res) => {
   const params = [...propIds];
   const ph = inParams(propIds, 1);
   let sql = `SELECT b.id, b.property_id, p.name AS property_name,
-                    b.guest_name, b.check_in, b.check_out,
+                    b.guest_name, b.platform, b.check_in, b.check_out,
                     b.num_guests, b.children, b.special_requirements
                FROM bookings b
                JOIN properties p ON p.id = b.property_id

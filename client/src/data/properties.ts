@@ -196,6 +196,67 @@ export function holidaysDuring(b: Booking): HolidayWindow[] {
 }
 
 /**
+ * The same module state, filled from the cleaner portal's endpoints.
+ *
+ * So the portal can render the app's own MonthCalendar untouched rather
+ * than a second calendar that drifts from it. One component, one data
+ * shape, two ways of filling it.
+ *
+ * dailyRates is deliberately left empty: a cleaner session cannot load
+ * rates — the endpoint refuses it — so the grid renders no money without
+ * anybody having to ask it not to.
+ */
+export async function loadCleanerCalendarData(): Promise<void> {
+  const [meRes, jobsRes, staysRes] = await Promise.all([
+    fetch('/api/cleaner-portal/me', { credentials: 'same-origin' }),
+    fetch('/api/cleaner-portal/jobs', { credentials: 'same-origin' }),
+    fetch('/api/cleaner-portal/bookings', { credentials: 'same-origin' }),
+  ]);
+
+  if (meRes.ok) {
+    const me = await meRes.json();
+    properties = (me.properties || []).map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      base: 0,
+      checkInTime: p.check_in_time || '15:00',
+    }));
+  }
+
+  if (staysRes.ok) {
+    const stays: any[] = await staysRes.json();
+    bookings = stays.map((b) => ({
+      id: String(b.id),
+      propId: b.property_id,
+      type: mapPlatform(b.platform),
+      name: b.guest_name || 'Guest',
+      checkIn: new Date(b.check_in + 'T00:00:00'),
+      checkOut: new Date(b.check_out + 'T00:00:00'),
+      // Zero, and BookingBar already omits the amount when it is falsy,
+      // so the bar reads as the guest's name with no money in it.
+      total: 0,
+      deductions: 0,
+      netPayout: 0,
+      numGuests: b.num_guests ?? null,
+      children: b.children || 0,
+    }));
+  }
+
+  if (jobsRes.ok) {
+    const jobs: any[] = await jobsRes.json();
+    const map: Record<number, number[]> = {};
+    jobs.forEach((j) => {
+      const day = new Date(j.cleaning_date + 'T00:00:00').getDate();
+      if (!map[j.property_id]) map[j.property_id] = [];
+      if (!map[j.property_id].includes(day)) map[j.property_id].push(day);
+    });
+    cleaners = map;
+  }
+
+  dailyRates = {};
+}
+
+/**
  * The nightly rate Smoobu publishes for this day, or null if none is synced.
  *
  * This used to be invented: `base_price` for weekdays and `base_price * 1.3`
