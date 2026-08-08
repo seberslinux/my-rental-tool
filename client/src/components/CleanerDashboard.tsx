@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
   Home, LogOut, MapPin, Clock, Users, Check, X, Play, Square,
-  ClipboardList, CalendarDays, Wrench, ShoppingCart, ChevronLeft } from
+  ClipboardList, CalendarDays, CalendarRange, Wrench, ShoppingCart,
+  ChevronLeft, ChevronRight } from
 'lucide-react';
 
 /**
@@ -17,7 +18,7 @@ import {
  * requesting supplies, which the API refused to a PIN session outright.
  */
 
-type Tab = 'jobs' | 'availability' | 'report';
+type Tab = 'jobs' | 'calendar' | 'availability' | 'report';
 
 interface Job {
   id: number;
@@ -239,6 +240,14 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<number | null>(null);
   const [openJob, setOpenJob] = useState<Job | null>(null);
+  // 0 = every property. A cleaner working two places wants "when does The
+  // loft need me" without reading past the other one.
+  const [propFilter, setPropFilter] = useState<number>(0);
+  const [anchor, setAnchor] = useState(() => {
+    const n = new Date();
+    return new Date(n.getFullYear(), n.getMonth(), 1);
+  });
+  const [pickedDay, setPickedDay] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -286,8 +295,12 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
   };
 
   const todayStr = iso(new Date());
-  const upcoming = jobs
-    .filter((j) => j.cleaning_date >= todayStr && j.status !== 'declined')
+  // Declined jobs disappear everywhere: having said no, a cleaner should
+  // not keep seeing it on their own calendar.
+  const mine = jobs.filter((j) => j.status !== 'declined');
+  const visible = propFilter ? mine.filter((j) => j.property_id === propFilter) : mine;
+  const upcoming = visible
+    .filter((j) => j.cleaning_date >= todayStr)
     .sort((a, b) => a.cleaning_date.localeCompare(b.cleaning_date));
 
   const dayLabel = (date: string) => {
@@ -336,11 +349,14 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
           }
         </div>
 
-        {/* How many people are arriving, and when. Never who they are. */}
+        {/* How many people are arriving, and when. Never who they are.
+            "same day", not "today": the card is also rendered from the
+            calendar, where the day being looked at is usually not this
+            one, and "today" was then simply false. */}
         {job.check_in === job.cleaning_date &&
         <p className="mt-2 text-[13px] text-[#C13515] flex items-center gap-1.5">
             <Users className="w-4 h-4 shrink-0" />
-            Guests arrive today{job.num_guests ? ` · ${job.num_guests} people` : ''}
+            Guests arrive same day{job.num_guests ? ` · ${job.num_guests} people` : ''}
           </p>
         }
 
@@ -464,10 +480,134 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
 
   // --- checklist ---------------------------------------------------------
 
+  // --- calendar ----------------------------------------------------------
+
+  /**
+   * One colour per property, assigned by position.
+   *
+   * On the grid a day is a 30px square with no room for a name, so the
+   * colour has to carry which property it is — which is why the legend
+   * below is not decoration. Two properties here; the palette wraps if a
+   * cleaner ever works more.
+   */
+  const PROP_COLOURS = ['#0F6E56', '#185FA5', '#993C1D', '#534AB7', '#854F0B'];
+  const colourFor = (propertyId: number) => {
+    const i = properties.findIndex((p) => p.id === propertyId);
+    return PROP_COLOURS[(i < 0 ? 0 : i) % PROP_COLOURS.length];
+  };
+
+  const calendarPanel = () => {
+    const year = anchor.getFullYear();
+    const month = anchor.getMonth();
+    const first = new Date(year, month, 1);
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    // Monday-first: a working week reads Mon–Sun, not Sun–Sat.
+    const lead = (first.getDay() + 6) % 7;
+
+    const byDate: Record<string, Job[]> = {};
+    visible.forEach((j) => {
+      (byDate[j.cleaning_date] ||= []).push(j);
+    });
+
+    const cells: (string | null)[] = [];
+    for (let i = 0; i < lead; i++) cells.push(null);
+    for (let d = 1; d <= daysInMonth; d++) cells.push(iso(new Date(year, month, d)));
+
+    const dayJobs = pickedDay ? byDate[pickedDay] || [] : [];
+
+    return (
+      <>
+        <div className="bg-white rounded-[12px] border border-[#EBEBEB] p-3">
+          <div className="flex items-center justify-between mb-2">
+            <button
+              onClick={() => setAnchor(new Date(year, month - 1, 1))}
+              aria-label="Previous month"
+              className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-[#F7F7F7]">
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+            <p className="text-[15px] font-semibold">
+              {first.toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })}
+            </p>
+            <button
+              onClick={() => setAnchor(new Date(year, month + 1, 1))}
+              aria-label="Next month"
+              className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-[#F7F7F7]">
+              <ChevronRight className="w-5 h-5" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-7 text-center text-[11px] font-semibold text-[#8A8A8A] uppercase pb-1">
+            {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map((d) => <div key={d}>{d}</div>)}
+          </div>
+
+          <div className="grid grid-cols-7 gap-1">
+            {cells.map((date, i) => {
+              if (!date) return <div key={`p${i}`} />;
+              const list = byDate[date] || [];
+              const isToday = date === todayStr;
+              const past = date < todayStr;
+              const picked = date === pickedDay;
+              return (
+                <button
+                  key={date}
+                  onClick={() => setPickedDay(picked ? null : date)}
+                  className={`aspect-square rounded-[8px] flex flex-col items-center justify-center gap-1 text-[13px] tabular-nums
+                    ${picked ? 'bg-[#222222] text-white' : isToday ? 'bg-[#F0F0F0] font-semibold' : ''}
+                    ${past && !picked ? 'text-[#B0B0B0]' : ''}`}>
+                  {Number(date.slice(8, 10))}
+                  {/* A dot per job, coloured by property — the only thing
+                      that fits, and enough to answer "which one, when". */}
+                  <span className="flex gap-[3px] h-[5px]">
+                    {list.slice(0, 3).map((j, n) =>
+                    <span
+                      key={n}
+                      className="w-[5px] h-[5px] rounded-full"
+                      style={{ backgroundColor: colourFor(j.property_id), opacity: past ? 0.4 : 1 }} />
+                    )}
+                  </span>
+                </button>);
+
+            })}
+          </div>
+
+          {/* Only when more than one colour is actually on the grid. Filtered
+              to a single property the key explains nothing, and listing a
+              property whose jobs are hidden reads as a mistake. */}
+          {properties.length > 1 && !propFilter &&
+          <div className="flex flex-wrap gap-3 mt-3 pt-3 border-t border-[#F0F0F0]">
+              {properties.map((p) =>
+            <span key={p.id} className="flex items-center gap-1.5 text-[12px] text-[#717171]">
+                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: colourFor(p.id) }} />
+                  {p.name}
+                </span>
+            )}
+            </div>
+          }
+        </div>
+
+        {pickedDay &&
+        <div className="mt-4">
+            <p className="text-[12px] font-semibold text-[#717171] uppercase tracking-[0.5px] mb-2">
+              {dayLabel(pickedDay)}
+            </p>
+            {dayJobs.length === 0 ?
+          <p className="text-[14px] text-[#717171] bg-white rounded-[12px] border border-[#EBEBEB] p-4">
+                Nothing scheduled.
+              </p> :
+
+          dayJobs.map((j) => <JobCard key={j.id} job={j} />)
+          }
+          </div>
+        }
+      </>);
+
+  };
+
   // --- shell -------------------------------------------------------------
 
   const TABS: {key: Tab;label: string;Icon: any;}[] = [
   { key: 'jobs', label: 'Jobs', Icon: ClipboardList },
+  { key: 'calendar', label: 'Calendar', Icon: CalendarRange },
   { key: 'availability', label: 'My days', Icon: CalendarDays },
   { key: 'report', label: 'Report', Icon: Wrench }];
 
@@ -497,6 +637,26 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
 
         {loading && <p className="text-[14px] text-[#717171]">Loading…</p>}
 
+        {/* Which property, when. One tap rather than reading past the
+            other one's jobs. Only worth showing to a cleaner who works
+            more than one place. */}
+        {!loading && properties.length > 1 && (tab === 'jobs' || tab === 'calendar') &&
+        <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
+            {[{ id: 0, name: 'All' }, ...properties].map((p) =>
+          <button
+            key={p.id}
+            onClick={() => setPropFilter(p.id)}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-[13px] font-medium border ${
+            propFilter === p.id ?
+            'bg-[#222222] text-white border-[#222222]' :
+            'bg-white border-[#DDDDDD] text-[#222222]'}`
+            }>
+                {p.name}
+              </button>
+          )}
+          </div>
+        }
+
         {!loading && tab === 'jobs' &&
         <>
             {upcoming.length === 0 &&
@@ -519,6 +679,8 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
           )}
           </>
         }
+
+        {!loading && tab === 'calendar' && calendarPanel()}
 
         {!loading && tab === 'availability' && <Availability />}
         {!loading && tab === 'report' &&
