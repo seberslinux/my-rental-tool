@@ -1,10 +1,12 @@
 const { getAll, getOne, run } = require('../db/database');
 const smoobu = require('./smoobu');
-const whatsapp = require('./whatsapp');
 const { getApiKeyForProperty } = require('./api-key-resolver');
 // One definition of "blocked" for the whole app — the revenue and
 // analytics paths call the same function.
 const { isBlockedPlatform } = require('./analytics-calc');
+// One place decides who gets told what — see that module for why four
+// bare sendMessage calls left every job reading notified = 0.
+const { notify } = require('./notify');
 
 // Run cleaner assignment for a specific property and checkout date
 // booking: { id, smoobu_id, property_id, check_out, check_in_next, num_guests_next, guest_name_next }
@@ -116,26 +118,27 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
 
     const jobId = result.rows[0].id;
 
-    // Send WhatsApp notification
-    try {
-      const nextGuestInfo = nextBooking
-        ? `\nNext guest check-in: ${nextBooking.check_in} at 15:00\nNumber of guests arriving: ${nextBooking.num_guests || 'unknown'}`
-        : '\nNo guest checking in today.';
+    // Through notify(), not a bare send.
+    //
+    // This call used to be whatsapp.sendMessage in a try/catch that logged
+    // and carried on, and it set notified = 1 only when the send threw
+    // nothing. Meta returns a message id for text it then silently drops
+    // outside the 24-hour window, so notified = 1 never meant delivered.
+    // The flag now follows what notify() actually reports.
+    const nextGuestInfo = nextBooking ?
+    `Next guest arrives ${nextBooking.check_in} at 15:00 (${nextBooking.num_guests || 'unknown'} guests).` :
+    'Nobody is checking in that day.';
 
-      const message =
-        `Cleaning job assigned:\n` +
-        `Property: ${property.name}\n` +
-        `Address: ${property.address}\n` +
-        `Date: ${checkoutDate}\n` +
-        `Start time: ${checkoutTime}\n` +
-        `Expected duration: ${property.cleaning_hours_required} hours` +
-        nextGuestInfo;
-
-      await whatsapp.sendMessage(cleaner.phone, message);
-      await run('UPDATE cleaning_jobs SET notified = 1 WHERE id = $1', [jobId]);
-    } catch (err) {
-      console.error(`Failed to notify cleaner ${cleaner.name}:`, err.message);
-    }
+    const sent = await notify({
+      event: 'job_assigned',
+      title: `You are cleaning ${property.name} on ${checkoutDate}`,
+      body: `From ${checkoutTime}, about ${property.cleaning_hours_required} hours. ` +
+      `${property.address ? property.address + '. ' : ''}${nextGuestInfo}`,
+      propertyId: property.id, cleanerId: cleaner.id, jobId,
+      link: '/',
+    });
+    await run('UPDATE cleaning_jobs SET notified = $1 WHERE id = $2',
+      [sent.delivery === 'sent' ? 1 : 0, jobId]);
 
     console.log(
       `Assigned cleaner ${cleaner.name} to ${property.name} on ${checkoutDate}`
@@ -215,10 +218,12 @@ async function reconcileCleaningJobs() {
   const today = new Date().toISOString().split('T')[0];
 
   const rows = await getAll(
-    `SELECT cj.id, cj.cleaning_date, cj.booking_id,
+    `SELECT cj.id, cj.cleaning_date, cj.booking_id, cj.cleaner_id, cj.property_id,
+            p.name AS property_name,
             b.smoobu_id, b.check_out, b.platform, b.status AS booking_status
        FROM cleaning_jobs cj
        LEFT JOIN bookings b ON b.smoobu_id = cj.booking_id
+       LEFT JOIN properties p ON p.id = cj.property_id
       WHERE cj.started_at IS NULL
         AND cj.completed_at IS NULL
         AND cj.booking_id IS NOT NULL
@@ -245,7 +250,17 @@ async function reconcileCleaningJobs() {
         [row.id]
       );
       if (gone.length) {
-        removed.push({ id: row.id, why: orphaned ? 'booking gone' : cancelled ? 'cancelled' : 'blocked' });
+        const why = orphaned ? 'booking gone' : cancelled ? 'cancelled' : 'blocked';
+        removed.push({ id: row.id, why });
+        await notify({
+          event: 'job_cancelled',
+          title: `${row.property_name || 'A property'} on ${ymd(row.cleaning_date)} is off`,
+          body: why === 'blocked' ?
+          'Those nights were taken off sale, so there is no turnover to clean.' :
+          'That booking is no longer going ahead.',
+          propertyId: row.property_id, cleanerId: row.cleaner_id, jobId: row.id,
+          link: '/',
+        });
       }
       continue;
     }
@@ -259,7 +274,19 @@ async function reconcileCleaningJobs() {
           RETURNING id`,
         [should, row.id]
       );
-      if (changed.length) moved.push({ id: row.id, from: was, to: should });
+      if (changed.length) {
+        moved.push({ id: row.id, from: was, to: should });
+        // The whole point of moving it. Before this the date changed
+        // underneath the cleaner and nothing said a word, so they would
+        // have turned up on the old day — or not at all on the new one.
+        await notify({
+          event: 'job_rescheduled',
+          title: `${row.property_name || 'A property'} has moved to ${should}`,
+          body: `It was ${was}. The booking changed, so your clean moved with it.`,
+          propertyId: row.property_id, cleanerId: row.cleaner_id, jobId: row.id,
+          link: '/',
+        });
+      }
     }
   }
 
@@ -343,19 +370,13 @@ async function unassignCleanerFromBooking(smoobuId) {
   for (const job of jobs) {
     await run('DELETE FROM cleaning_jobs WHERE id = $1', [job.id]);
 
-    try {
-      const message =
-        `Cleaning job cancelled:\n` +
-        `Property: ${job.property_name}\n` +
-        `Date: ${job.cleaning_date}\n` +
-        `This booking has been cancelled.`;
-      await whatsapp.sendMessage(job.phone, message);
-    } catch (err) {
-      console.error(
-        `Failed to notify cleaner ${job.cleaner_name} of cancellation:`,
-        err.message
-      );
-    }
+    await notify({
+      event: 'job_cancelled',
+      title: `${job.property_name} on ${ymd(job.cleaning_date)} is off`,
+      body: 'That booking was cancelled, so the clean is no longer needed.',
+      propertyId: job.property_id, cleanerId: job.cleaner_id, jobId: job.id,
+      link: '/',
+    });
   }
 }
 

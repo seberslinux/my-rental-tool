@@ -101,7 +101,10 @@ test('WhatsApp message sent on assignment includes property + date + duration', 
   await assignCleanerForCheckout(booking, { check_in: NEXT_CHECKIN });
 
   assert.equal(mockWhatsapp.sent.length, 1);
-  assert.equal(mockWhatsapp.sent[0].to, '+27111111111');
+  // Digits, no plus. The bare sendMessage this replaced passed the number
+  // through as stored; notify() normalises it, which is the form the API
+  // wants and what the owner-facing path has always asserted.
+  assert.equal(mockWhatsapp.sent[0].to, '27111111111');
   const msg = mockWhatsapp.sent[0].message;
   assert.ok(msg.includes('Sea View'), 'message must include property name');
   assert.ok(msg.includes(CHECKOUT), 'message must include the checkout date');

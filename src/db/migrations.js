@@ -348,6 +348,18 @@ async function runMigrations() {
     -- from the cause.
     ALTER TABLE notifications ADD COLUMN IF NOT EXISTS link TEXT;
 
+    -- Who a notification is for, which is not the same as who it is about.
+    --
+    -- cleaner_id already says who a row concerns, and most rows that carry
+    -- one are written *for the owner* — "Jane started cleaning Hill Top
+    -- Lodge" is about Jane and for whoever is running the place. Building
+    -- the cleaner's feed on cleaner_id alone would hand her every one of
+    -- those, including the ones reporting on her.
+    --
+    -- So the audience is recorded explicitly. Existing rows default to
+    -- 'owner', which is what every row written before this was.
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'owner';
+
     -- One-time invitations that let a cleaner set their own PIN.
     --
     -- The owner decides who gets access; the cleaner decides how they get

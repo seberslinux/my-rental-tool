@@ -281,3 +281,130 @@ test('with nobody opted in it is skipped, not failed', async () => {
   const feed = await recent({});
   assert.equal(feed.length, 1, 'the record does not depend on the channel');
 });
+
+// --- whose message is it? ------------------------------------------------
+
+/**
+ * The cleaner's own feed, and why it is not just "rows with my id on".
+ *
+ * cleaner_id says who a row is *about*. Most rows carrying one are
+ * written for the owner — "Jane started cleaning Hill Top Lodge" is about
+ * Jane and for whoever runs the place. Building her feed on the id alone
+ * would hand her the commentary on her own work, including the times
+ * somebody was told she had not shown up.
+ */
+
+const { recentForCleaner } = require('../../src/services/notify');
+
+test("an owner's event about a cleaner stays out of the cleaner's feed", async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+
+  await notify({
+    event: 'cleaning_overdue',
+    title: 'Jane has not started Hill Top Lodge',
+    propertyId: property.id, cleanerId: cleaner.id,
+  });
+
+  const hers = await recentForCleaner(cleaner.id);
+  assert.equal(hers.length, 0, 'that row is about her, not for her');
+
+  const theirs = await recent({});
+  assert.equal(theirs.length, 1, "and it is still the owner's to see");
+});
+
+test("a cleaner's own event reaches her feed and not the owner's", async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner({ phone: '+27821234567' });
+
+  await notify({
+    event: 'job_assigned',
+    title: 'You are cleaning Hill Top Lodge on Friday',
+    propertyId: property.id, cleanerId: cleaner.id,
+  });
+
+  const hers = await recentForCleaner(cleaner.id);
+  assert.equal(hers.length, 1);
+  assert.match(hers[0].title, /You are cleaning/);
+
+  const theirs = await recent({});
+  assert.equal(theirs.length, 0, "the owner's feed is not the cleaner's inbox");
+});
+
+test('one cleaner cannot see another cleaner’s messages', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const jane = await seedCleaner({ phone: '+27821111111' });
+  const bea = await seedCleaner({ phone: '+27822222222' });
+
+  await notify({
+    event: 'job_assigned', title: 'Jane’s job',
+    propertyId: property.id, cleanerId: jane.id,
+  });
+
+  assert.equal((await recentForCleaner(bea.id)).length, 0);
+  assert.equal((await recentForCleaner(jane.id)).length, 1);
+});
+
+test("a cleaner's message goes to their own phone, opt-in or not", async () => {
+  // The owner's opt-in is somebody choosing whether to hear about their
+  // business. This is the only way a cleaner learns they have a shift.
+  await resetDb();
+  delete process.env.ADMIN_WHATSAPP;
+  mockWa.reset();
+  const owner = await seedUser({ role: 'admin', phone: '+27829999999' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner({ phone: '+27821234567' });
+
+  const out = await notify({
+    event: 'job_assigned', title: 'You are cleaning on Friday',
+    propertyId: property.id, cleanerId: cleaner.id,
+  });
+
+  assert.equal(out.audience, 'cleaner');
+  assert.equal(out.delivery, 'sent');
+  assert.equal(mockWa.sent.length, 1, 'exactly one recipient — hers');
+  assert.equal(mockWa.sent[0].to, '27821234567');
+});
+
+test('a routine cleaner event still reaches the phone', async () => {
+  // Severity governs the owner's noise, not the cleaner's. They are not
+  // sitting in front of this app, so an upcoming shift has to reach them.
+  await resetDb();
+  mockWa.reset();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner({ phone: '+27821234567' });
+
+  const out = await notify({
+    event: 'job_upcoming', title: 'Tomorrow: Hill Top Lodge',
+    propertyId: property.id, cleanerId: cleaner.id,
+  });
+
+  assert.equal(out.severity, 'info');
+  assert.equal(out.delivery, 'sent', 'an info event for a cleaner still goes out');
+});
+
+test('a cleaner with no usable number is recorded, not lost', async () => {
+  await resetDb();
+  mockWa.reset();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  // Local format, no country code — cannot be dialled, must not be guessed.
+  const cleaner = await seedCleaner({ phone: '082 123 4567' });
+
+  const out = await notify({
+    event: 'job_assigned', title: 'You are cleaning on Friday',
+    propertyId: property.id, cleanerId: cleaner.id,
+  });
+
+  assert.equal(out.delivery, 'skipped');
+  assert.match(out.deliveryError, /phone number/i);
+  const hers = await recentForCleaner(cleaner.id);
+  assert.equal(hers.length, 1, 'the app is the only place she will find this');
+});

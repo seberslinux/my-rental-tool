@@ -4,7 +4,7 @@ import { Booking, bookings as sharedBookings, properties as sharedProperties, lo
 import {
   Home, LogOut, MapPin, Clock, Users, Check, X, Play, Square,
   ClipboardList, CalendarDays, CalendarRange, Wrench, ShoppingCart, MessageSquare,
-  ChevronLeft, ChevronRight } from
+  ChevronLeft, ChevronRight, Bell, AlertCircle } from
 'lucide-react';
 
 /**
@@ -68,6 +68,17 @@ const DAYS = [
 
 const iso = (d: Date) =>
 `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** How long ago, in the units a person would actually say. */
+const ago = (iso: string) => {
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.round(hrs / 24);
+  return days === 1 ? 'yesterday' : `${days}d ago`;
+};
 
 const post = (url: string, body?: any) =>
 fetch(url, {
@@ -278,6 +289,8 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
   const [pickedDay, setPickedDay] = useState<string | null>(null);
   // Exceptions to the weekly pattern, keyed YYYY-MM-DD -> can work.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  const [alerts, setAlerts] = useState<any[]>([]);
+  const [showAlerts, setShowAlerts] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [resetNote, setResetNote] = useState('');
@@ -309,6 +322,8 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
       }
       if (!jobsRes.ok) throw new Error('Could not load your jobs');
       setJobs(await jobsRes.json());
+      const alertsRes = await fetch('/api/cleaner-portal/notifications', { credentials: 'same-origin' });
+      if (alertsRes.ok) setAlerts(await alertsRes.json());
       // Fills the same module state the app's calendar reads.
       await loadCleanerCalendarData();
     } catch (err: any) {
@@ -833,6 +848,85 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
    * changing it is a deliberate button rather than a side effect of
    * looking.
    */
+  const unreadAlerts = alerts.filter((a) => !a.read_at).length;
+
+  const markAlertsRead = async () => {
+    await post('/api/cleaner-portal/notifications/read-all');
+    setAlerts(alerts.map((a) => ({ ...a, read_at: new Date().toISOString() })));
+  };
+
+  /**
+   * Everything the cleaner has been told.
+   *
+   * Each row says whether the message actually reached their phone.
+   * WhatsApp accepts text it then drops outside a 24-hour window, so a
+   * send has never been proof of arrival — and a cleaner who was never
+   * told about a shift needs somewhere to find it. That is the whole
+   * reason this screen exists rather than trusting the message.
+   */
+  const alertSheet = () => {
+    if (!showAlerts) return null;
+    return (
+      <>
+        <div className="fixed inset-0 bg-black/30 z-[60]" onClick={() => setShowAlerts(false)} />
+        <div className="fixed inset-x-0 bottom-0 z-[70] bg-white rounded-t-[16px] shadow-2xl pb-8
+                        max-h-[80vh] flex flex-col
+                        sm:inset-auto sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2
+                        sm:w-[420px] sm:max-h-[70vh] sm:rounded-2xl sm:pb-0">
+          <div className="flex justify-center pt-3 pb-2 sm:hidden">
+            <div className="w-[36px] h-[4px] bg-[#DDDDDD] rounded-full" />
+          </div>
+
+          <div className="flex items-center justify-between px-5 py-2 shrink-0">
+            <p className="text-[18px] font-semibold">Messages</p>
+            <div className="flex items-center gap-1">
+              {unreadAlerts > 0 &&
+              <button onClick={markAlertsRead} className="text-[12px] font-medium text-[#717171] px-2 py-1 rounded-full hover:bg-[#F7F7F7]">
+                  Mark all read
+                </button>
+              }
+              <button onClick={() => setShowAlerts(false)} aria-label="Close" className="p-1.5 rounded-full hover:bg-[#F7F7F7]">
+                <X className="w-5 h-5 text-[#717171]" />
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-y-auto px-5">
+            {alerts.length === 0 &&
+            <p className="text-[14px] text-[#717171] py-6 text-center">
+                Nothing yet. New jobs and any changes to them show up here.
+              </p>
+            }
+
+            {alerts.map((a) =>
+            <div key={a.id} className={`py-3 border-b border-[#F0F0F0] last:border-0 ${a.read_at ? '' : '-mx-2 px-2 bg-[#FFFBEB] rounded-[8px]'}`}>
+                <div className="flex items-start gap-2">
+                  {a.severity === 'attention' ?
+                <AlertCircle className="w-4 h-4 text-[#C13515] shrink-0 mt-0.5" /> :
+                <Check className="w-4 h-4 text-[#0F6E56] shrink-0 mt-0.5" />
+                }
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[14px] font-medium">{a.title}</p>
+                    {a.body && <p className="text-[13px] text-[#717171] mt-0.5 whitespace-pre-line">{a.body}</p>}
+                    <p className="text-[11px] text-[#B0B0B0] mt-1">
+                      {ago(a.created_at)}{a.property_name ? ` · ${a.property_name}` : ''}
+                    </p>
+                    {/* Said plainly rather than hidden. If this never
+                        reached their phone, the app is the only place
+                        they will ever find out. */}
+                    {a.delivery !== 'sent' &&
+                  <p className="text-[11px] text-[#92400E] mt-1">Not delivered to your phone</p>
+                  }
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </>);
+
+  };
+
   const daySheet = () => {
     if (!pickedDay) return null;
     const jobsToday = visible.filter((j) => j.cleaning_date === pickedDay);
@@ -949,9 +1043,23 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
           </div>
           <span className="text-[16px] font-bold">My Cleanings</span>
         </div>
-        <button onClick={onSignOut} aria-label="Sign out" className="p-2 rounded-full hover:bg-[#F7F7F7] text-[#717171]">
-          <LogOut className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-1">
+          {/* A dot, not a count. On a phone the number is unreadable at
+              this size and "some" is the only thing that changes what you
+              do next. */}
+          <button
+            onClick={() => setShowAlerts(true)}
+            aria-label={unreadAlerts ? `Messages, ${unreadAlerts} unread` : 'Messages'}
+            className="relative p-2 rounded-full hover:bg-[#F7F7F7] text-[#717171]">
+            <Bell className="w-5 h-5" />
+            {unreadAlerts > 0 &&
+            <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-[#C13515] rounded-full border-2 border-white" />
+            }
+          </button>
+          <button onClick={onSignOut} aria-label="Sign out" className="p-2 rounded-full hover:bg-[#F7F7F7] text-[#717171]">
+            <LogOut className="w-5 h-5" />
+          </button>
+        </div>
       </div>
 
       <div className="p-4 max-w-[560px] mx-auto">
@@ -1019,6 +1127,7 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
       {openJob && <Checklist job={openJob} onClose={() => setOpenJob(null)} />}
       {staySheet()}
       {daySheet()}
+      {alertSheet()}
 
       <nav className="fixed bottom-0 inset-x-0 bg-white border-t border-[#EBEBEB] flex">
         {TABS.map(({ key, label, Icon }) =>
