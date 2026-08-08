@@ -263,6 +263,10 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [stays, setStays] = useState<Stay[]>([]);
   const [schedule, setSchedule] = useState<Record<number, {on: boolean;start: string;end: string;}>>({});
+  // What the server currently holds, so the Save button can tell the
+  // difference between "not saved yet" and "nothing to save".
+  const [savedSchedule, setSavedSchedule] = useState<Record<number, {on: boolean;start: string;end: string;}>>({});
+  const [savingSchedule, setSavingSchedule] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<number | null>(null);
@@ -271,6 +275,12 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
   // loft need me" without reading past the other one.
   const [propFilter, setPropFilter] = useState<number>(0);
   const [pickedStay, setPickedStay] = useState<string | null>(null);
+  const [pickedDay, setPickedDay] = useState<string | null>(null);
+  // Exceptions to the weekly pattern, keyed YYYY-MM-DD -> can work.
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetNote, setResetNote] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -290,6 +300,12 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
           next[a.day_of_week] = { on: true, start: a.start_time, end: a.end_time };
         });
         setSchedule(next);
+        setSavedSchedule(next);
+        const ov: Record<string, boolean> = {};
+        (me.overrides || []).forEach((o: any) => {
+          ov[String(o.date).slice(0, 10)] = !!o.available;
+        });
+        setOverrides(ov);
       }
       if (!jobsRes.ok) throw new Error('Could not load your jobs');
       setJobs(await jobsRes.json());
@@ -469,15 +485,80 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
 
   // --- panels ------------------------------------------------------------
 
+  /**
+   * Only the ticked days and their hours, in a stable order.
+   *
+   * Used to compare what is on screen against what the server holds, so
+   * the button can go quiet once there is nothing left to save. Times on
+   * an unticked day are ignored — they are not sent, so changing them is
+   * not a change.
+   */
+  const scheduleKey = (s: Record<number, {on: boolean;start: string;end: string;}>) =>
+  JSON.stringify(DAYS.map((d) => s[d.dow]?.on ? [d.dow, s[d.dow].start, s[d.dow].end] : 0));
+
+  const scheduleDirty = scheduleKey(schedule) !== scheduleKey(savedSchedule);
+
   const saveSchedule = async () => {
     const payload = Object.entries(schedule).
     filter(([, v]) => v.on).
     map(([dow, v]) => ({ day_of_week: Number(dow), start_time: v.start, end_time: v.end }));
+    setSavingSchedule(true);
     const res = await fetch('/api/cleaner-portal/availability', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin', body: JSON.stringify({ schedule: payload }),
     });
-    if (!res.ok) setError('Could not save your availability');
+    setSavingSchedule(false);
+    if (!res.ok) return setError('Could not save your availability');
+    setSavedSchedule(schedule);
+
+    // Say something. A save that looks identical to not having pressed
+    // anything is why people press it four times.
+    const days = payload.length;
+    setResetNote(
+      days ?
+      `Saved — you can work ${days} day${days === 1 ? '' : 's'} a week.` :
+      'Saved — you are not offered any jobs until you tick a day.'
+    );
+  };
+
+  /**
+   * The days the calendar disagrees with the pattern about, from today on.
+   *
+   * This is the whole reason the reset exists. An override beats the
+   * weekly schedule, so ticking "Sunday" here changes nothing on a Sunday
+   * somebody has already tapped — the save appears to work and the
+   * calendar does not move.
+   */
+  const divergent = Object.entries(overrides).
+  filter(([date, available]) => {
+    if (date < todayStr) return false;
+    const usual = schedule[new Date(date + 'T00:00:00').getDay()]?.on || false;
+    return available !== usual;
+  }).
+  map(([date]) => date).
+  sort();
+
+  // Split by what the button can actually act on. A day with a job booked
+  // on it is not resettable — offering to put it back would be a button
+  // that does nothing, and the honest answer for those days is to decline
+  // the job. The two cases get two different sentences.
+  const bookedDates = new Set(mine.map((j) => j.cleaning_date));
+  const divergentDays = divergent.filter((d) => !bookedDates.has(d));
+  const lockedDays = divergent.filter((d) => bookedDates.has(d));
+
+  const resetOverrides = async () => {
+    setResetting(true);
+    const res = await post('/api/cleaner-portal/overrides/reset');
+    setResetting(false);
+    setConfirmReset(false);
+    if (!res.ok) return setError('Could not reset those days');
+    const out = await res.json();
+    setResetNote(
+      out.kept.length ?
+      `${out.cleared} day${out.cleared === 1 ? '' : 's'} put back. ${out.kept.length} kept — you have a job booked on ${out.kept.map(fmtDay).join(', ')}.` :
+      `${out.cleared} day${out.cleared === 1 ? '' : 's'} put back to your usual schedule.`
+    );
+    await load();
   };
 
   const Availability = () =>
@@ -511,11 +592,79 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
       className="flex-1 min-w-0 px-2 py-1.5 border border-[#DDDDDD] rounded-[6px] text-[13px] disabled:bg-[#F7F7F7] disabled:text-[#B0B0B0]" />
         </div>
     )}
+      {/* The button carries its own state: black while there is something
+          to save, grey and unpressable once there is not. "Saved" sitting
+          in a disabled button is the acknowledgement — a plain Save that
+          looks identical before and after is why people press it twice
+          and then wonder which press counted. */}
       <button
     onClick={saveSchedule}
-    className="mt-4 w-full h-[44px] bg-[#222222] text-white rounded-[8px] text-[14px] font-semibold">
-        Save
+    disabled={savingSchedule || !scheduleDirty}
+    className={`mt-4 w-full h-[44px] rounded-[8px] text-[14px] font-semibold transition-colors ${
+    savingSchedule || !scheduleDirty ?
+    'bg-[#F7F7F7] text-[#B0B0B0] border border-[#EBEBEB]' :
+    'bg-[#222222] text-white'}`}>
+        {savingSchedule ? 'Saving…' : scheduleDirty ? 'Save' : 'Saved'}
       </button>
+
+      {/* Only shown when there is genuinely a disagreement to resolve. A
+          permanent "reset everything" button is an accident waiting to
+          happen; one that appears with a count on it is a specific offer.
+          The days it will not touch are named before it is pressed, not
+          after. */}
+      {divergentDays.length > 0 &&
+    <div className="mt-4 pt-4 border-t border-[#F0F0F0]">
+          <p className="text-[13px]">
+            {divergentDays.length} day{divergentDays.length === 1 ? '' : 's'} on your
+            calendar {divergentDays.length === 1 ? 'does' : 'do'} not follow this:{' '}
+            <span className="text-[#717171]">{divergentDays.slice(0, 6).map(fmtDay).join(', ')}
+              {divergentDays.length > 6 ? ` and ${divergentDays.length - 6} more` : ''}
+            </span>
+          </p>
+          <p className="text-[12px] text-[#717171] mt-1">
+            Changing the pattern above leaves those days as they are.
+          </p>
+
+          {confirmReset ?
+      <div className="flex gap-2 mt-3">
+              <button
+        disabled={resetting}
+        onClick={resetOverrides}
+        className="flex-1 h-[44px] rounded-[8px] bg-[#222222] text-white text-[14px] font-semibold disabled:opacity-60">
+                {resetting ? 'Putting them back…' : `Yes, put back ${divergentDays.length}`}
+              </button>
+              <button
+        onClick={() => setConfirmReset(false)}
+        className="px-4 h-[44px] rounded-[8px] border border-[#DDDDDD] text-[14px] font-semibold">
+                Cancel
+              </button>
+            </div> :
+
+      <button
+        onClick={() => setConfirmReset(true)}
+        className="mt-3 w-full h-[44px] rounded-[8px] border border-[#DDDDDD] text-[14px] font-semibold">
+              Put them back to my usual days
+            </button>
+      }
+
+          <p className="text-[12px] text-[#717171] mt-2">
+            Days you already have a job booked on are left alone.
+          </p>
+        </div>
+    }
+
+      {/* Named separately, because the button above cannot help with
+          these and saying it could would be a lie. */}
+      {lockedDays.length > 0 &&
+    <p className="mt-4 pt-4 border-t border-[#F0F0F0] text-[13px] text-[#717171]">
+          {lockedDays.map(fmtDay).join(', ')} also {lockedDays.length === 1 ? 'differs' : 'differ'} from
+          this, but you have a job booked. Decline it on the Jobs tab to free the day.
+        </p>
+    }
+
+      {resetNote &&
+    <p className="mt-3 text-[13px] text-[#0F6E56]">{resetNote}</p>
+    }
     </div>;
 
   // --- checklist ---------------------------------------------------------
@@ -536,6 +685,36 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
     return PROP_COLOURS[(i < 0 ? 0 : i) % PROP_COLOURS.length];
   };
 
+  /**
+   * Can this cleaner work on this date?
+   *
+   * The weekly pattern is the standing answer; an override is the
+   * exception to it on one date. Asking the two in that order is what
+   * makes "every Sunday, except the 14th" expressible.
+   */
+  const canWorkOn = (date: Date) => {
+    const key = iso(date);
+    if (key in overrides) return overrides[key];
+    return schedule[date.getDay()]?.on || false;
+  };
+
+  /**
+   * Flip one day, and remember it as an exception.
+   *
+   * Optimistic: the square changes under the thumb and is put back if
+   * the save fails. Waiting for a round trip first reads as the tap not
+   * registering, and you get a second tap undoing the first.
+   */
+  const setDayAvailable = async (key: string, next: boolean) => {
+    const before = overrides;
+    setOverrides({ ...overrides, [key]: next });
+    const res = await post('/api/cleaner-portal/overrides', { date: key, available: next });
+    if (!res.ok) {
+      setOverrides(before);
+      setError('Could not save that day');
+    }
+  };
+
   const calendarPanel = () => {
     // The app's own calendar, unchanged.
     //
@@ -545,11 +724,48 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
     // bar geometry, month clipping or the today marker lands in both
     // without being done twice.
     const shown = propFilter || (properties[0]?.id ?? 0);
+
+    // Days this cleaner cannot work, for the three months on screen.
+    // Computed rather than stored, so the weekly pattern and its
+    // exceptions never disagree.
+    // What each day means to this cleaner. Three states, not two: a day
+    // they have offered and a day somebody has put them to work on are
+    // different facts, and only one of them is theirs to change.
+    const bookedDays = new Set(visible.map((j) => j.cleaning_date));
+    const dayStates: Record<string, 'off' | 'free' | 'booked'> = {};
+    const from = new Date();
+    from.setDate(1);
+    for (let i = 0; i < 120; i++) {
+      const d = new Date(from.getFullYear(), from.getMonth(), from.getDate() + i);
+      const key = iso(d);
+      dayStates[key] = bookedDays.has(key) ? 'booked' : canWorkOn(d) ? 'free' : 'off';
+    }
     return (
+      <>
+        {/* A key, because a ring and a tick are only obvious once you
+            already know. */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mb-3 px-1 text-[12px] text-[#717171]">
+          <span className="flex items-center gap-1.5">
+            <span className="w-3 h-3 rounded-full border-[1.5px] border-[#B0B0B0]" /> Available
+          </span>
+          <span className="flex items-center gap-1.5">
+            <Check className="w-3.5 h-3.5 text-[#0F6E56]" strokeWidth={3} /> Booked
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="line-through text-[#8A8A8A]">00</span> Not available
+          </span>
+          <span>Tap a day to change it</span>
+        </div>
       <MonthCalendar
         propertyId={shown}
         bookings={sharedBookings.filter((b) => !propFilter || b.propId === propFilter)}
-        onBookingClick={(b) => setPickedStay(b.id)} />);
+        onBookingClick={(b) => setPickedStay(b.id)}
+        barLabel={(b) => properties.find((p) => p.id === b.propId)?.name || 'Booking'}
+        onDayClick={(d) => setPickedDay(iso(d))}
+        dayStates={dayStates}
+        plainBars />
+
+      </>);
 
   };
 
@@ -602,6 +818,114 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
           <p className="mt-3 text-[14px] bg-[#F7F7F7] rounded-[8px] px-3 py-2.5">
               {stay.special_requirements}
             </p>
+          }
+        </div>
+      </>);
+
+  };
+
+  /**
+   * What one day holds, and the one thing you can change about it.
+   *
+   * Tapping used to flip availability on the spot — no way to see what
+   * you were changing, no way to check a booked day without altering it,
+   * and no obvious way back. Everything about a day now lives here, and
+   * changing it is a deliberate button rather than a side effect of
+   * looking.
+   */
+  const daySheet = () => {
+    if (!pickedDay) return null;
+    const jobsToday = visible.filter((j) => j.cleaning_date === pickedDay);
+    const staysToday = visibleStays.filter((b) => b.check_in <= pickedDay && b.check_out >= pickedDay);
+    const free = pickedDay in overrides ?
+    overrides[pickedDay] :
+    schedule[new Date(pickedDay + 'T00:00:00').getDay()]?.on || false;
+    const booked = jobsToday.length > 0;
+
+    return (
+      <>
+        <div className="fixed inset-0 bg-black/30 z-[60]" onClick={() => setPickedDay(null)} />
+        <div className="fixed inset-x-0 bottom-0 z-[70] bg-white rounded-t-[16px] shadow-2xl p-5 pb-8
+                        sm:inset-auto sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2
+                        sm:w-[380px] sm:rounded-2xl sm:pb-5">
+          <div className="flex justify-center pb-3 sm:hidden">
+            <div className="w-[36px] h-[4px] bg-[#DDDDDD] rounded-full" />
+          </div>
+
+          <div className="flex justify-between items-start">
+            <div>
+              <p className="text-[18px] font-semibold">{dayLabel(pickedDay)}</p>
+              <p className="text-[13px] text-[#717171]">
+                {booked ? 'You are booked to clean' : free ? 'You are available' : 'You are not available'}
+              </p>
+            </div>
+            <button onClick={() => setPickedDay(null)} aria-label="Close" className="p-1 -mr-1">
+              <X className="w-5 h-5 text-[#717171]" />
+            </button>
+          </div>
+
+          {jobsToday.map((j) =>
+          <div key={j.id} className="mt-3 bg-[#F7F7F7] rounded-[8px] px-3 py-2.5">
+              <p className="text-[14px] font-medium">{j.property_name}</p>
+              <p className="text-[13px] text-[#717171]">{j.start_time}–{j.end_time}</p>
+              {j.property_address && <p className="text-[13px] text-[#717171]">{j.property_address}</p>}
+              {j.special_requirements &&
+            <p className="text-[13px] mt-1">{j.special_requirements}</p>
+            }
+
+              {/* Answering here rather than sending them to another tab.
+                  The day is what they tapped and the job is what they are
+                  looking at — making them go and find it again is how a
+                  "no" turns into silence. */}
+              <div className="flex gap-2 mt-2.5">
+                {j.status === 'pending' &&
+              <button
+                disabled={busy === j.id}
+                onClick={() => act(j.id, () =>
+                fetch(`/api/cleaner-portal/jobs/${j.id}/status`, {
+                  method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                  credentials: 'same-origin', body: JSON.stringify({ status: 'confirmed' }),
+                }))}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] bg-[#222222] text-white text-[13px] font-semibold disabled:opacity-60">
+                    <Check className="w-4 h-4" /> Accept
+                  </button>
+              }
+                {!j.started_at &&
+              <button
+                disabled={busy === j.id}
+                onClick={() => act(j.id, () =>
+                fetch(`/api/cleaner-portal/jobs/${j.id}/status`, {
+                  method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                  credentials: 'same-origin', body: JSON.stringify({ status: 'declined' }),
+                }))}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] bg-white text-[13px] font-semibold disabled:opacity-60">
+                    <X className="w-4 h-4" /> Can't do it
+                  </button>
+              }
+              </div>
+            </div>
+          )}
+
+          {!booked && staysToday.length > 0 &&
+          <div className="mt-3 text-[13px] text-[#717171]">
+              {staysToday.map((b) => b.property_name).join(', ')} occupied
+            </div>
+          }
+
+          {/* A booked day is not yours to simply mark unavailable —
+              somebody is relying on you. The way out is declining the job,
+              which is on the job above, where the consequence is visible. */}
+          {booked ?
+          <p className="mt-4 text-[13px] text-[#717171]">
+              To free up this day, decline the job{jobsToday.length > 1 ? 's' : ''} above.
+            </p> :
+
+          <button
+            onClick={async () => { await setDayAvailable(pickedDay, !free); setPickedDay(null); }}
+            className={`mt-4 w-full h-[44px] rounded-[8px] text-[14px] font-semibold ${
+            free ? 'border border-[#DDDDDD] text-[#222222]' : 'bg-[#222222] text-white'}`}>
+              {free ? 'Mark me unavailable' : 'Mark me available'}
+            </button>
           }
         </div>
       </>);
@@ -694,6 +1018,7 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
 
       {openJob && <Checklist job={openJob} onClose={() => setOpenJob(null)} />}
       {staySheet()}
+      {daySheet()}
 
       <nav className="fixed bottom-0 inset-x-0 bg-white border-t border-[#EBEBEB] flex">
         {TABS.map(({ key, label, Icon }) =>

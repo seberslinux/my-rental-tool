@@ -55,6 +55,9 @@ const EVENTS = {
   cleaning_finished: { severity: 'info' },
   checklist_saved: { severity: 'info' },
   job_accepted: { severity: 'info' },
+  // Worth knowing — it is what stops you assigning somebody who cannot
+  // come — but it is not a request, so it does not interrupt.
+  availability_changed: { severity: 'info' },
 
   job_declined: { severity: 'attention' },
   job_unassigned: { severity: 'attention' },

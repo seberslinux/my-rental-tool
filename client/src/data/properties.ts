@@ -242,16 +242,15 @@ export async function loadCleanerCalendarData(): Promise<void> {
     }));
   }
 
-  if (jobsRes.ok) {
-    const jobs: any[] = await jobsRes.json();
-    const map: Record<number, number[]> = {};
-    jobs.forEach((j) => {
-      const day = new Date(j.cleaning_date + 'T00:00:00').getDate();
-      if (!map[j.property_id]) map[j.property_id] = [];
-      if (!map[j.property_id].includes(day)) map[j.property_id].push(day);
-    });
-    cleaners = map;
-  }
+  // Deliberately left empty.
+  //
+  // The shared `cleaners` map holds day-of-month numbers, not dates, so a
+  // job on the 19th of one month puts a dot on the 19th of every month —
+  // it marked days this cleaner has no work on at all. The portal answers
+  // the same question with a tick derived from the full cleaning_date, so
+  // the dot is both redundant and wrong. Two markers for one fact is how
+  // a marker ends up meaning nothing.
+  cleaners = {};
 
   dailyRates = {};
 }

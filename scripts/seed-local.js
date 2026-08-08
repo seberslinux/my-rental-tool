@@ -205,6 +205,13 @@ async function seedCleaners([hilltop, loft]) {
     [sam, loft]
   );
 
+  // Replaced, not appended. Without this a second run stacks another
+  // Mon-Fri on top of the last, and after a few runs every day of the
+  // week is "available" — which reads as a bug in the calendar rather
+  // than as bad data, and cost me an hour looking in the wrong place.
+  await pool.query('DELETE FROM cleaner_availability WHERE cleaner_id = $1', [jane]);
+  await pool.query('DELETE FROM cleaner_availability_overrides WHERE cleaner_id = $1', [jane]);
+
   for (const dow of [1, 2, 3, 4, 5]) {
     await pool.query(
       `INSERT INTO cleaner_availability (cleaner_id, day_of_week, start_time, end_time)
