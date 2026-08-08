@@ -298,6 +298,41 @@ async function runMigrations() {
     ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
     ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 
+    -- Every notification the app decides to send, and what became of it.
+    --
+    -- Four call sites used to reach for whatsapp.sendMessage directly and
+    -- swallow the error. That is why all fourteen cleaning jobs in
+    -- production read notified = 0 while the app reported them assigned:
+    -- the sends had been failing since the access token expired and
+    -- nothing anywhere said so.
+    --
+    -- A row is written whether or not delivery is attempted, so the
+    -- record of what happened does not depend on the channel working.
+    CREATE TABLE IF NOT EXISTS notifications (
+      id SERIAL PRIMARY KEY,
+      event TEXT NOT NULL,
+      -- Who it is about, for filtering a feed.
+      property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+      cleaner_id INTEGER REFERENCES cleaners(id) ON DELETE SET NULL,
+      job_id INTEGER,
+      title TEXT NOT NULL,
+      body TEXT NOT NULL DEFAULT '',
+      -- Where the message takes you. A notification that lands you on the
+      -- screen where you can act beats one you have to go and find.
+      link TEXT,
+      -- 'info' lands in the feed only; 'attention' also goes out.
+      severity TEXT NOT NULL DEFAULT 'info' CHECK (severity IN ('info','attention')),
+      channel TEXT NOT NULL DEFAULT 'in_app',
+      -- 'skipped' means we chose not to send, not that sending failed.
+      delivery TEXT NOT NULL DEFAULT 'skipped'
+        CHECK (delivery IN ('skipped','sent','failed')),
+      delivery_error TEXT,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      read_at TIMESTAMPTZ
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications (created_at DESC);
+
     -- One-time invitations that let a cleaner set their own PIN.
     --
     -- The owner decides who gets access; the cleaner decides how they get

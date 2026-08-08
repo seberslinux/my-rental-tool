@@ -24,9 +24,12 @@ async function seedUser(overrides = {}) {
     ...overrides,
   };
   const { rows } = await pool.query(
-    `INSERT INTO users (email, name, role, password_hash)
-     VALUES ($1, $2, $3, $4) RETURNING *`,
-    [row.email, row.name, row.role, row.password_hash]
+    // phone included: notification routing depends on it, and a helper
+    // that silently drops the field makes a test look like it covers
+    // something it does not.
+    `INSERT INTO users (email, name, role, password_hash, phone)
+     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [row.email, row.name, row.role, row.password_hash, overrides.phone || null]
   );
   return { ...rows[0], _plaintextPassword: password };
 }

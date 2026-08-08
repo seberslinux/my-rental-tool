@@ -5,6 +5,9 @@ const { getAll, getOne, run, transaction, inParams } = require('../db/database')
 // When a clean may be started and finished — see that module for why the
 // window opens before check-out and why "today" is the property's today.
 const { checkCleaningWindow } = require('../services/cleaning-window');
+// One place decides who hears about what — see the module header for why
+// four separate send calls is how the old ones drifted apart.
+const { notify } = require('../services/notify');
 
 // Resolve the cleaner record for the logged-in user
 async function getMyCleanerRecord(req) {
@@ -158,6 +161,21 @@ router.put('/jobs/:jobId/status', requireCleaner, async (req, res) => {
   const job = await getOne('SELECT * FROM cleaning_jobs WHERE id = $1 AND cleaner_id = $2', [req.params.jobId, req.cleaner.id]);
   if (!job) return res.status(404).json({ error: 'Job not found' });
   await run('UPDATE cleaning_jobs SET status = $1 WHERE id = $2', [status, job.id]);
+
+  if (status === 'declined' || status === 'confirmed') {
+    const property = await getOne('SELECT name FROM properties WHERE id = $1', [job.property_id]);
+    const where = property ? property.name : 'a property';
+    await notify({
+      event: status === 'declined' ? 'job_declined' : 'job_accepted',
+      title: status === 'declined' ?
+      `${req.cleaner.name} cannot clean ${where} on ${job.cleaning_date}` :
+      `${req.cleaner.name} accepted ${where} on ${job.cleaning_date}`,
+      body: status === 'declined' ? 'Somebody else will need to cover it.' : '',
+      propertyId: job.property_id, cleanerId: req.cleaner.id, jobId: job.id,
+      link: '/cleaners',
+    });
+  }
+
   res.json({ updated: true });
 });
 
@@ -185,7 +203,7 @@ router.post('/jobs/:jobId/start', requireCleaner, async (req, res) => {
   // Only on the day, and not while the guest is still in the room. The
   // check is after the already-started branch on purpose: a job begun
   // legitimately must stay reportable even if the window has since shut.
-  const property = await getOne('SELECT check_out_time FROM properties WHERE id = $1', [job.property_id]);
+  const property = await getOne('SELECT name, check_out_time FROM properties WHERE id = $1', [job.property_id]);
   const window = checkCleaningWindow(job, property);
   if (!window.ok) return res.status(409).json({ error: window.reason });
   const updated = await getOne(
@@ -194,6 +212,14 @@ router.post('/jobs/:jobId/start', requireCleaner, async (req, res) => {
       RETURNING started_at`,
     [job.id]
   );
+  await notify({
+    event: 'cleaning_started',
+    title: `${req.cleaner.name} started cleaning ${property ? property.name : ''}`.trim(),
+    body: `Scheduled ${job.start_time}–${job.end_time}.`,
+    propertyId: job.property_id, cleanerId: req.cleaner.id, jobId: job.id,
+    link: '/activity',
+  });
+
   res.json({ started_at: updated ? updated.started_at : job.started_at });
 });
 
@@ -233,7 +259,17 @@ router.post('/jobs/:jobId/finish', requireCleaner, async (req, res) => {
       RETURNING started_at, completed_at`,
     [job.id]
   );
-  res.json(updated || { completed_at: job.completed_at });
+  const finishedAt = updated ? updated.completed_at : job.completed_at;
+  const propertyRow = await getOne('SELECT name FROM properties WHERE id = $1', [job.property_id]);
+  await notify({
+    event: 'cleaning_finished',
+    title: `${req.cleaner.name} finished ${propertyRow ? propertyRow.name : ''}`.trim(),
+    body: 'The property is ready.',
+    propertyId: job.property_id, cleanerId: req.cleaner.id, jobId: job.id,
+    link: '/activity',
+  });
+
+  res.json(updated || { completed_at: finishedAt });
 });
 
 /**
@@ -375,6 +411,15 @@ router.post('/maintenance', requireCleaner, async (req, res) => {
     'INSERT INTO maintenance_issues (property_id, title, description, category, priority, reported_date, assigned_to) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
     [property_id, title, description || '', category || 'General', priority || 'medium', today, req.cleaner.name]
   );
+  const property = await getOne('SELECT name FROM properties WHERE id = $1', [property_id]);
+  await notify({
+    event: 'issue_reported',
+    title: `${req.cleaner.name} reported: ${title}`,
+    body: [property && property.name, description].filter(Boolean).join(' · '),
+    propertyId: property_id, cleanerId: req.cleaner.id,
+    link: '/more',
+  });
+
   res.status(201).json({ id: result.rows[0].id });
 });
 
@@ -403,6 +448,18 @@ router.post('/inventory/check', requireCleaner, async (req, res) => {
       );
     }
   });
+  const short = items.filter((i) => (i.status && i.status !== 'ok'));
+  const property = await getOne('SELECT p.name FROM properties p JOIN cleaning_jobs c ON c.property_id = p.id WHERE c.id = $1', [cleaning_job_id]);
+  await notify({
+    event: 'checklist_saved',
+    title: `${req.cleaner.name} completed the checklist at ${property ? property.name : ''}`.trim(),
+    // A count, not a list: the message has to hold its shape whether one
+    // thing is missing or twenty, and the detail is one tap away.
+    body: short.length ? `${short.length} item(s) marked missing.` : 'Everything present.',
+    cleanerId: req.cleaner.id, jobId: cleaning_job_id,
+    link: '/cleaners',
+  });
+
   res.json({ saved: items.length });
 });
 
