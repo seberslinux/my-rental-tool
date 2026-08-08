@@ -10,6 +10,7 @@ import { DashboardPage } from './components/DashboardPage';
 import { MorePage } from './components/MorePage';
 import { AnalyticsPage } from './components/AnalyticsPage';
 import { LoginPage } from './components/LoginPage';
+import { InvitePage } from './components/InvitePage';
 import { CleanersPage } from './components/CleanersPage';
 import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
@@ -24,6 +25,12 @@ import { loadAnalyticsData } from './data/analytics';
 const SHOWS_PROPERTY_FILTER = new Set(['home', 'analytics']);
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  // /invite/<token> — read once at mount, before anything else decides
+  // what to render.
+  const [inviteToken, setInviteToken] = useState<string | null>(() => {
+    const m = window.location.pathname.match(/^\/invite\/(.+)$/);
+    return m ? decodeURIComponent(m[1]) : null;
+  });
   const [userRole, setUserRole] = useState<string>('');
   const [authChecked, setAuthChecked] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
@@ -127,6 +134,16 @@ export function App() {
         <div className="w-8 h-8 border-2 border-[#FF385C] border-t-transparent rounded-full animate-spin" />
       </div>
     );
+  }
+
+  // An invitation has to render before the login gate — its whole purpose
+  // is to admit somebody who cannot sign in yet. There is no router here,
+  // so the path is read directly; redeeming it clears the URL.
+  if (inviteToken && !isLoggedIn) {
+    return (
+      <InvitePage
+        token={inviteToken}
+        onDone={() => { setInviteToken(null); setIsLoggedIn(true); }} />);
   }
 
   if (!isLoggedIn) {

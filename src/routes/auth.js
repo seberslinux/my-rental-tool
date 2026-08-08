@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcrypt');
 const passport = require('../auth/passport-setup');
-const { getOne, getAll } = require('../db/database');
+const { getOne, getAll, run } = require('../db/database');
 // Two numbers are the same line however they were typed — see the module
 // header for why an exact string match locked cleaners out.
 const { samePhone } = require('../services/phone');
@@ -56,6 +56,64 @@ router.post('/cleaner-login', async (req, res) => {
   req.session.cleanerPhone = cleaner.phone;
   req.session.save(() => {
     res.json({ id: cleaner.id, name: cleaner.name, phone: cleaner.phone, role: 'cleaner', authType: 'pin' });
+  });
+});
+
+/**
+ * Look at an invitation without spending it.
+ *
+ * Lets the page greet the cleaner by name before they choose a PIN, so
+ * they can tell a link meant for them from one sent to the wrong number.
+ * Deliberately does not return the phone number: the link may have been
+ * forwarded, and a stranger holding it should learn nothing.
+ *
+ * Invalid, expired and already-used give one answer. Telling them apart
+ * would confirm to someone probing tokens which ones once existed.
+ */
+router.get('/invite/:token', async (req, res) => {
+  const invite = await getOne(
+    `SELECT c.name FROM cleaner_invites i
+       JOIN cleaners c ON c.id = i.cleaner_id
+      WHERE i.token = $1 AND i.used_at IS NULL AND i.expires_at > NOW()`,
+    [req.params.token]
+  );
+  if (!invite) return res.status(404).json({ error: 'This invitation is no longer valid' });
+  res.json({ name: invite.name });
+});
+
+/**
+ * Spend the invitation: the cleaner sets their own PIN and is signed in.
+ *
+ * The invite is claimed with a conditional UPDATE rather than a read
+ * followed by a write. Two taps on the same link — a double submit, or a
+ * forwarded copy opened at the same moment — would otherwise both pass
+ * the check and both set a PIN. Here one claim wins, and the second
+ * updates no rows and is refused.
+ */
+router.post('/invite/:token', async (req, res) => {
+  const { pin } = req.body;
+  if (!/^\d{4}$/.test(String(pin || ''))) {
+    return res.status(400).json({ error: 'PIN must be exactly 4 digits' });
+  }
+
+  const claimed = await getOne(
+    `UPDATE cleaner_invites SET used_at = NOW()
+      WHERE token = $1 AND used_at IS NULL AND expires_at > NOW()
+      RETURNING cleaner_id`,
+    [req.params.token]
+  );
+  if (!claimed) return res.status(404).json({ error: 'This invitation is no longer valid' });
+
+  const cleaner = await getOne('SELECT * FROM cleaners WHERE id = $1', [claimed.cleaner_id]);
+  if (!cleaner) return res.status(404).json({ error: 'This invitation is no longer valid' });
+
+  await run('UPDATE cleaners SET pin = $1 WHERE id = $2', [bcrypt.hashSync(pin, 10), cleaner.id]);
+
+  req.session.cleanerId = cleaner.id;
+  req.session.cleanerName = cleaner.name;
+  req.session.cleanerPhone = cleaner.phone;
+  req.session.save(() => {
+    res.json({ id: cleaner.id, name: cleaner.name, role: 'cleaner', authType: 'invite' });
   });
 });
 
