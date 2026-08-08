@@ -2,7 +2,13 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const bcrypt = require('bcrypt');
 const { getAgent, resetDb, closePool } = require('../helpers/harness');
-const { seedUser, seedProperty, seedCleaner, linkCleanerToProperty } = require('../helpers/seed');
+const { seedUser, seedProperty, seedCleaner, seedBooking, linkCleanerToProperty } = require('../helpers/seed');
+
+/** YYYY-MM-DD, n days ahead — used to land outside the cleaning window. */
+function futureDate(n) {
+  const d = new Date(Date.now() + n * 86400000);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
 const { pool } = require('../../src/db/database');
 
 /**
@@ -30,7 +36,7 @@ async function seedJob(cleaner, property, overrides = {}) {
      VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
     [
       property.id, cleaner.id,
-      overrides.cleaning_date || '2026-08-10',
+      overrides.cleaning_date || futureDate(0),
       overrides.start_time || '10:00',
       overrides.end_time || '12:30',
       overrides.status || 'pending',
@@ -153,7 +159,7 @@ test('finishing without starting back-fills the start from the scheduled time', 
   const owner = await seedUser({ role: 'admin' });
   const property = await seedProperty({ owner });
   const { cleaner, agent } = await signedInCleaner();
-  const job = await seedJob(cleaner, property, { cleaning_date: '2026-08-10', start_time: '10:00' });
+  const job = await seedJob(cleaner, property, { start_time: '00:00' });
 
   const res = await agent.post(`/api/cleaner-portal/jobs/${job.id}/finish`).expect(200);
   assert.ok(res.body.started_at, 'a start time was filled in');
@@ -229,4 +235,102 @@ test('a cleaner can set the days they work', async () => {
   );
   assert.deepEqual(rows.map((r) => r.day_of_week), [1, 5]);
   assert.equal(rows[0].start_time, '08:00');
+});
+
+// --- the window on start and finish -------------------------------------
+
+test('a clean cannot be started before its day', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const { cleaner, agent } = await signedInCleaner();
+  // Two weeks out — comfortably not today, whatever timezone the CI box is in.
+  const job = await seedJob(cleaner, property, { cleaning_date: futureDate(14) });
+
+  const res = await agent.post(`/api/cleaner-portal/jobs/${job.id}/start`);
+  assert.equal(res.status, 409);
+  assert.match(res.body.error, /on the day/i);
+
+  const { rows } = await pool.query('SELECT started_at FROM cleaning_jobs WHERE id = $1', [job.id]);
+  assert.equal(rows[0].started_at, null, 'nothing was recorded');
+});
+
+test('a clean cannot be finished before its day either', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const { cleaner, agent } = await signedInCleaner();
+  const job = await seedJob(cleaner, property, { cleaning_date: futureDate(14) });
+
+  const res = await agent.post(`/api/cleaner-portal/jobs/${job.id}/finish`);
+  assert.equal(res.status, 409);
+});
+
+test('a clean already under way can still be finished', async () => {
+  // The window is checked after the already-started branch on purpose:
+  // a job begun legitimately must stay reportable even once the window
+  // has shut, or a cleaner working past midnight loses their finish.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const { cleaner, agent } = await signedInCleaner();
+  const job = await seedJob(cleaner, property, { cleaning_date: futureDate(14) });
+
+  await pool.query("UPDATE cleaning_jobs SET started_at = NOW(), status = 'in_progress' WHERE id = $1", [job.id]);
+  await agent.post(`/api/cleaner-portal/jobs/${job.id}/finish`).expect(200);
+});
+
+// --- what the calendar is fed --------------------------------------------
+
+test('bookings come back for the cleaner\'s properties, with no money in them', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const { cleaner, agent } = await signedInCleaner();
+  await linkCleanerToProperty(cleaner, property);
+  await seedBooking({
+    property, check_in: futureDate(2), check_out: futureDate(5),
+    total_price: 25000, guest_name: 'Siba Daki', num_guests: 2,
+  });
+
+  const res = await agent.get('/api/cleaner-portal/bookings').expect(200);
+  assert.equal(res.body.length, 1);
+  const b = res.body[0];
+  assert.equal(b.guest_name, 'Siba Daki', 'the cleaner is told who is coming');
+  assert.equal(b.num_guests, 2);
+
+  // Money is not selected at all, so it cannot leak through a later
+  // change to the front end.
+  const serialised = JSON.stringify(b);
+  assert.ok(!serialised.includes('25000'), 'no price');
+  for (const field of ['total_price', 'commission', 'price_per_night', 'currency']) {
+    assert.equal(b[field], undefined, `${field} must not be sent`);
+  }
+});
+
+test('another property\'s bookings are not visible', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const mine = await seedProperty({ owner });
+  const theirs = await seedProperty({ owner });
+  const { cleaner, agent } = await signedInCleaner();
+  await linkCleanerToProperty(cleaner, mine);
+  await seedBooking({ property: theirs, check_in: futureDate(2), check_out: futureDate(4), guest_name: 'Not Mine' });
+
+  const res = await agent.get('/api/cleaner-portal/bookings').expect(200);
+  assert.equal(res.body.length, 0);
+});
+
+test('blocks and cancellations are not stays', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const { cleaner, agent } = await signedInCleaner();
+  await linkCleanerToProperty(cleaner, property);
+  await seedBooking({ property, check_in: futureDate(1), check_out: futureDate(3), platform: 'Blocked channel auto', guest_name: '' });
+  await seedBooking({ property, check_in: futureDate(4), check_out: futureDate(6), status: 'cancelled', guest_name: 'Gone' });
+  await seedBooking({ property, check_in: futureDate(7), check_out: futureDate(9), guest_name: 'Real Guest' });
+
+  const res = await agent.get('/api/cleaner-portal/bookings').expect(200);
+  assert.deepEqual(res.body.map((b) => b.guest_name), ['Real Guest']);
 });

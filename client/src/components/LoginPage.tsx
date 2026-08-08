@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Home } from 'lucide-react';
 interface LoginPageProps {
-  onLogin: () => void;
+  onLogin: (role?: string) => void;
 }
 export function LoginPage({ onLogin }: LoginPageProps) {
   const [activeTab, setActiveTab] = useState<'email' | 'phone'>('email');
@@ -64,6 +64,14 @@ export function LoginPage({ onLogin }: LoginPageProps) {
           const data = await res.json().catch(() => ({ error: 'Login failed' }));
           throw new Error(data.error || 'Login failed');
         }
+        // The role comes back on the login response. Passing it up means
+        // a cleaner lands in their own app immediately — before this, the
+        // role was only read once when the page first loaded, so signing
+        // in with a phone number dropped you into the manager's app until
+        // you happened to refresh.
+        const who = await res.json().catch(() => ({}));
+        onLogin(who.role);
+        return;
       }
       onLogin();
     } catch (err: any) {

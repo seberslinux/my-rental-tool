@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { MonthCalendar } from './MonthCalendar';
+import { Booking } from '../data/properties';
 import {
   Home, LogOut, MapPin, Clock, Users, Check, X, Play, Square,
-  ClipboardList, CalendarDays, CalendarRange, Wrench, ShoppingCart,
+  ClipboardList, CalendarDays, CalendarRange, Wrench, ShoppingCart, MessageSquare,
   ChevronLeft, ChevronRight } from
 'lucide-react';
 
@@ -34,6 +36,19 @@ interface Job {
   check_in: string | null;
   started_at: string | null;
   completed_at: string | null;
+}
+
+/** A stay, as the portal receives it — the server sends no money. */
+interface Stay {
+  id: number;
+  property_id: number;
+  property_name: string;
+  guest_name: string;
+  check_in: string;
+  check_out: string;
+  num_guests: number | null;
+  children: number | null;
+  special_requirements: string | null;
 }
 
 interface ChecklistItem {
@@ -155,7 +170,7 @@ function Checklist({ job, onClose }: {job: Job;onClose: () => void;}) {
   }
 
 function Report({ properties, onError }: {properties: {id: number;name: string;}[];onError: (m: string) => void;}) {
-    const [kind, setKind] = useState<'maintenance' | 'supplies'>('maintenance');
+    const [kind, setKind] = useState<'maintenance' | 'supplies' | 'note'>('maintenance');
     const [propertyId, setPropertyId] = useState<number | ''>(properties[0]?.id ?? '');
     const [title, setTitle] = useState('');
     const [detail, setDetail] = useState('');
@@ -163,15 +178,22 @@ function Report({ properties, onError }: {properties: {id: number;name: string;}
 
     const submit = async () => {
       if (!title.trim()) return;
-      const res = kind === 'maintenance' ?
-      await post('/api/cleaner-portal/maintenance', {
-        property_id: propertyId, title, description: detail, category: 'Reported by cleaner',
-      }) :
+      // "Anything" rides the maintenance route with its own category —
+      // a cleaner should never have to work out which box a thing goes
+      // in before they can say it. The owner sees all of them together.
+      const res = kind === 'supplies' ?
       await post('/api/cleaner-portal/shopping-list', {
         property_id: propertyId || null, item_name: title, notes: detail,
+      }) :
+      await post('/api/cleaner-portal/maintenance', {
+        property_id: propertyId,
+        title,
+        description: detail,
+        category: kind === 'note' ? 'Note from cleaner' : 'Reported by cleaner',
+        priority: kind === 'note' ? 'low' : 'medium',
       });
       if (res.ok) {
-        setSent(kind === 'maintenance' ? 'Reported. The owner can see it.' : 'Added to the shopping list.');
+        setSent(kind === 'supplies' ? 'Added to the shopping list.' : 'Sent. The owner can see it.');
         setTitle(''); setDetail('');
       } else {
         const d = await res.json().catch(() => ({}));
@@ -183,8 +205,9 @@ function Report({ properties, onError }: {properties: {id: number;name: string;}
       <div className="bg-white rounded-[12px] border border-[#EBEBEB] p-4">
         <div className="flex gap-2 mb-4">
           {([
-          ['maintenance', 'Something broken', Wrench],
-          ['supplies', 'Need supplies', ShoppingCart]] as const).
+          ['maintenance', 'Broken', Wrench],
+          ['supplies', 'Supplies', ShoppingCart],
+          ['note', 'Anything', MessageSquare]] as const).
           map(([k, label, Icon]) =>
           <button
             key={k}
@@ -209,7 +232,10 @@ function Report({ properties, onError }: {properties: {id: number;name: string;}
         <input
           value={title}
           onChange={(e) => { setTitle(e.target.value); setSent(''); }}
-          placeholder={kind === 'maintenance' ? 'What is broken?' : 'What do you need?'}
+          placeholder={
+          kind === 'maintenance' ? 'What is broken?' :
+          kind === 'supplies' ? 'What do you need?' :
+          'What would you like to tell the owner?'}
           className="w-full h-[44px] px-3 mb-3 border border-[#DDDDDD] rounded-[8px] text-[14px]" />
 
         <textarea
@@ -235,6 +261,7 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
   const [name, setName] = useState('');
   const [properties, setProperties] = useState<{id: number;name: string;}[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [stays, setStays] = useState<Stay[]>([]);
   const [schedule, setSchedule] = useState<Record<number, {on: boolean;start: string;end: string;}>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -243,18 +270,16 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
   // 0 = every property. A cleaner working two places wants "when does The
   // loft need me" without reading past the other one.
   const [propFilter, setPropFilter] = useState<number>(0);
-  const [anchor, setAnchor] = useState(() => {
-    const n = new Date();
-    return new Date(n.getFullYear(), n.getMonth(), 1);
-  });
-  const [pickedDay, setPickedDay] = useState<string | null>(null);
+  const [pickedStay, setPickedStay] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [meRes, jobsRes] = await Promise.all([
+      const [meRes, jobsRes, staysRes] = await Promise.all([
         fetch('/api/cleaner-portal/me', { credentials: 'same-origin' }),
         fetch('/api/cleaner-portal/jobs', { credentials: 'same-origin' }),
+        fetch('/api/cleaner-portal/bookings', { credentials: 'same-origin' }),
       ]);
+      if (staysRes.ok) setStays(await staysRes.json());
       if (meRes.ok) {
         const me = await meRes.json();
         setName(me.name || '');
@@ -299,6 +324,7 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
   // not keep seeing it on their own calendar.
   const mine = jobs.filter((j) => j.status !== 'declined');
   const visible = propFilter ? mine.filter((j) => j.property_id === propFilter) : mine;
+  const visibleStays = propFilter ? stays.filter((b) => b.property_id === propFilter) : stays;
   const upcoming = visible
     .filter((j) => j.cleaning_date >= todayStr)
     .sort((a, b) => a.cleaning_date.localeCompare(b.cleaning_date));
@@ -310,6 +336,9 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
     if (diff === 1) return 'Tomorrow';
     return d.toLocaleDateString('en-ZA', { weekday: 'long', day: 'numeric', month: 'short' });
   };
+
+  const fmtDay = (date: string) =>
+  new Date(date + 'T00:00:00').toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
 
   const fmtTime = (ts: string | null) =>
   ts ? new Date(ts).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' }) : '';
@@ -399,7 +428,10 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
             </>
           }
 
-          {!undecided && !job.started_at &&
+          {/* Only on the day. The server enforces the window and says why
+              if you are early, but offering a button that is going to be
+              refused is not a kindness. */}
+          {!undecided && !job.started_at && job.cleaning_date === todayStr &&
           <button
             disabled={busy === job.id}
             onClick={() => act(job.id, () => post(`/api/cleaner-portal/jobs/${job.id}/start`))}
@@ -422,6 +454,12 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
             className="flex items-center gap-1.5 px-3 py-2 rounded-[8px] border border-[#DDDDDD] text-[13px] font-semibold">
             <ClipboardList className="w-4 h-4" /> Checklist
           </button>
+
+          {!undecided && !job.started_at && job.cleaning_date !== todayStr &&
+          <span className="self-center text-[12px] text-[#717171]">
+              You can start on the day
+            </span>
+          }
         </div>
       </div>);
 
@@ -497,105 +535,77 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
   };
 
   const calendarPanel = () => {
-    const year = anchor.getFullYear();
-    const month = anchor.getMonth();
-    const first = new Date(year, month, 1);
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    // Monday-first: a working week reads Mon–Sun, not Sun–Sat.
-    const lead = (first.getDay() + 6) % 7;
+    // The manager's calendar, not a second one.
+    //
+    // It already knows how to draw a stay that spans a row, clip it to
+    // the month and end it half way through the check-out day — fixed
+    // once, and it would have had to be fixed twice. Rates, marks and
+    // the bar label are props precisely so this view can drop the money.
+    const asBookings: Booking[] = visibleStays.map((b) => ({
+      id: String(b.id),
+      propId: b.property_id,
+      type: 'direct',
+      name: b.guest_name || 'Guest',
+      checkIn: new Date(b.check_in + 'T00:00:00'),
+      checkOut: new Date(b.check_out + 'T00:00:00'),
+      total: 0,
+      deductions: 0,
+      netPayout: 0,
+      numGuests: b.num_guests,
+      children: b.children || 0,
+    }));
 
-    const byDate: Record<string, Job[]> = {};
-    visible.forEach((j) => {
-      (byDate[j.cleaning_date] ||= []).push(j);
-    });
-
-    const cells: (string | null)[] = [];
-    for (let i = 0; i < lead; i++) cells.push(null);
-    for (let d = 1; d <= daysInMonth; d++) cells.push(iso(new Date(year, month, d)));
-
-    const dayJobs = pickedDay ? byDate[pickedDay] || [] : [];
+    // The days this cleaner is due somewhere, as a dot under the date.
+    const jobDays = new Set(visible.map((j) => j.cleaning_date));
+    const openStay = pickedStay && visibleStays.find((b) => String(b.id) === pickedStay);
 
     return (
       <>
-        <div className="bg-white rounded-[12px] border border-[#EBEBEB] p-3">
-          <div className="flex items-center justify-between mb-2">
-            <button
-              onClick={() => setAnchor(new Date(year, month - 1, 1))}
-              aria-label="Previous month"
-              className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-[#F7F7F7]">
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-            <p className="text-[15px] font-semibold">
-              {first.toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' })}
-            </p>
-            <button
-              onClick={() => setAnchor(new Date(year, month + 1, 1))}
-              aria-label="Next month"
-              className="w-9 h-9 rounded-full flex items-center justify-center hover:bg-[#F7F7F7]">
-              <ChevronRight className="w-5 h-5" />
-            </button>
-          </div>
-
-          <div className="grid grid-cols-7 text-center text-[11px] font-semibold text-[#8A8A8A] uppercase pb-1">
-            {['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map((d) => <div key={d}>{d}</div>)}
-          </div>
-
-          <div className="grid grid-cols-7 gap-1">
-            {cells.map((date, i) => {
-              if (!date) return <div key={`p${i}`} />;
-              const list = byDate[date] || [];
-              const isToday = date === todayStr;
-              const past = date < todayStr;
-              const picked = date === pickedDay;
-              return (
-                <button
-                  key={date}
-                  onClick={() => setPickedDay(picked ? null : date)}
-                  className={`aspect-square rounded-[8px] flex flex-col items-center justify-center gap-1 text-[13px] tabular-nums
-                    ${picked ? 'bg-[#222222] text-white' : isToday ? 'bg-[#F0F0F0] font-semibold' : ''}
-                    ${past && !picked ? 'text-[#B0B0B0]' : ''}`}>
-                  {Number(date.slice(8, 10))}
-                  {/* A dot per job, coloured by property — the only thing
-                      that fits, and enough to answer "which one, when". */}
-                  <span className="flex gap-[3px] h-[5px]">
-                    {list.slice(0, 3).map((j, n) =>
-                    <span
-                      key={n}
-                      className="w-[5px] h-[5px] rounded-full"
-                      style={{ backgroundColor: colourFor(j.property_id), opacity: past ? 0.4 : 1 }} />
-                    )}
-                  </span>
-                </button>);
-
-            })}
-          </div>
-
-          {/* Only when more than one colour is actually on the grid. Filtered
-              to a single property the key explains nothing, and listing a
-              property whose jobs are hidden reads as a mistake. */}
-          {properties.length > 1 && !propFilter &&
-          <div className="flex flex-wrap gap-3 mt-3 pt-3 border-t border-[#F0F0F0]">
-              {properties.map((p) =>
-            <span key={p.id} className="flex items-center gap-1.5 text-[12px] text-[#717171]">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: colourFor(p.id) }} />
-                  {p.name}
-                </span>
-            )}
-            </div>
-          }
+        <div className="bg-white rounded-[12px] border border-[#EBEBEB]">
+          <MonthCalendar
+            propertyId={propFilter || (properties[0]?.id ?? 0)}
+            bookings={asBookings}
+            months={1}
+            showRates={false}
+            markedDays={jobDays}
+            barLabel={(b) => b.name}
+            onBookingClick={(b) => setPickedStay(b.id)} />
         </div>
 
-        {pickedDay &&
-        <div className="mt-4">
-            <p className="text-[12px] font-semibold text-[#717171] uppercase tracking-[0.5px] mb-2">
-              {dayLabel(pickedDay)}
-            </p>
-            {dayJobs.length === 0 ?
-          <p className="text-[14px] text-[#717171] bg-white rounded-[12px] border border-[#EBEBEB] p-4">
-                Nothing scheduled.
-              </p> :
+        <p className="text-[12px] text-[#717171] mt-2 px-1">
+          A dot marks a day you are cleaning. Tap a booking to see who is coming.
+        </p>
 
-          dayJobs.map((j) => <JobCard key={j.id} job={j} />)
+        {openStay &&
+        <div className="mt-4 bg-white rounded-[12px] border border-[#EBEBEB] p-4">
+            <div className="flex justify-between items-start gap-3">
+              <div className="min-w-0">
+                <p className="text-[15px] font-semibold truncate">{openStay.guest_name || 'Guest'}</p>
+                <p className="text-[13px] text-[#717171]">{openStay.property_name}</p>
+              </div>
+              <button onClick={() => setPickedStay(null)} aria-label="Close" className="p-1 -mr-1">
+                <X className="w-4 h-4 text-[#717171]" />
+              </button>
+            </div>
+
+            <p className="text-[13px] text-[#717171] mt-1.5 tabular-nums">
+              {fmtDay(openStay.check_in)} – {fmtDay(openStay.check_out)}
+            </p>
+
+            {openStay.num_guests != null &&
+          <p className="text-[13px] mt-1.5 flex items-center gap-1.5">
+                <Users className="w-4 h-4 text-[#717171]" />
+                {(openStay.num_guests || 0) + (openStay.children || 0)} guests
+                {openStay.children ?
+            ` (${openStay.num_guests} adults, ${openStay.children} ${openStay.children === 1 ? 'child' : 'children'})` :
+            ''}
+              </p>
+          }
+
+            {openStay.special_requirements &&
+          <p className="mt-2 text-[13px] bg-[#F7F7F7] rounded-[8px] px-3 py-2">
+                {openStay.special_requirements}
+              </p>
           }
           </div>
         }

@@ -4,8 +4,14 @@ interface BookingBarProps {
   booking: Booking;
   style: React.CSSProperties;
   onClick?: (booking: Booking) => void;
+  /**
+   * What the bar reads. Defaults to name and total. The cleaner portal
+   * passes a version without the money — the same grid serves both, and
+   * a cleaner must never be shown what a guest paid.
+   */
+  label?: (booking: Booking) => string;
 }
-export function BookingBar({ booking, style, onClick }: BookingBarProps) {
+export function BookingBar({ booking, style, onClick, label }: BookingBarProps) {
   const isPast = booking.checkOut <= TODAY;
   const getStyles = () => {
     switch (booking.type) {
@@ -76,7 +82,9 @@ export function BookingBar({ booking, style, onClick }: BookingBarProps) {
         {renderIcon()}
       </div>
       <div className="truncate flex-1 min-w-0 pr-1">
-        {booking.total ?
+        {label ?
+        label(booking) :
+        booking.total ?
         `${booking.name} · ${formatTotal(booking.total)}` :
         booking.name}
       </div>

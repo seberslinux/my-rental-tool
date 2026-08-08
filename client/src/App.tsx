@@ -151,7 +151,13 @@ export function App() {
   }
 
   if (!isLoggedIn) {
-    return <LoginPage onLogin={() => setIsLoggedIn(true)} />;
+    return (
+      <LoginPage
+        onLogin={(role) => {
+          if (role) setUserRole(role);
+          setIsLoggedIn(true);
+        }} />);
+
   }
 
   // A cleaner gets the cleaner's app, not the manager's.
