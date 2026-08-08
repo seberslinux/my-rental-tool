@@ -278,6 +278,30 @@ async function runMigrations() {
       FOREIGN KEY (cleaner_id) REFERENCES cleaners(id) ON DELETE CASCADE
     );
 
+    -- One-time invitations that let a cleaner set their own PIN.
+    --
+    -- The owner decides who gets access; the cleaner decides how they get
+    -- in. Storing a PIN the owner chose meant the owner held the
+    -- cleaner's credential, and since PINs are hashed they could never be
+    -- read back either, so a forgotten one could only be overwritten.
+    --
+    -- Separate from ical_tokens, which is a permanent per-cleaner feed
+    -- key with no expiry and no single-use semantics. An invitation is
+    -- the opposite of that on both counts.
+    CREATE TABLE IF NOT EXISTS cleaner_invites (
+      id SERIAL PRIMARY KEY,
+      cleaner_id INTEGER NOT NULL,
+      token TEXT NOT NULL UNIQUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL,
+      used_at TIMESTAMPTZ,
+      created_by INTEGER,
+      FOREIGN KEY (cleaner_id) REFERENCES cleaners(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_cleaner_invites_cleaner
+      ON cleaner_invites (cleaner_id);
+
     CREATE TABLE IF NOT EXISTS app_settings (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
