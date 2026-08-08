@@ -16,7 +16,7 @@ const path = require('path');
 const fs = require('fs');
 const { pool } = require('./db/database');
 const passport = require('./auth/passport-setup');
-const { requireAuth } = require('./middleware/auth');
+const { requireAuth, restrictCleanerSessions } = require('./middleware/auth');
 
 /**
  * Build the app synchronously. Callers are responsible for running migrations
@@ -97,6 +97,9 @@ function buildApp({
 
   // Auth wall — everything under /api requires an authenticated session.
   app.use('/api', requireAuth);
+  // …and a cleaner session gets no further than the cleaner portal. See
+  // the middleware for what was reachable before this existed.
+  app.use('/api', restrictCleanerSessions);
 
   app.use('/api', require('./routes/api'));
   app.use('/api/properties', require('./routes/properties'));

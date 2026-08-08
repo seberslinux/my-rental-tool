@@ -11,6 +11,7 @@ import { MorePage } from './components/MorePage';
 import { AnalyticsPage } from './components/AnalyticsPage';
 import { LoginPage } from './components/LoginPage';
 import { InvitePage } from './components/InvitePage';
+import { CleanerDashboard } from './components/CleanerDashboard';
 import { CleanersPage } from './components/CleanersPage';
 import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
@@ -84,10 +85,13 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (isLoggedIn) {
+    // Not for cleaners: every one of these calls is a manager endpoint
+    // the server now refuses them, so firing it would only fill their
+    // console with 403s and slow their first paint.
+    if (isLoggedIn && userRole !== 'cleaner') {
       loadData();
     }
-  }, [isLoggedIn, loadData]);
+  }, [isLoggedIn, userRole, loadData]);
 
   // Filter bookings based on channel — use dataLoaded as dep to re-compute after fetch
   const filteredBookings = useMemo(() => {
@@ -148,6 +152,21 @@ export function App() {
 
   if (!isLoggedIn) {
     return <LoginPage onLogin={() => setIsLoggedIn(true)} />;
+  }
+
+  // A cleaner gets the cleaner's app, not the manager's.
+  //
+  // There was no branch here at all: a cleaner who signed in was handed
+  // the full manager UI, and the API answered its requests — revenue,
+  // guest names, other cleaners' rates. The server now refuses those, so
+  // without this the same screen would render as a wall of failures.
+  if (userRole === 'cleaner') {
+    return (
+      <CleanerDashboard
+        onSignOut={async () => {
+          await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+          window.location.href = '/';
+        }} />);
   }
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-[#F7F7F7] font-sans text-[#222222] antialiased">

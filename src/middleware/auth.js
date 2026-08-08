@@ -7,6 +7,37 @@ function requireAuth(req, res, next) {
   return res.status(401).json({ error: 'Authentication required' });
 }
 
+/**
+ * A cleaner session may only reach the cleaner portal.
+ *
+ * requireAuth admits cleaner PIN sessions, and everything under /api sits
+ * behind requireAuth alone. That was enough to let a cleaner read the
+ * owner's business: /api/dashboard/kpis returned gross and net revenue,
+ * /api/analytics/data the full breakdown, /api/bookings guest names and
+ * what they paid, and /api/cleaners the other cleaners' pay rates. Every
+ * one answered 200 to a session opened with a 4-digit PIN.
+ *
+ * Property scoping did not help. It narrows those answers to the
+ * cleaner's own properties, which is precisely the revenue they should
+ * never have seen.
+ *
+ * So the rule is stated once, here, as an allow-list. A new manager
+ * route is closed to cleaners by default rather than open until somebody
+ * remembers — which is how the hole arose in the first place.
+ */
+const CLEANER_ALLOWED_PREFIXES = ['/cleaner-portal'];
+
+function restrictCleanerSessions(req, res, next) {
+  const isCleanerSession = Boolean(req.session && req.session.cleanerId && !req.user);
+  if (!isCleanerSession) return next();
+
+  const path = req.path || '';
+  if (CLEANER_ALLOWED_PREFIXES.some((p) => path === p || path.startsWith(p + '/'))) {
+    return next();
+  }
+  return res.status(403).json({ error: 'Cleaners can only access the cleaner portal' });
+}
+
 function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ error: 'Authentication required' });
@@ -124,4 +155,5 @@ function denyIfOutOfScope(req, res, propertyId) {
   return false;
 }
 
-module.exports = { requireAuth, requireRole, scopeProperties, enforcePropertyScope, isPropertyInScope, denyIfOutOfScope };
+module.exports = {
+  restrictCleanerSessions, requireAuth, requireRole, scopeProperties, enforcePropertyScope, isPropertyInScope, denyIfOutOfScope };
