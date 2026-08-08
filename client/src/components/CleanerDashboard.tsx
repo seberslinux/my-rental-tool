@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { MonthCalendar } from './MonthCalendar';
-import { Booking } from '../data/properties';
+import { Booking, bookings as sharedBookings, properties as sharedProperties, loadCleanerCalendarData } from '../data/properties';
 import {
   Home, LogOut, MapPin, Clock, Users, Check, X, Play, Square,
   ClipboardList, CalendarDays, CalendarRange, Wrench, ShoppingCart, MessageSquare,
@@ -293,6 +293,8 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
       }
       if (!jobsRes.ok) throw new Error('Could not load your jobs');
       setJobs(await jobsRes.json());
+      // Fills the same module state the app's calendar reads.
+      await loadCleanerCalendarData();
     } catch (err: any) {
       setError(err.message || 'Something went wrong');
     } finally {
@@ -535,80 +537,73 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
   };
 
   const calendarPanel = () => {
-    // The manager's calendar, not a second one.
+    // The app's own calendar, unchanged.
     //
-    // It already knows how to draw a stay that spans a row, clip it to
-    // the month and end it half way through the check-out day — fixed
-    // once, and it would have had to be fixed twice. Rates, marks and
-    // the bar label are props precisely so this view can drop the money.
-    const asBookings: Booking[] = visibleStays.map((b) => ({
-      id: String(b.id),
-      propId: b.property_id,
-      type: 'direct',
-      name: b.guest_name || 'Guest',
-      checkIn: new Date(b.check_in + 'T00:00:00'),
-      checkOut: new Date(b.check_out + 'T00:00:00'),
-      total: 0,
-      deductions: 0,
-      netPayout: 0,
-      numGuests: b.num_guests,
-      children: b.children || 0,
-    }));
+    // Not a second grid with the same job: the module state it reads is
+    // filled from the portal's endpoints instead, so the cleaner sees
+    // exactly what the manager sees minus the money — and every fix to
+    // bar geometry, month clipping or the today marker lands in both
+    // without being done twice.
+    const shown = propFilter || (properties[0]?.id ?? 0);
+    return (
+      <MonthCalendar
+        propertyId={shown}
+        bookings={sharedBookings.filter((b) => !propFilter || b.propId === propFilter)}
+        onBookingClick={(b) => setPickedStay(b.id)} />);
 
-    // The days this cleaner is due somewhere, as a dot under the date.
-    const jobDays = new Set(visible.map((j) => j.cleaning_date));
-    const openStay = pickedStay && visibleStays.find((b) => String(b.id) === pickedStay);
+  };
 
+  /**
+   * Tapping a booking has to answer immediately.
+   *
+   * This was a block rendered under the calendar, which on a phone means
+   * a tap followed by a scroll to find out what you tapped. Cleaners are
+   * only ever on phones, so it is a sheet over the top — the same shape
+   * the manager's booking detail uses.
+   */
+  const staySheet = () => {
+    const stay = pickedStay && stays.find((b) => String(b.id) === pickedStay);
+    if (!stay) return null;
     return (
       <>
-        <div className="bg-white rounded-[12px] border border-[#EBEBEB]">
-          <MonthCalendar
-            propertyId={propFilter || (properties[0]?.id ?? 0)}
-            bookings={asBookings}
-            months={1}
-            showRates={false}
-            markedDays={jobDays}
-            barLabel={(b) => b.name}
-            onBookingClick={(b) => setPickedStay(b.id)} />
-        </div>
-
-        <p className="text-[12px] text-[#717171] mt-2 px-1">
-          A dot marks a day you are cleaning. Tap a booking to see who is coming.
-        </p>
-
-        {openStay &&
-        <div className="mt-4 bg-white rounded-[12px] border border-[#EBEBEB] p-4">
-            <div className="flex justify-between items-start gap-3">
-              <div className="min-w-0">
-                <p className="text-[15px] font-semibold truncate">{openStay.guest_name || 'Guest'}</p>
-                <p className="text-[13px] text-[#717171]">{openStay.property_name}</p>
-              </div>
-              <button onClick={() => setPickedStay(null)} aria-label="Close" className="p-1 -mr-1">
-                <X className="w-4 h-4 text-[#717171]" />
-              </button>
-            </div>
-
-            <p className="text-[13px] text-[#717171] mt-1.5 tabular-nums">
-              {fmtDay(openStay.check_in)} – {fmtDay(openStay.check_out)}
-            </p>
-
-            {openStay.num_guests != null &&
-          <p className="text-[13px] mt-1.5 flex items-center gap-1.5">
-                <Users className="w-4 h-4 text-[#717171]" />
-                {(openStay.num_guests || 0) + (openStay.children || 0)} guests
-                {openStay.children ?
-            ` (${openStay.num_guests} adults, ${openStay.children} ${openStay.children === 1 ? 'child' : 'children'})` :
-            ''}
-              </p>
-          }
-
-            {openStay.special_requirements &&
-          <p className="mt-2 text-[13px] bg-[#F7F7F7] rounded-[8px] px-3 py-2">
-                {openStay.special_requirements}
-              </p>
-          }
+        <div className="fixed inset-0 bg-black/30 z-[60]" onClick={() => setPickedStay(null)} />
+        <div className="fixed inset-x-0 bottom-0 z-[70] bg-white rounded-t-[16px] shadow-2xl p-5 pb-8
+                        sm:inset-auto sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2
+                        sm:w-[380px] sm:rounded-2xl sm:pb-5">
+          <div className="flex justify-center pb-3 sm:hidden">
+            <div className="w-[36px] h-[4px] bg-[#DDDDDD] rounded-full" />
           </div>
-        }
+
+          <div className="flex justify-between items-start gap-3">
+            <div className="min-w-0">
+              <p className="text-[18px] font-semibold truncate">{stay.guest_name || 'Guest'}</p>
+              <p className="text-[13px] text-[#717171]">{stay.property_name}</p>
+            </div>
+            <button onClick={() => setPickedStay(null)} aria-label="Close" className="p-1 -mr-1 shrink-0">
+              <X className="w-5 h-5 text-[#717171]" />
+            </button>
+          </div>
+
+          <p className="text-[14px] text-[#717171] mt-2 tabular-nums">
+            {fmtDay(stay.check_in)} – {fmtDay(stay.check_out)}
+          </p>
+
+          {stay.num_guests != null &&
+          <p className="text-[14px] mt-2 flex items-center gap-1.5">
+              <Users className="w-4 h-4 text-[#717171]" />
+              {(stay.num_guests || 0) + (stay.children || 0)} guests
+              {stay.children ?
+            ` (${stay.num_guests} adults, ${stay.children} ${stay.children === 1 ? 'child' : 'children'})` :
+            ''}
+            </p>
+          }
+
+          {stay.special_requirements &&
+          <p className="mt-3 text-[14px] bg-[#F7F7F7] rounded-[8px] px-3 py-2.5">
+              {stay.special_requirements}
+            </p>
+          }
+        </div>
       </>);
 
   };
@@ -698,6 +693,7 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
       </div>
 
       {openJob && <Checklist job={openJob} onClose={() => setOpenJob(null)} />}
+      {staySheet()}
 
       <nav className="fixed bottom-0 inset-x-0 bg-white border-t border-[#EBEBEB] flex">
         {TABS.map(({ key, label, Icon }) =>
