@@ -18,6 +18,13 @@ const sent = [];
 
 function reset() {
   sent.length = 0;
+  // Stubbing the transport means simulating a channel that is switched
+  // on. notify() checks isConfigured() before it attempts anything, and
+  // that reads the environment, so the environment has to agree — a test
+  // asserting "the message went out" would otherwise assert against a
+  // WhatsApp that is turned off.
+  process.env.WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN || 'test-token';
+  process.env.WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID || 'test-phone-id';
   whatsapp.sendMessage = async (to, message) => {
     sent.push({ to, message, at: sent.length });
     return { ok: true, id: `wa-${sent.length}` };

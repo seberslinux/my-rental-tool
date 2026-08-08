@@ -14,6 +14,20 @@ function getClient() {
   });
 }
 
+/**
+ * Is there anything to send with?
+ *
+ * Without a token and a phone number id, every send is three HTTP
+ * attempts that cannot possibly succeed, two seconds apart, ending in
+ * "Invalid OAuth access token". Callers need to tell that apart from a
+ * real delivery failure: one means the channel is switched off, the
+ * other means it is broken. Only the second is worth alarming anybody
+ * about.
+ */
+function isConfigured() {
+  return Boolean(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
+}
+
 async function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -98,4 +112,4 @@ async function sendTemplateMessage(to, templateName, components = []) {
   }
 }
 
-module.exports = { sendMessage, sendTemplateMessage };
+module.exports = { sendMessage, sendTemplateMessage, isConfigured };

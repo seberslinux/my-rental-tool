@@ -408,3 +408,56 @@ test('a cleaner with no usable number is recorded, not lost', async () => {
   const hers = await recentForCleaner(cleaner.id);
   assert.equal(hers.length, 1, 'the app is the only place she will find this');
 });
+
+// --- the channel being off is not the channel being broken --------------
+
+test('with WhatsApp unconfigured, a cleaner message is in-app only, not failed', async () => {
+  // Every send would otherwise be three doomed HTTP attempts ending in
+  // "Invalid OAuth access token", and the cleaner's app would mark every
+  // message they own as undelivered.
+  await resetDb();
+  mockWa.reset();
+  const token = process.env.WHATSAPP_TOKEN;
+  const pid = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  delete process.env.WHATSAPP_TOKEN;
+  delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner({ phone: '+27821234567' });
+
+  const out = await notify({
+    event: 'job_assigned', title: 'You are cleaning on Friday',
+    propertyId: property.id, cleanerId: cleaner.id,
+  });
+
+  assert.equal(out.delivery, 'skipped', 'not "failed" — nothing is broken');
+  assert.match(out.deliveryError, /off/i);
+  assert.equal(mockWa.sent.length, 0, 'no doomed attempt is made at all');
+
+  const hers = await recentForCleaner(cleaner.id);
+  assert.equal(hers.length, 1, 'the app is the channel, and it worked');
+
+  if (token) process.env.WHATSAPP_TOKEN = token;
+  if (pid) process.env.WHATSAPP_PHONE_NUMBER_ID = pid;
+});
+
+test('an owner alert is likewise recorded rather than attempted', async () => {
+  await resetDb();
+  mockWa.reset();
+  const token = process.env.WHATSAPP_TOKEN;
+  delete process.env.WHATSAPP_TOKEN;
+  process.env.ADMIN_WHATSAPP = '+27831112222';
+
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+
+  const out = await notify({
+    event: 'job_declined', title: 'Jane declined', propertyId: property.id,
+  });
+  assert.equal(out.delivery, 'skipped');
+  assert.equal(mockWa.sent.length, 0);
+  assert.equal((await recent({})).length, 1);
+
+  if (token) process.env.WHATSAPP_TOKEN = token;
+});
