@@ -94,11 +94,16 @@ async function sendableEvents() {
 async function recipientsFor(propertyId) {
   const numbers = new Set();
 
+  // Only people who asked for it. The feed reaches everybody; WhatsApp
+  // reaches whoever turned it on. A channel nobody opted into is the
+  // fastest way to have it muted, after which the one message that
+  // mattered lands in a thread nobody opens.
   const rows = propertyId
     ? await getAll(
         `SELECT DISTINCT u.phone FROM users u
           WHERE u.phone IS NOT NULL AND u.phone <> ''
             AND COALESCE(u.active, 1) <> 0
+            AND COALESCE(u.notify_whatsapp, 0) <> 0
             AND (u.role = 'admin'
                  OR u.id = (SELECT owner_user_id FROM properties WHERE id = $1)
                  OR EXISTS (SELECT 1 FROM user_property_access a
@@ -107,7 +112,8 @@ async function recipientsFor(propertyId) {
       )
     : await getAll(
         `SELECT DISTINCT phone FROM users
-          WHERE phone IS NOT NULL AND phone <> '' AND COALESCE(active, 1) <> 0 AND role = 'admin'`
+          WHERE phone IS NOT NULL AND phone <> '' AND COALESCE(active, 1) <> 0
+            AND COALESCE(notify_whatsapp, 0) <> 0 AND role = 'admin'`
       );
 
   rows.forEach((r) => {
@@ -115,6 +121,7 @@ async function recipientsFor(propertyId) {
     if (n && !n.startsWith('0')) numbers.add(n);
   });
 
+  // A configured admin number still counts as somebody having asked.
   const fallback = normalizePhone(process.env.ADMIN_WHATSAPP || '');
   if (fallback && !fallback.startsWith('0')) numbers.add(fallback);
 
@@ -155,8 +162,10 @@ async function notify({
   if (shouldSend) {
     const numbers = await recipientsFor(propertyId);
     if (numbers.length === 0) {
-      delivery = 'failed';
-      deliveryError = 'Nobody has a phone number on file';
+      // Not a failure. The notification is in the feed, which is the
+      // record; nobody has simply asked to be messaged as well.
+      delivery = 'skipped';
+      deliveryError = 'Nobody has turned on WhatsApp alerts';
     } else {
       channel = 'whatsapp';
       const base = (process.env.APP_URL || '').replace(/\/$/, '');

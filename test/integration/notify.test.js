@@ -115,15 +115,17 @@ test('a failed send is recorded with the provider\'s own reason', async () => {
   assert.match(feed[0].delivery_error, /Session has expired/);
 });
 
-test('with nobody reachable it is recorded as failed, not quietly dropped', async () => {
+test('with nobody reachable it is still recorded, and says why nothing went out', async () => {
+  // Not a failure any more: in-app is the baseline channel, so an alert
+  // nobody asked to be messaged about has still been delivered.
   await resetDb();
   delete process.env.ADMIN_WHATSAPP;
   const owner = await seedUser({ role: 'admin' });
   const property = await seedProperty({ owner });
 
   const out = await notify({ event: 'job_declined', title: 'Jane declined', propertyId: property.id });
-  assert.equal(out.delivery, 'failed');
-  assert.match(out.deliveryError, /phone number/i);
+  assert.equal(out.delivery, 'skipped');
+  assert.match(out.deliveryError, /turned on/i);
 
   const feed = await recent({});
   assert.equal(feed.length, 1, 'still recorded — the event happened');
@@ -143,17 +145,19 @@ test('notify never throws, whatever the channel does', async () => {
 
 // --- who is reachable ----------------------------------------------------
 
-test('managers with a phone number are included, those without are not', async () => {
+test('only people who opted in are recipients', async () => {
   await resetDb();
   const owner = await seedUser({ role: 'admin', phone: '+27821110000' });
-  const silent = await seedUser({ role: 'property_manager' }); // no phone
+  await pool.query('UPDATE users SET notify_whatsapp = 1 WHERE id = $1', [owner.id]);
+  // Has a number, never asked to be messaged.
+  const quiet = await seedUser({ role: 'property_manager', phone: '+27821118888' });
   const property = await seedProperty({ owner });
 
   const numbers = await recipientsFor(property.id);
   assert.ok(numbers.includes('27821110000'));
-  assert.ok(numbers.includes('27831112222'), 'the admin fallback is still there');
-  assert.equal(numbers.length, 2, `unexpected recipients: ${numbers.join(', ')}`);
-  assert.ok(silent.id);
+  assert.ok(!numbers.includes('27821118888'), 'having a number is not consent');
+  assert.ok(numbers.includes('27831112222'), 'a configured admin number still counts');
+  assert.ok(quiet.id);
 });
 
 test('a number with no country code is dropped rather than guessed at', async () => {
@@ -237,4 +241,43 @@ test('without a template it still sends, and says the message may not land', asy
 
   const feed = await recent({});
   assert.match(feed[0].delivery_error, /WHATSAPP_ALERT_TEMPLATE/);
+});
+
+// --- the choice of channel ----------------------------------------------
+
+test('WhatsApp goes only to people who turned it on', async () => {
+  // A channel nobody asked for is the fastest way to have it muted, and
+  // then the one message that mattered lands in a thread nobody opens.
+  await resetDb();
+  delete process.env.ADMIN_WHATSAPP;
+  mockWa.reset();
+
+  const optedIn = await seedUser({ role: 'admin', phone: '+27821110000' });
+  await pool.query('UPDATE users SET notify_whatsapp = 1 WHERE id = $1', [optedIn.id]);
+  const optedOut = await seedUser({ role: 'admin', phone: '+27821119999' });
+
+  const property = await seedProperty({ owner: optedIn });
+  await notify({ event: 'job_declined', title: 'Jane declined', propertyId: property.id });
+
+  assert.equal(mockWa.sent.length, 1, 'one recipient, not both');
+  assert.equal(mockWa.sent[0].to, '27821110000');
+  assert.ok(optedOut.id);
+});
+
+test('with nobody opted in it is skipped, not failed', async () => {
+  // The feed still has it. Nobody has asked to be messaged as well, which
+  // is a choice rather than a fault.
+  await resetDb();
+  delete process.env.ADMIN_WHATSAPP;
+  mockWa.reset();
+  const owner = await seedUser({ role: 'admin', phone: '+27821110000' });
+  const property = await seedProperty({ owner });
+
+  const out = await notify({ event: 'job_declined', title: 'Jane declined', propertyId: property.id });
+  assert.equal(out.delivery, 'skipped');
+  assert.match(out.deliveryError, /turned on/i);
+  assert.equal(mockWa.sent.length, 0);
+
+  const feed = await recent({});
+  assert.equal(feed.length, 1, 'the record does not depend on the channel');
 });
