@@ -27,3 +27,28 @@ function reset() {
 reset();
 
 module.exports = { reset, sent };
+
+/**
+ * Template sends are recorded separately: app-initiated messages must be
+ * templates, so a test asserting "the cleaner was messaged" has to check
+ * this list and not `sent`.
+ */
+const templates = [];
+
+function resetTemplates(behaviour = 'ok') {
+  templates.length = 0;
+  whatsapp.sendTemplateMessage = async (to, name, components) => {
+    templates.push({ to, name, components });
+    if (behaviour === 'fail') {
+      const err = new Error('send failed');
+      err.response = { data: { error: { message: 'Session has expired' } } };
+      throw err;
+    }
+    return { ok: true, id: `wa-t-${templates.length}` };
+  };
+}
+
+resetTemplates();
+
+module.exports.templates = templates;
+module.exports.resetTemplates = resetTemplates;

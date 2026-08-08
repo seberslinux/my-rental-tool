@@ -226,3 +226,98 @@ test('inviting a cleaner who does not exist is a 404', async () => {
   const res = await invite(admin, 999999);
   assert.equal(res.status, 404);
 });
+
+// --- delivery over WhatsApp ---------------------------------------------
+
+const mockWa = require('../helpers/mock-whatsapp');
+
+test('the invitation is sent as a WhatsApp template, token in the button', async () => {
+  await resetDb();
+  mockWa.resetTemplates('ok');
+  process.env.WHATSAPP_TOKEN = 'test-token';
+  process.env.WHATSAPP_PHONE_NUMBER_ID = '123';
+  process.env.WHATSAPP_INVITE_TEMPLATE = 'cleaner_invite';
+
+  const owner = await seedUser({ role: 'admin' });
+  const cleaner = await seedCleaner({ name: 'Jane', phone: '+27821234567' });
+  const admin = await getAgent();
+  await loginAs(admin, owner);
+
+  const { body } = await invite(admin, cleaner.id).expect(201);
+  assert.equal(body.sent, true);
+
+  assert.equal(mockWa.templates.length, 1);
+  const msg = mockWa.templates[0];
+  assert.equal(msg.to, '27821234567', 'digits, no +');
+  assert.equal(msg.name, 'cleaner_invite');
+
+  // The token rides in the URL button so Meta renders a real button
+  // rather than a bare link in the body text.
+  const button = msg.components.find((c) => c.type === 'button');
+  assert.equal(button.sub_type, 'url');
+  assert.equal(button.parameters[0].text, tokenOf(body.url));
+
+  const bodyPart = msg.components.find((c) => c.type === 'body');
+  assert.equal(bodyPart.parameters[0].text, 'Jane');
+});
+
+test('a failed send is reported, and the link still works', async () => {
+  // The old assignment code swallowed send failures and carried on as
+  // though the cleaner had been told. The owner must be able to see it
+  // did not arrive, and still be able to pass the link on by hand.
+  await resetDb();
+  mockWa.resetTemplates('fail');
+  process.env.WHATSAPP_INVITE_TEMPLATE = 'cleaner_invite';
+
+  const owner = await seedUser({ role: 'admin' });
+  const cleaner = await seedCleaner({ phone: '+27821234567' });
+  const admin = await getAgent();
+  await loginAs(admin, owner);
+
+  const { body } = await invite(admin, cleaner.id).expect(201);
+  assert.equal(body.sent, false);
+  assert.match(body.reason, /Session has expired/);
+  assert.match(body.url, /\/invite\/.+/, 'the link is still returned');
+
+  await (await getAgent())
+    .post(`/api/auth/invite/${tokenOf(body.url)}`)
+    .send({ pin: '4821' })
+    .expect(200);
+});
+
+test('with WhatsApp unconfigured, the invitation is still issued', async () => {
+  await resetDb();
+  mockWa.resetTemplates('ok');
+  delete process.env.WHATSAPP_INVITE_TEMPLATE;
+
+  const owner = await seedUser({ role: 'admin' });
+  const cleaner = await seedCleaner({ phone: '+27821234567' });
+  const admin = await getAgent();
+  await loginAs(admin, owner);
+
+  const { body } = await invite(admin, cleaner.id).expect(201);
+  assert.equal(body.sent, false);
+  assert.match(body.reason, /not configured/i);
+  assert.equal(mockWa.templates.length, 0, 'nothing attempted');
+});
+
+test('a number with no country code is refused rather than guessed', async () => {
+  // "082…" cannot be addressed on WhatsApp — nothing in it says which
+  // country, and guessing is how a German number would acquire a South
+  // African prefix.
+  await resetDb();
+  mockWa.resetTemplates('ok');
+  process.env.WHATSAPP_TOKEN = 'test-token';
+  process.env.WHATSAPP_PHONE_NUMBER_ID = '123';
+  process.env.WHATSAPP_INVITE_TEMPLATE = 'cleaner_invite';
+
+  const owner = await seedUser({ role: 'admin' });
+  const cleaner = await seedCleaner({ phone: '082 123 4567' });
+  const admin = await getAgent();
+  await loginAs(admin, owner);
+
+  const { body } = await invite(admin, cleaner.id).expect(201);
+  assert.equal(body.sent, false);
+  assert.match(body.reason, /country code/i);
+  assert.equal(mockWa.templates.length, 0);
+});

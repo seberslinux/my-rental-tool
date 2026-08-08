@@ -3,6 +3,7 @@ const router = express.Router();
 const { getAll, getOne, run, transaction, inParams } = require('../db/database');
 const crypto = require('crypto');
 const { requireRole } = require('../middleware/auth');
+const { sendInviteLink } = require('../services/cleaner-notify');
 
 // Long enough that an owner can send it at their convenience, short
 // enough that a link forwarded once and forgotten does not stay live.
@@ -328,8 +329,9 @@ router.post('/jobs/assign', async (req, res) => {
  * replacement is sent.
  */
 router.post('/:id/invite', requireRole('admin', 'property_manager'), async (req, res) => {
-  const cleaner = await getOne('SELECT id, name FROM cleaners WHERE id = $1', [req.params.id]);
-  if (!cleaner) return res.status(404).json({ error: 'Cleaner not found' });
+  const full = await getOne('SELECT id, name, phone FROM cleaners WHERE id = $1', [req.params.id]);
+  if (!full) return res.status(404).json({ error: 'Cleaner not found' });
+  const cleaner = full;
 
   const token = crypto.randomBytes(32).toString('base64url');
 
@@ -346,10 +348,22 @@ router.post('/:id/invite', requireRole('admin', 'property_manager'), async (req,
   });
 
   const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+
+  // WhatsApp is how cleaners are talked to, so the app sends it rather
+  // than leaving the owner to copy a link. The outcome is reported
+  // instead of swallowed: the assignment code caught send errors, logged
+  // them and carried on as though the cleaner had been told, which is
+  // why every job in production still reads notified = 0. The link comes
+  // back either way, so a failed send costs the owner a paste, not the
+  // invitation.
+  const delivery = await sendInviteLink({ cleaner: full, token });
+
   res.status(201).json({
     url: `${base}/invite/${token}`,
     expires_in_days: INVITE_VALID_DAYS,
     cleaner_name: cleaner.name,
+    sent: delivery.sent,
+    reason: delivery.reason,
   });
 });
 
