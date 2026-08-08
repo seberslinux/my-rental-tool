@@ -3,7 +3,6 @@ const { runPricingEngine } = require('../services/pricing');
 const { sendCheckinMessages, sendCheckoutMessages } = require('../services/messaging');
 const { runAssignmentForAllCheckouts } = require('../services/cleaner-assignment');
 const { getAll, getOne, run } = require('../db/database');
-const whatsapp = require('../services/whatsapp');
 const { notify } = require('../services/notify');
 
 // Daily at 6:00 AM SAST (UTC+2) = 4:00 AM UTC — run pricing engine
@@ -99,13 +98,14 @@ cron.schedule('*/15 * * * *', async () => {
           `Time: ${job.start_time} - ${job.end_time}\n` +
           guestInfo;
 
-        let delivered = false;
-        try {
-          await whatsapp.sendMessage(job.cleaner_phone, message);
-          delivered = true;
-        } catch (err) {
-          console.error(`Failed to send reminder to ${job.cleaner_name}:`, err.message);
-        }
+        const toCleaner = await notify({
+          event: 'job_reminder',
+          title: `${job.property_name} in an hour`,
+          body: message,
+          propertyId: job.property_id, cleanerId: job.cid, jobId: job.id,
+          link: '/',
+        });
+        const delivered = toCleaner.delivery === 'sent';
 
         // Marked either way. Retrying every fifteen minutes against a
         // channel that is down would bury the cleaner in duplicates the
@@ -168,11 +168,13 @@ cron.schedule('0 6 * * *', async () => {
           (guestInfo ? guestInfo + '\n' : '') +
           (specialReq ? specialReq + '\n' : '');
 
-        try {
-          await whatsapp.sendMessage(job.cleaner_phone, message.trim());
-        } catch (err) {
-          console.error(`Failed to send ${label} notice to ${job.cleaner_name}:`, err.message);
-        }
+        await notify({
+          event: 'job_upcoming',
+          title: `${label} ${job.property_name}`,
+          body: message.trim(),
+          propertyId: job.property_id, cleanerId: job.cleaner_id, jobId: job.id,
+          link: '/',
+        });
       }
     };
 

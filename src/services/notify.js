@@ -45,10 +45,22 @@ const whatsapp = require('./whatsapp');
 const { normalizePhone } = require('./phone');
 
 /**
- * What each event is, and whether it interrupts anybody.
+ * What each event is, whether it interrupts anybody, and who it is for.
  *
  * Adding an event means adding a line here rather than a send call
  * somewhere in a route — which is how the old ones drifted apart.
+ *
+ * Most of these are the owner's: they report on the property and the
+ * people working on it. A few are the cleaner's own — their job, their
+ * shift, their reminder — and those have `audience: 'cleaner'`.
+ *
+ * The distinction decides three things at once: whose phone it goes to,
+ * whose feed it appears in, and whether it interrupts. For the owner,
+ * WhatsApp is the exception channel and the feed is the record. For the
+ * cleaner it is the other way round: they are not sitting in front of
+ * this app, so a job they have been given has to reach their phone
+ * whatever its severity. A cleaner who is not told is a property that is
+ * not cleaned.
  */
 const EVENTS = {
   cleaning_started: { severity: 'info' },
@@ -64,6 +76,18 @@ const EVENTS = {
   cleaning_overdue: { severity: 'attention' },
   issue_reported: { severity: 'attention' },
   supplies_needed: { severity: 'attention' },
+
+  // The cleaner's own. Each of these replaces a bare whatsapp.sendMessage
+  // that reported nothing and was recorded nowhere — which is how every
+  // job in production came to read notified = 0 while the app said it had
+  // been assigned.
+  job_assigned: { severity: 'attention', audience: 'cleaner' },
+  job_cancelled: { severity: 'attention', audience: 'cleaner' },
+  // A clean that moved day. Nothing told the cleaner at all before: the
+  // date simply changed underneath them.
+  job_rescheduled: { severity: 'attention', audience: 'cleaner' },
+  job_reminder: { severity: 'attention', audience: 'cleaner' },
+  job_upcoming: { severity: 'info', audience: 'cleaner' },
 };
 
 /**
@@ -85,6 +109,25 @@ async function sendableEvents() {
   if (!raw) return null; // null means "use the severity default"
   if (raw === 'all') return Object.keys(EVENTS);
   return raw.split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * The cleaner's own number.
+ *
+ * Deliberately not routed through the opt-in that governs owners. That
+ * setting is somebody choosing whether to hear about their business; this
+ * is the only way a cleaner learns they have been given a shift, and a
+ * cleaner who is not told is a property that is not cleaned. If they
+ * should stop receiving work, the answer is to unassign them, not to
+ * leave them assigned and silent.
+ */
+async function cleanerRecipients(cleanerId) {
+  if (!cleanerId) return [];
+  const row = await getOne('SELECT phone FROM cleaners WHERE id = $1', [cleanerId]);
+  const n = normalizePhone(row && row.phone || '');
+  // A local number with no country code cannot be dialled by the API, and
+  // guessing a country from a leading zero is how you message a stranger.
+  return n && !n.startsWith('0') ? [n] : [];
 }
 
 /**
@@ -154,21 +197,33 @@ async function notify({
     console.error(`notify: unknown event "${event}" — recording it as info`);
   }
   const severity = spec ? spec.severity : 'info';
+  const audience = spec && spec.audience === 'cleaner' ? 'cleaner' : 'owner';
 
+  // The owner's events are filtered for noise; the cleaner's are not.
+  // Two properties produce roughly four check-in and check-out events a
+  // day and an owner mutes that within a week, so their WhatsApp is kept
+  // for exceptions. A cleaner only ever hears about their own shifts, and
+  // every one of them is something they have to act on.
   const configured = await sendableEvents();
-  const shouldSend = configured ? configured.includes(event) : severity === 'attention';
+  const shouldSend = audience === 'cleaner' ?
+  true :
+  configured ? configured.includes(event) : severity === 'attention';
 
   let delivery = 'skipped';
   let deliveryError = null;
   let channel = 'in_app';
 
   if (shouldSend) {
-    const numbers = await recipientsFor(propertyId);
+    const numbers = audience === 'cleaner' ?
+    await cleanerRecipients(cleanerId) :
+    await recipientsFor(propertyId);
     if (numbers.length === 0) {
       // Not a failure. The notification is in the feed, which is the
       // record; nobody has simply asked to be messaged as well.
       delivery = 'skipped';
-      deliveryError = 'Nobody has turned on WhatsApp alerts';
+      deliveryError = audience === 'cleaner' ?
+      'No usable phone number for this cleaner' :
+      'Nobody has turned on WhatsApp alerts';
     } else {
       channel = 'whatsapp';
       const base = (process.env.APP_URL || '').replace(/\/$/, '');
@@ -224,9 +279,9 @@ async function notify({
   try {
     await run(
       `INSERT INTO notifications
-         (event, property_id, cleaner_id, job_id, title, body, link, severity, channel, delivery, delivery_error)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-      [event, propertyId, cleanerId, jobId, title, body, link, severity, channel, delivery, deliveryError]
+         (event, property_id, cleaner_id, job_id, title, body, link, severity, audience, channel, delivery, delivery_error)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      [event, propertyId, cleanerId, jobId, title, body, link, severity, audience, channel, delivery, deliveryError]
     );
   } catch (err) {
     // The last resort. If even recording fails, say so loudly rather
@@ -234,7 +289,7 @@ async function notify({
     console.error(`notify: could not record ${event} — ${err.message}`);
   }
 
-  return { severity, delivery, deliveryError };
+  return { severity, audience, delivery, deliveryError };
 }
 
 /** The activity feed, newest first. */
@@ -251,11 +306,33 @@ async function recent({ limit = 50, propertyIds = null } = {}) {
        FROM notifications n
        LEFT JOIN properties p ON p.id = n.property_id
        LEFT JOIN cleaners c ON c.id = n.cleaner_id
-      WHERE 1 = 1${scope}
+      WHERE n.audience = 'owner'${scope}
       ORDER BY n.created_at DESC
       LIMIT $1`,
     params
   );
 }
 
-module.exports = { notify, recent, recipientsFor, EVENTS };
+/**
+ * One cleaner's own feed.
+ *
+ * Scoped by audience as well as by id, because cleaner_id is also set on
+ * the owner's rows — "Jane declined Friday" is about Jane and for the
+ * owner. Matching on the id alone would show her the commentary on her
+ * own work.
+ */
+async function recentForCleaner(cleanerId, { limit = 50 } = {}) {
+  if (!cleanerId) return [];
+  return getAll(
+    `SELECT n.id, n.event, n.title, n.body, n.link, n.severity,
+            n.delivery, n.created_at, n.read_at, p.name AS property_name
+       FROM notifications n
+       LEFT JOIN properties p ON p.id = n.property_id
+      WHERE n.audience = 'cleaner' AND n.cleaner_id = $1
+      ORDER BY n.created_at DESC
+      LIMIT $2`,
+    [cleanerId, Math.min(Number(limit) || 50, 200)]
+  );
+}
+
+module.exports = { notify, recent, recentForCleaner, recipientsFor, EVENTS };

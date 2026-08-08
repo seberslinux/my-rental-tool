@@ -7,7 +7,7 @@ const { getAll, getOne, run, transaction, inParams } = require('../db/database')
 const { checkCleaningWindow } = require('../services/cleaning-window');
 // One place decides who hears about what — see the module header for why
 // four separate send calls is how the old ones drifted apart.
-const { notify } = require('../services/notify');
+const { notify, recentForCleaner } = require('../services/notify');
 
 // Resolve the cleaner record for the logged-in user
 async function getMyCleanerRecord(req) {
@@ -370,6 +370,28 @@ router.post('/overrides', requireCleaner, async (req, res) => {
   });
 
   res.json({ date, available: !!available });
+});
+
+/**
+ * The cleaner's own feed.
+ *
+ * Everything they have been told, whether or not the message reached
+ * their phone. That second half is the point: WhatsApp accepts text it
+ * then drops outside a 24-hour window, so "we sent it" has never meant
+ * "they saw it". A cleaner who opens the app can now see the shift they
+ * were never told about.
+ */
+router.get('/notifications', requireCleaner, async (req, res) => {
+  res.json(await recentForCleaner(req.cleaner.id));
+});
+
+router.post('/notifications/read-all', requireCleaner, async (req, res) => {
+  await run(
+    `UPDATE notifications SET read_at = NOW()
+      WHERE cleaner_id = $1 AND audience = 'cleaner' AND read_at IS NULL`,
+    [req.cleaner.id]
+  );
+  res.json({ ok: true });
 });
 
 router.delete('/overrides/:id', requireCleaner, async (req, res) => {
