@@ -1,0 +1,31 @@
+# Postgres for local development.
+#
+# Start:  npm run local:db
+# Stop:   docker compose -f docker-compose.local.yml down       (keeps data)
+# Wipe:   docker compose -f docker-compose.local.yml down -v    (deletes data)
+#
+# Separate from docker-compose.test.yml on purpose. That one runs on 5433
+# with its data in RAM and is wiped between test runs — sharing it would
+# mean `npm test` silently deleting whatever you were looking at.
+services:
+  local-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: rental_local
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d rental_local"]
+      interval: 1s
+      timeout: 3s
+      retries: 15
+    volumes:
+      # Persisted, unlike the test database — a local sandbox you have set
+      # up the way you like should survive a restart.
+      - rental-local-db:/var/lib/postgresql/data
+
+volumes:
+  rental-local-db:

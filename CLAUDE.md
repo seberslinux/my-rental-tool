@@ -37,6 +37,25 @@ railway run npm start
 ```
 Open `http://localhost:5173` (Vite proxies API calls to the backend).
 
+**Option C — Local sandbox (no Railway, no production data):**
+```bash
+npm run local
+```
+Starts a Postgres container on 5434, seeds it, builds the client and runs
+the server on `http://localhost:3000`.
+
+Sign in as `owner@local.test` / `password123`, or as the cleaner on the
+Phone tab with `082 123 4567` / PIN `1234`.
+
+Use this rather than `railway run` for anything that writes. `railway run`
+points at the **production** database — issuing an invitation, tapping
+"Start cleaning" or saving a property there changes real rows, and a new
+migration applies itself to production the moment the server boots.
+
+`npm run local:seed` reseeds without restarting; `npm run local:reset`
+wipes the database and starts over. The seed refuses to run against a
+non-local `DATABASE_URL`.
+
 **Option B — Production-like build:**
 ```bash
 cd client && npm install && npm run build
