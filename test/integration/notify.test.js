@@ -187,3 +187,54 @@ test('an unknown event is still recorded rather than lost', async () => {
   assert.equal(feed.length, 1);
   assert.equal(feed[0].severity, 'info');
 });
+
+// --- template delivery ---------------------------------------------------
+
+test('an alert goes out as a template when one is configured', async () => {
+  // Free-form text is accepted by Meta and silently dropped outside a
+  // 24-hour window — a message id comes back and nothing arrives. A
+  // template is the only shape that lands whatever the window is doing.
+  await resetDb();
+  process.env.WHATSAPP_ALERT_TEMPLATE = 'rental_alert';
+  mockWa.resetTemplates('ok');
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+
+  const out = await notify({
+    event: 'job_declined',
+    title: 'Jane cannot clean Hill Top Lodge on Friday',
+    body: 'Somebody else will need to cover it.',
+    propertyId: property.id,
+    link: '/cleaners',
+  });
+
+  assert.equal(out.delivery, 'sent');
+  assert.equal(out.deliveryError, null, 'no caveat when a template was used');
+  assert.equal(mockWa.templates.length, 1);
+  assert.equal(mockWa.templates[0].name, 'rental_alert');
+
+  // Everything in one variable, joined — template parameters cannot
+  // contain newlines.
+  const param = mockWa.templates[0].components[0].parameters[0].text;
+  assert.match(param, /Jane cannot clean/);
+  assert.ok(!param.includes('\n'), 'no newlines in a template variable');
+
+  delete process.env.WHATSAPP_ALERT_TEMPLATE;
+});
+
+test('without a template it still sends, and says the message may not land', async () => {
+  await resetDb();
+  delete process.env.WHATSAPP_ALERT_TEMPLATE;
+  mockWa.reset();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+
+  const out = await notify({ event: 'job_declined', title: 'Jane declined', propertyId: property.id });
+
+  assert.equal(out.delivery, 'sent');
+  assert.match(out.deliveryError, /24h window/,
+    'recording a clean success here would repeat the blindness this module exists to end');
+
+  const feed = await recent({});
+  assert.match(feed[0].delivery_error, /WHATSAPP_ALERT_TEMPLATE/);
+});

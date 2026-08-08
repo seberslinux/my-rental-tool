@@ -67,7 +67,12 @@ async function sendTemplateMessage(to, templateName, components = []) {
     type: 'template',
     template: {
       name: templateName,
-      language: { code: 'en' },
+      // Meta registers templates against a full locale. Every one on this
+      // account is en_US, and 'en' is not a synonym — it fails outright
+      // with "Template name does not exist in the translation", which
+      // reads like a missing template rather than a wrong language and
+      // sent me looking in the wrong place.
+      language: { code: process.env.WHATSAPP_TEMPLATE_LANG || 'en_US' },
       components,
     },
   };

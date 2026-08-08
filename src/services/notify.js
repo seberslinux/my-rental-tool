@@ -20,6 +20,17 @@
  * somebody to act: a cleaner said no, nobody is assigned, a clean has
  * not started when it should have, something is broken.
  *
+ * ## Why a template rather than plain text
+ *
+ * WhatsApp only delivers free-form messages inside a 24-hour window that
+ * opens when the recipient messages you. Outside it Meta accepts the
+ * call, hands back a message id, and delivers nothing. That is worse
+ * than an error: every signal says it worked. Set
+ * WHATSAPP_ALERT_TEMPLATE to an approved template with a single body
+ * variable and alerts arrive whether or not a window is open; without
+ * it, sends still go out and the row says plainly that they may not
+ * land.
+ *
  * ## Delivery is reported, never swallowed
  *
  * A notification row is written whether or not a send is attempted, and
@@ -151,10 +162,29 @@ async function notify({
       const base = (process.env.APP_URL || '').replace(/\/$/, '');
       const url = link && base ? `${base}${link}` : null;
       const text = [title, body, url].filter(Boolean).join('\n');
+
+      // Template, not free text.
+      //
+      // WhatsApp only delivers free-form messages inside a 24-hour window
+      // that opens when the recipient messages you. Outside it, Meta
+      // accepts the call, returns a message id, and delivers nothing —
+      // the worst possible failure, because every signal says it worked.
+      // We watched two "successful" sends go nowhere before a template
+      // arrived first time.
+      //
+      // Variables cannot contain newlines, so the pieces are joined with
+      // a separator rather than laid out in lines.
+      const templateName = process.env.WHATSAPP_ALERT_TEMPLATE;
       const failures = [];
       for (const to of numbers) {
         try {
-          await whatsapp.sendMessage(to, text);
+          if (templateName) {
+            await whatsapp.sendTemplateMessage(to, templateName, [
+              { type: 'body', parameters: [{ type: 'text', text: [title, body, url].filter(Boolean).join(' · ') }] },
+            ]);
+          } else {
+            await whatsapp.sendMessage(to, text);
+          }
         } catch (err) {
           failures.push(err.response?.data?.error?.message || err.message);
         }
@@ -164,7 +194,14 @@ async function notify({
         deliveryError = failures[0];
       } else {
         delivery = 'sent';
-        if (failures.length) deliveryError = `${failures.length} of ${numbers.length} failed: ${failures[0]}`;
+        if (failures.length) {
+          deliveryError = `${failures.length} of ${numbers.length} failed: ${failures[0]}`;
+        } else if (!templateName) {
+          // Recorded as sent because Meta accepted it, with the caveat
+          // attached. Claiming a clean success here would repeat exactly
+          // the blindness this module exists to end.
+          deliveryError = 'Sent as free-form text — WhatsApp drops these outside a 24h window. Set WHATSAPP_ALERT_TEMPLATE.';
+        }
       }
     }
     if (delivery === 'failed') {
