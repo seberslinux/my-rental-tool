@@ -27,6 +27,7 @@ const { syncRates } = require('../services/rate-sync');
 // than growing its own, so a booking cannot be worth one number here and
 // another in a report.
 const { calcDeductions } = require('../services/analytics-calc');
+const { recent: recentNotifications } = require('../services/notify');
 
 /**
  * calcDeductions' input contract, as SQL.
@@ -224,6 +225,78 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
     console.error('Booking sync failed:', err.message);
     res.status(500).json({ error: err.message });
   }
+});
+
+/**
+ * The activity feed.
+ *
+ * In-app is the baseline channel: everything the app decides is worth
+ * saying lands here whether or not anybody chose to be messaged as well.
+ * Scoped to the properties the caller can see, so a manager with one
+ * property does not read about another.
+ */
+router.get('/notifications', scopeProperties, async (req, res) => {
+  const rows = await recentNotifications({
+    limit: req.query.limit,
+    propertyIds: req.accessiblePropertyIds,
+  });
+  const unread = rows.filter((n) => !n.read_at).length;
+  res.json({ notifications: rows, unread });
+});
+
+/** Mark one as read. */
+router.post('/notifications/:id/read', scopeProperties, async (req, res) => {
+  await run('UPDATE notifications SET read_at = NOW() WHERE id = $1 AND read_at IS NULL', [req.params.id]);
+  res.json({ ok: true });
+});
+
+/** Mark everything read — the only humane option on a busy feed. */
+router.post('/notifications/read-all', scopeProperties, async (req, res) => {
+  await run('UPDATE notifications SET read_at = NOW() WHERE read_at IS NULL');
+  res.json({ ok: true });
+});
+
+/**
+ * How this person wants to hear about things.
+ *
+ * In-app cannot be turned off, so it is not offered as a choice — the
+ * feed is the record. WhatsApp is the decision, and it is per person
+ * rather than per installation: an owner who wants their phone buzzing
+ * and a manager who does not are both reasonable.
+ */
+router.get('/notifications/preferences', async (req, res) => {
+  if (!req.user) return res.status(403).json({ error: 'Not available for cleaner sessions' });
+  const row = await getOne('SELECT phone, notify_whatsapp FROM users WHERE id = $1', [req.user.id]);
+  res.json({
+    whatsapp: !!(row && row.notify_whatsapp),
+    // Turning it on without a number would be a setting that silently
+    // does nothing, so the client is told.
+    has_phone: !!(row && row.phone && row.phone.trim()),
+  });
+});
+
+router.put('/notifications/preferences', async (req, res) => {
+  if (!req.user) return res.status(403).json({ error: 'Not available for cleaner sessions' });
+  const wanted = req.body.whatsapp ? 1 : 0;
+  if (wanted) {
+    const row = await getOne('SELECT phone FROM users WHERE id = $1', [req.user.id]);
+    if (!row || !row.phone || !row.phone.trim()) {
+      return res.status(400).json({ error: 'Add your phone number first, otherwise there is nowhere to send.' });
+    }
+  }
+  await run('UPDATE users SET notify_whatsapp = $1 WHERE id = $2', [wanted, req.user.id]);
+  res.json({ whatsapp: !!wanted });
+});
+
+/** Your own phone number, which is what WhatsApp alerts need. */
+router.put('/notifications/phone', async (req, res) => {
+  if (!req.user) return res.status(403).json({ error: 'Not available for cleaner sessions' });
+  const phone = String(req.body.phone || '').trim();
+  if (phone && !/^\+\d{10,15}$/.test(phone)) {
+    return res.status(400).json({ error: 'Use the full international form, e.g. +27821234567' });
+  }
+  await run('UPDATE users SET phone = $1 WHERE id = $2', [phone || null, req.user.id]);
+  res.json({ phone: phone || null });
 });
 
 // Get all bookings from local DB

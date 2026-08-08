@@ -16,6 +16,7 @@ interface TopNavProps {
   onTabChange: (tab: string) => void;
   onRefresh?: () => Promise<void>;
   hasNotifications?: boolean;
+  onOpenNotifications?: () => void;
   syncedLabel?: string;
   propertyFilter?: {
     properties: { id: number; name: string }[];
@@ -25,7 +26,7 @@ interface TopNavProps {
 }
 
 // Desktop-only top navigation (hidden below lg). Mirrors the mobile TabBar's tabs.
-export function TopNav({ activeTab, onTabChange, onRefresh, hasNotifications, syncedLabel, propertyFilter }: TopNavProps) {
+export function TopNav({ activeTab, onTabChange, onRefresh, hasNotifications, onOpenNotifications, syncedLabel, propertyFilter }: TopNavProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = async () => {
     if (isRefreshing) return;
@@ -102,7 +103,10 @@ export function TopNav({ activeTab, onTabChange, onRefresh, hasNotifications, sy
             className={`w-[18px] h-[18px] ${isRefreshing ? 'animate-spin' : ''}`}
             strokeWidth={1.5} />
         </button>
-        <button className="w-9 h-9 rounded-full border border-[#EBEBEB] bg-white flex items-center justify-center text-[#222222] hover:bg-[#F7F7F7] transition-colors relative">
+        <button
+          onClick={onOpenNotifications}
+          aria-label="Notifications"
+          className="w-9 h-9 rounded-full border border-[#EBEBEB] bg-white flex items-center justify-center text-[#222222] hover:bg-[#F7F7F7] transition-colors relative">
           <Bell className="w-[18px] h-[18px]" strokeWidth={1.5} />
           {hasNotifications &&
           <span className="absolute top-[-1px] right-[-1px] w-2 h-2 rounded-full bg-[#D93900] border-2 border-white"></span>

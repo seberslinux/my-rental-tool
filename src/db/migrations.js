@@ -298,6 +298,14 @@ async function runMigrations() {
     ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
     ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 
+    -- How each person wants to hear about things.
+    --
+    -- In-app is the baseline and cannot be switched off: the feed is the
+    -- record, and a record you can opt out of is not one. WhatsApp is
+    -- opt-in per person, because a channel somebody did not ask for is
+    -- the fastest way to have them mute it.
+    ALTER TABLE users ADD COLUMN IF NOT EXISTS notify_whatsapp INTEGER NOT NULL DEFAULT 0;
+
     -- Every notification the app decides to send, and what became of it.
     --
     -- Four call sites used to reach for whatsapp.sendMessage directly and
@@ -332,6 +340,13 @@ async function runMigrations() {
     );
 
     CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications (created_at DESC);
+
+    -- Explicit, because a column added inside CREATE TABLE IF NOT EXISTS
+    -- reaches only databases that did not have the table yet. Any
+    -- environment created between the table landing and the column being
+    -- added would silently never get it, and the failure appears far
+    -- from the cause.
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS link TEXT;
 
     -- One-time invitations that let a cleaner set their own PIN.
     --

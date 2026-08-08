@@ -12,6 +12,7 @@ import { AnalyticsPage } from './components/AnalyticsPage';
 import { LoginPage } from './components/LoginPage';
 import { InvitePage } from './components/InvitePage';
 import { CleanerDashboard } from './components/CleanerDashboard';
+import { NotificationsPanel } from './components/NotificationsPanel';
 import { CleanersPage } from './components/CleanersPage';
 import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
@@ -26,6 +27,8 @@ import { loadAnalyticsData } from './data/analytics';
 const SHOWS_PROPERTY_FILTER = new Set(['home', 'analytics']);
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [unread, setUnread] = useState(0);
   // /invite/<token> — read once at mount, before anything else decides
   // what to render.
   const [inviteToken, setInviteToken] = useState<string | null>(() => {
@@ -83,6 +86,22 @@ export function App() {
     }
     setDataLoaded(true);
   }, []);
+
+  // The unread count on the bell. Polled rather than pushed — a manager
+  // has the app open for minutes at a time, and a minute of staleness on
+  // a badge costs nothing next to a socket to maintain.
+  useEffect(() => {
+    if (!isLoggedIn || userRole === 'cleaner') return;
+    let alive = true;
+    const read = () =>
+    fetch('/api/notifications', { credentials: 'same-origin' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive && d) setUnread(d.unread || 0); })
+      .catch(() => {});
+    read();
+    const t = setInterval(read, 60000);
+    return () => { alive = false; clearInterval(t); };
+  }, [isLoggedIn, userRole, showNotifications]);
 
   useEffect(() => {
     // Not for cleaners: every one of these calls is a manager endpoint
@@ -179,7 +198,8 @@ export function App() {
       <TopNav
         activeTab={activeTab}
         onTabChange={setActiveTab}
-        hasNotifications={attentionCount > 0}
+        hasNotifications={attentionCount > 0 || unread > 0}
+        onOpenNotifications={() => setShowNotifications(true)}
         syncedLabel={syncedLabel}
         propertyFilter={SHOWS_PROPERTY_FILTER.has(activeTab) ? {
           properties: properties.map((p) => ({ id: p.id, name: p.name })),
@@ -211,7 +231,8 @@ export function App() {
           await fetch('/api/sync/bookings', { method: 'POST', credentials: 'same-origin' });
           await loadData();
         }}
-        hasNotifications={attentionCount > 0}
+        hasNotifications={attentionCount > 0 || unread > 0}
+        onOpenNotifications={() => setShowNotifications(true)}
         syncedLabel={syncedLabel} />
       }
 
@@ -251,6 +272,12 @@ export function App() {
         onClose={() => setSelectedBooking(null)} />
 
       }
+    {showNotifications &&
+      <NotificationsPanel
+        onClose={() => setShowNotifications(false)}
+        onRead={() => setUnread(0)} />
+      }
+
     </div>);
 
 }
