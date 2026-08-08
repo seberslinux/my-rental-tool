@@ -137,15 +137,83 @@ router.post('/jobs/:jobId/ready', requireCleaner, async (req, res) => {
 });
 
 // Update job status
+/**
+ * Accept or decline a job, or move it along.
+ *
+ * "declined" is new. The old set — pending, confirmed, completed, ready —
+ * gave a cleaner no way to say no, so somebody who could not make it left
+ * the job sitting at pending, indistinguishable from one they had not
+ * read. An owner cannot reassign what looks unread.
+ */
+const JOB_STATUSES = ['pending', 'confirmed', 'declined', 'in_progress', 'completed', 'ready'];
+
 router.put('/jobs/:jobId/status', requireCleaner, async (req, res) => {
   const { status } = req.body;
-  if (!['pending', 'confirmed', 'completed', 'ready'].includes(status)) {
+  if (!JOB_STATUSES.includes(status)) {
     return res.status(400).json({ error: 'Invalid status' });
   }
   const job = await getOne('SELECT * FROM cleaning_jobs WHERE id = $1 AND cleaner_id = $2', [req.params.jobId, req.cleaner.id]);
   if (!job) return res.status(404).json({ error: 'Job not found' });
   await run('UPDATE cleaning_jobs SET status = $1 WHERE id = $2', [status, job.id]);
   res.json({ updated: true });
+});
+
+/**
+ * Check in: the cleaner is at the property and starting.
+ *
+ * The time is taken from the server, not the request. A phone with a
+ * wrong clock — or a cleaner filling in yesterday's jobs from the sofa —
+ * would otherwise decide when the property was turned over, which is the
+ * fact the next check-in depends on.
+ *
+ * Repeating it does not move the start time. Someone tapping twice on a
+ * slow connection should not lose the minutes they have worked.
+ */
+router.post('/jobs/:jobId/start', requireCleaner, async (req, res) => {
+  const job = await getOne(
+    'SELECT * FROM cleaning_jobs WHERE id = $1 AND cleaner_id = $2',
+    [req.params.jobId, req.cleaner.id]
+  );
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (job.started_at) {
+    return res.json({ started_at: job.started_at, already: true });
+  }
+  const updated = await getOne(
+    `UPDATE cleaning_jobs SET started_at = NOW(), status = 'in_progress'
+      WHERE id = $1 AND started_at IS NULL
+      RETURNING started_at`,
+    [job.id]
+  );
+  res.json({ started_at: updated ? updated.started_at : job.started_at });
+});
+
+/**
+ * Check out: the clean is finished.
+ *
+ * Finishing without having started is allowed and back-fills the start
+ * from the scheduled time — a cleaner who forgot to tap on arrival should
+ * still be able to record that the property is done, and losing the
+ * finish time to enforce an order would help nobody.
+ */
+router.post('/jobs/:jobId/finish', requireCleaner, async (req, res) => {
+  const job = await getOne(
+    'SELECT * FROM cleaning_jobs WHERE id = $1 AND cleaner_id = $2',
+    [req.params.jobId, req.cleaner.id]
+  );
+  if (!job) return res.status(404).json({ error: 'Job not found' });
+  if (job.completed_at) {
+    return res.json({ completed_at: job.completed_at, already: true });
+  }
+  const updated = await getOne(
+    `UPDATE cleaning_jobs
+        SET completed_at = NOW(),
+            started_at = COALESCE(started_at, (cleaning_date || ' ' || start_time)::timestamptz),
+            status = 'completed'
+      WHERE id = $1 AND completed_at IS NULL
+      RETURNING started_at, completed_at`,
+    [job.id]
+  );
+  res.json(updated || { completed_at: job.completed_at });
 });
 
 // Availability
@@ -292,22 +360,54 @@ router.get('/inventory/checks/:jobId', requireCleaner, async (req, res) => {
 // Shopping list
 router.get('/shopping-list', async (req, res) => {
   const items = await getAll(
-    `SELECT s.*, p.name as property_name, u.name as added_by_name
+    // Both joins are outer. An inner join on users silently dropped every
+    // row a cleaner added, since added_by is null for them — the request
+    // would have been saved and then never shown to anybody.
+    `SELECT s.*, p.name as property_name,
+            COALESCE(u.name, c.name) as added_by_name
      FROM shopping_list s
      LEFT JOIN properties p ON s.property_id = p.id
-     JOIN users u ON s.added_by = u.id
+     LEFT JOIN users u ON s.added_by = u.id
+     LEFT JOIN cleaners c ON s.added_by_cleaner_id = c.id
      ORDER BY s.status ASC, s.created_at DESC`
   );
   res.json(items);
 });
 
+/**
+ * Ask for something the property has run out of.
+ *
+ * This used to refuse a PIN cleaner outright — "Shopping list not
+ * available for PIN-auth cleaners" — because added_by is a foreign key
+ * to users and they have no user row. The person who runs out of bin
+ * liners is precisely the person standing in the kitchen, so the request
+ * is now recorded against whichever of the two the requester is.
+ */
 router.post('/shopping-list', async (req, res) => {
-  if (!req.user) return res.status(403).json({ error: 'Shopping list not available for PIN-auth cleaners' });
+  const cleaner = await getMyCleanerRecord(req);
+  if (!req.user && !cleaner) return res.status(403).json({ error: 'Not signed in' });
+
   const { property_id, item_name, quantity, unit, notes } = req.body;
   if (!item_name) return res.status(400).json({ error: 'item_name required' });
+
+  // A cleaner may only ask for a property they actually work at.
+  if (!req.user && property_id) {
+    const access = await getOne(
+      'SELECT 1 FROM cleaner_properties WHERE cleaner_id = $1 AND property_id = $2',
+      [cleaner.id, property_id]
+    );
+    if (!access) return res.status(403).json({ error: 'No access to this property' });
+  }
+
   const result = await run(
-    'INSERT INTO shopping_list (property_id, item_name, quantity, unit, added_by, notes) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-    [property_id || null, item_name, quantity || 1, unit || '', req.user.id, notes || '']
+    `INSERT INTO shopping_list (property_id, item_name, quantity, unit, added_by, added_by_cleaner_id, notes)
+     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+    [
+      property_id || null, item_name, quantity || 1, unit || '',
+      req.user ? req.user.id : null,
+      req.user ? null : cleaner.id,
+      notes || '',
+    ]
   );
   res.status(201).json({ id: result.rows[0].id });
 });
