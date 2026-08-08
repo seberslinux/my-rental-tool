@@ -4,6 +4,7 @@ const { sendCheckinMessages, sendCheckoutMessages } = require('../services/messa
 const { runAssignmentForAllCheckouts } = require('../services/cleaner-assignment');
 const { getAll, getOne, run } = require('../db/database');
 const whatsapp = require('../services/whatsapp');
+const { notify } = require('../services/notify');
 
 // Daily at 6:00 AM SAST (UTC+2) = 4:00 AM UTC — run pricing engine
 cron.schedule('0 4 * * *', async () => {
@@ -46,11 +47,18 @@ cron.schedule('0 3 * * *', async () => {
   }
 });
 
-// Every 30 minutes — send cleaning job reminders (2 hours before start)
-cron.schedule('*/30 * * * *', async () => {
+// Every 15 minutes — remind a cleaner an hour before they are due.
+//
+// Was two hours on a 30-minute tick, which is a wide aim: a job at 10:00
+// could be reminded at 08:00 or at 08:30. An hour is the useful warning —
+// long enough to travel, close enough to act on — and a 15-minute tick
+// keeps the message within a quarter of an hour of the intended time.
+//
+// reminder_sent is the guard against the tick sending it four times.
+cron.schedule('*/15 * * * *', async () => {
   try {
     const now = new Date();
-    const twoHoursFromNow = new Date(now.getTime() + 2 * 60 * 60 * 1000);
+    const oneHourFromNow = new Date(now.getTime() + 60 * 60 * 1000);
     const today = now.toISOString().split('T')[0];
 
     const jobs = await getAll(
@@ -72,7 +80,7 @@ cron.schedule('*/30 * * * *', async () => {
       const jobStart = new Date(today + 'T00:00:00');
       jobStart.setHours(h, m);
 
-      if (jobStart <= twoHoursFromNow && jobStart > now) {
+      if (jobStart <= oneHourFromNow && jobStart > now) {
         const nextBooking = await getOne(
           `SELECT * FROM bookings
            WHERE property_id = $1 AND check_in = $2 AND status = 'confirmed'
@@ -85,18 +93,34 @@ cron.schedule('*/30 * * * *', async () => {
           : 'No guest checking in today.';
 
         const message =
-          `Reminder: Cleaning job in 2 hours\n` +
+          `Reminder: cleaning in 1 hour\n` +
           `Property: ${job.property_name}\n` +
           `Address: ${job.property_address}\n` +
           `Time: ${job.start_time} - ${job.end_time}\n` +
           guestInfo;
 
+        let delivered = false;
         try {
           await whatsapp.sendMessage(job.cleaner_phone, message);
-          await run('UPDATE cleaning_jobs SET reminder_sent = 1 WHERE id = $1', [job.id]);
+          delivered = true;
         } catch (err) {
           console.error(`Failed to send reminder to ${job.cleaner_name}:`, err.message);
         }
+
+        // Marked either way. Retrying every fifteen minutes against a
+        // channel that is down would bury the cleaner in duplicates the
+        // moment it came back, and the failure is on record below.
+        await run('UPDATE cleaning_jobs SET reminder_sent = 1 WHERE id = $1', [job.id]);
+
+        await notify({
+          event: delivered ? 'cleaning_started' : 'cleaning_overdue',
+          title: delivered ?
+          `Reminded ${job.cleaner_name}: ${job.property_name} in 1 hour` :
+          `Could not remind ${job.cleaner_name} about ${job.property_name}`,
+          body: delivered ? '' : 'Their reminder did not go out. They may not know.',
+          propertyId: job.property_id, cleanerId: job.cid, jobId: job.id,
+          link: '/cleaners',
+        });
       }
     }
   } catch (err) {
