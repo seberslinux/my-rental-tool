@@ -2,6 +2,9 @@ const { getAll, getOne, run } = require('../db/database');
 const smoobu = require('./smoobu');
 const whatsapp = require('./whatsapp');
 const { getApiKeyForProperty } = require('./api-key-resolver');
+// One definition of "blocked" for the whole app — the revenue and
+// analytics paths call the same function.
+const { isBlockedPlatform } = require('./analytics-calc');
 
 // Run cleaner assignment for a specific property and checkout date
 // booking: { id, smoobu_id, property_id, check_out, check_in_next, num_guests_next, guest_name_next }
@@ -175,7 +178,7 @@ async function runAssignmentForAllCheckouts() {
     .split('T')[0];
 
   // Get all bookings with upcoming checkouts that don't have a cleaning job yet
-  const bookings = await getAll(
+  const rows = await getAll(
     `SELECT b.* FROM bookings b
      WHERE b.check_out >= $1 AND b.check_out <= $2 AND b.status = 'confirmed'
      AND NOT EXISTS (
@@ -185,14 +188,33 @@ async function runAssignmentForAllCheckouts() {
     [today, futureDate]
   );
 
+  // Blocks are not stays, so their end is not a check-out.
+  //
+  // Smoobu writes "Blocked channel auto" rows for nights taken off sale —
+  // maintenance, renovation, or its own turnaround padding — and those were
+  // being scheduled like departures. Five of fourteen jobs in production
+  // were cleans for nights nobody slept in. Worse, they double up: a guest
+  // leaves on the 10th and Smoobu blocks the 10th to the 11th, so the
+  // property earns a correct job on the 10th and a phantom one on the 11th,
+  // and the cleaner is sent twice for one turnover.
+  //
+  // Filtered in JS through isBlockedPlatform rather than with a LIKE in the
+  // SQL, so this shares the single definition of what "blocked" means with
+  // the revenue and analytics paths instead of growing a second one.
+  const bookings = rows.filter((b) => !isBlockedPlatform(b.platform));
+
   for (const booking of bookings) {
-    // Find the next booking for the same property after this checkout
-    const nextBooking = await getOne(
+    // The next arrival at the same property — what decides how much time
+    // the cleaner has. Blocks are skipped here too: a blocked night is not
+    // a guest, and counting one told the cleaner someone was arriving when
+    // the property was simply off sale.
+    const following = await getAll(
       `SELECT * FROM bookings
        WHERE property_id = $1 AND check_in >= $2 AND status = 'confirmed'
-       ORDER BY check_in ASC LIMIT 1`,
+       ORDER BY check_in ASC LIMIT 5`,
       [booking.property_id, booking.check_out]
     );
+    const nextBooking = following.find((b) => !isBlockedPlatform(b.platform)) || null;
 
     await assignCleanerForCheckout(booking, nextBooking);
   }
