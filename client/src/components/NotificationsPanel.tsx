@@ -41,6 +41,7 @@ export function NotificationsPanel({ onClose, onRead }: {onClose: () => void;onR
   const [loading, setLoading] = useState(true);
   const [whatsapp, setWhatsapp] = useState(false);
   const [hasPhone, setHasPhone] = useState(true);
+  const [waAvailable, setWaAvailable] = useState(true);
   const [phone, setPhone] = useState('');
   const [error, setError] = useState('');
 
@@ -54,6 +55,7 @@ export function NotificationsPanel({ onClose, onRead }: {onClose: () => void;onR
       const p = await prefs.json();
       setWhatsapp(p.whatsapp);
       setHasPhone(p.has_phone);
+      setWaAvailable(p.whatsapp_available !== false);
     }
     setLoading(false);
   };
@@ -120,8 +122,21 @@ export function NotificationsPanel({ onClose, onRead }: {onClose: () => void;onR
         </div>
 
         {/* How you hear about it. In-app is not a choice, so it is stated
-            rather than offered. */}
+            rather than offered.
+
+            When WhatsApp is not set up there is nothing to offer either:
+            a switch that cannot do anything reads as a broken app rather
+            than an unconfigured one. */}
         <div className="px-4 py-3 border-b border-[#EBEBEB] bg-[#FAFAFA] shrink-0">
+          {!waAvailable ?
+          <p className="text-[13px] text-[#717171]">
+              <span className="font-medium text-[#222222] flex items-center gap-1.5">
+                <MessageCircle className="w-3.5 h-3.5" /> WhatsApp is not set up
+              </span>
+              Everything still arrives here. Add a WhatsApp token to also get the
+              ones that need you on your phone.
+            </p> :
+
           <label className="flex items-start gap-2.5 cursor-pointer">
             <input
               type="checkbox"
@@ -139,8 +154,9 @@ export function NotificationsPanel({ onClose, onRead }: {onClose: () => void;onR
               </span>
             </span>
           </label>
+          }
 
-          {!hasPhone &&
+          {waAvailable && !hasPhone &&
           <div className="mt-2.5 flex gap-2">
               <input
               value={phone}

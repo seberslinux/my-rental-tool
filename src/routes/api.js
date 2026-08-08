@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { getAll, getOne, run, transaction, inParams } = require('../db/database');
 const smoobu = require('../services/smoobu');
+// Whether the channel is switched on at all — see that module for why
+// "off" and "broken" must not look the same.
+const whatsapp = require('../services/whatsapp');
 const { requireRole, scopeProperties, enforcePropertyScope } = require('../middleware/auth');
 
 // Parse ?property_id= query param — comma-separated list or 'all' → null.
@@ -272,6 +275,10 @@ router.get('/notifications/preferences', async (req, res) => {
     // Turning it on without a number would be a setting that silently
     // does nothing, so the client is told.
     has_phone: !!(row && row.phone && row.phone.trim()),
+    // And neither does turning it on while the channel itself is off.
+    // Offering a switch that cannot do anything is how people conclude
+    // the app is broken rather than that a feature is not set up.
+    whatsapp_available: whatsapp.isConfigured(),
   });
 });
 

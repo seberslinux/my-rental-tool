@@ -914,7 +914,11 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
                     {/* Said plainly rather than hidden. If this never
                         reached their phone, the app is the only place
                         they will ever find out. */}
-                    {a.delivery !== 'sent' &&
+                    {/* Only a real failure. "Skipped" means WhatsApp is
+                        switched off and the app is the channel — warning
+                        about that on every row would train people to
+                        ignore the one that matters. */}
+                    {a.delivery === 'failed' &&
                   <p className="text-[11px] text-[#92400E] mt-1">Not delivered to your phone</p>
                   }
                   </div>

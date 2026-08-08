@@ -205,13 +205,27 @@ async function notify({
   // for exceptions. A cleaner only ever hears about their own shifts, and
   // every one of them is something they have to act on.
   const configured = await sendableEvents();
-  const shouldSend = audience === 'cleaner' ?
+  let shouldSend = audience === 'cleaner' ?
   true :
   configured ? configured.includes(event) : severity === 'attention';
 
   let delivery = 'skipped';
   let deliveryError = null;
   let channel = 'in_app';
+
+  // Switched off is not the same as broken.
+  //
+  // With no token and no phone number id every send is three doomed HTTP
+  // attempts two seconds apart, and the row lands as `failed` carrying
+  // "Invalid OAuth access token" — which then shows up in the cleaner's
+  // app as "not delivered to your phone" on every message they have. The
+  // app is the channel while WhatsApp is off, and saying so is honest;
+  // crying failure on every row is not, and it trains people to ignore
+  // the warning that means something.
+  if (shouldSend && !whatsapp.isConfigured()) {
+    shouldSend = false;
+    deliveryError = 'WhatsApp is off — this is in the app only';
+  }
 
   if (shouldSend) {
     const numbers = audience === 'cleaner' ?
