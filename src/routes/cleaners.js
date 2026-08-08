@@ -1,6 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const { getAll, getOne, run, transaction, inParams } = require('../db/database');
+const crypto = require('crypto');
+const { requireRole } = require('../middleware/auth');
+
+// Long enough that an owner can send it at their convenience, short
+// enough that a link forwarded once and forgotten does not stay live.
+const INVITE_VALID_DAYS = 7;
 
 // Get all cleaners with their assigned properties
 router.get('/', async (req, res) => {
@@ -303,6 +309,48 @@ router.post('/jobs/assign', async (req, res) => {
 
   const job = await getOne('SELECT * FROM cleaning_jobs WHERE id = $1', [result.rows[0].id]);
   res.status(201).json(job);
+});
+
+/**
+ * Issue a one-time invitation so a cleaner can set their own PIN.
+ *
+ * The owner decides who gets access; the cleaner decides how they get in.
+ * Previously the owner typed a PIN and read it out, which meant the owner
+ * held the cleaner's credential — and since PINs are hashed, a forgotten
+ * one could only be overwritten, never recovered.
+ *
+ * Restricted to admin and property_manager through requireRole, which
+ * needs req.user. That matters here: requireAuth also admits cleaner PIN
+ * sessions, so without this a logged-in cleaner could invite anybody.
+ *
+ * Issuing a new invitation voids any earlier unused one for the same
+ * cleaner, so a link sent to the wrong number stops working the moment a
+ * replacement is sent.
+ */
+router.post('/:id/invite', requireRole('admin', 'property_manager'), async (req, res) => {
+  const cleaner = await getOne('SELECT id, name FROM cleaners WHERE id = $1', [req.params.id]);
+  if (!cleaner) return res.status(404).json({ error: 'Cleaner not found' });
+
+  const token = crypto.randomBytes(32).toString('base64url');
+
+  await transaction(async (client) => {
+    await client.query(
+      'DELETE FROM cleaner_invites WHERE cleaner_id = $1 AND used_at IS NULL',
+      [cleaner.id]
+    );
+    await client.query(
+      `INSERT INTO cleaner_invites (cleaner_id, token, expires_at, created_by)
+       VALUES ($1, $2, NOW() + INTERVAL '${INVITE_VALID_DAYS} days', $3)`,
+      [cleaner.id, token, req.user.id]
+    );
+  });
+
+  const base = process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
+  res.status(201).json({
+    url: `${base}/invite/${token}`,
+    expires_in_days: INVITE_VALID_DAYS,
+    cleaner_name: cleaner.name,
+  });
 });
 
 // Update a cleaner
