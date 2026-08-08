@@ -27,9 +27,33 @@ function requireAuth(req, res, next) {
  */
 const CLEANER_ALLOWED_PREFIXES = ['/cleaner-portal'];
 
+/**
+ * Is this request coming from the cleaner's app?
+ *
+ * Two ways in, and both count:
+ *
+ * A PIN on the session makes it a cleaner session whatever else the
+ * session carries. This used to also require `!req.user`, which meant
+ * somebody holding both logins at once — a manager who is also a cleaner,
+ * signing in on the phone tab without signing out first — turned the whole
+ * restriction off. The API then answered them as the manager: revenue,
+ * analytics, other cleaners' rates, all 200. Sessions are now kept
+ * exclusive at both login routes, so this state should not arise; the test
+ * stays broad anyway, because a rule that protects revenue should fail
+ * closed rather than depend on a login route elsewhere behaving.
+ *
+ * A Passport user whose role is cleaner is also a cleaner. The client
+ * hands that role the cleaner's app, so the API has to agree — otherwise
+ * the same person reaches the manager's data through a Google sign-in
+ * instead of a PIN.
+ */
+function isCleanerSession(req) {
+  if (req.session && req.session.cleanerId) return true;
+  return Boolean(req.user && req.user.role === 'cleaner');
+}
+
 function restrictCleanerSessions(req, res, next) {
-  const isCleanerSession = Boolean(req.session && req.session.cleanerId && !req.user);
-  if (!isCleanerSession) return next();
+  if (!isCleanerSession(req)) return next();
 
   const path = req.path || '';
   if (CLEANER_ALLOWED_PREFIXES.some((p) => path === p || path.startsWith(p + '/'))) {
@@ -49,8 +73,11 @@ function requireRole(...roles) {
 }
 
 async function scopeProperties(req, res, next) {
-  // Handle PIN-auth cleaner sessions
-  if (req.session && req.session.cleanerId && !req.user) {
+  // Handle PIN-auth cleaner sessions. Checked before req.user for the same
+  // reason as isCleanerSession: a PIN on the session means cleaner, and
+  // deferring to a manager login that happens to be there too is how the
+  // scoping got skipped.
+  if (req.session && req.session.cleanerId) {
     try {
       const rows = await getAll(
         'SELECT property_id FROM cleaner_properties WHERE cleaner_id = $1',

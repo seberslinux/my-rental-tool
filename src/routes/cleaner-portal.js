@@ -330,21 +330,109 @@ router.put('/availability', requireCleaner, async (req, res) => {
   res.json(updated);
 });
 
+/**
+ * Change one day of your own schedule.
+ *
+ * The weekly pattern is the standing answer — every Sunday, say — and an
+ * override is the exception to it on one date. Both are statements of
+ * when this person can work, nothing more: whether a cleaner is actually
+ * wanted that day is the manager's call, and it is made by assigning a
+ * job, which the cleaner then accepts or declines.
+ *
+ * So nothing here waits for approval. Saying you are free on Tuesday
+ * does not put you to work on Tuesday.
+ */
 router.post('/overrides', requireCleaner, async (req, res) => {
   const { date, available } = req.body;
   if (!date) return res.status(400).json({ error: 'date required' });
-  const existing = await getOne('SELECT id FROM cleaner_availability_overrides WHERE cleaner_id = $1 AND date = $2', [req.cleaner.id, date]);
+
+  const existing = await getOne(
+    'SELECT id FROM cleaner_availability_overrides WHERE cleaner_id = $1 AND date = $2',
+    [req.cleaner.id, date]
+  );
   if (existing) {
-    await run('UPDATE cleaner_availability_overrides SET available = $1 WHERE id = $2', [available ? 1 : 0, existing.id]);
+    await run('UPDATE cleaner_availability_overrides SET available = $1 WHERE id = $2',
+      [available ? 1 : 0, existing.id]);
   } else {
-    await run('INSERT INTO cleaner_availability_overrides (cleaner_id, date, available) VALUES ($1, $2, $3)', [req.cleaner.id, date, available ? 1 : 0]);
+    await run('INSERT INTO cleaner_availability_overrides (cleaner_id, date, available) VALUES ($1, $2, $3)',
+      [req.cleaner.id, date, available ? 1 : 0]);
   }
+
+  // The manager is told, because a day going dark is what stops them
+  // assigning somebody who cannot come. It is information, not a request.
+  await notify({
+    event: 'availability_changed',
+    title: available ?
+    `${req.cleaner.name} is now available on ${date}` :
+    `${req.cleaner.name} is not available on ${date}`,
+    cleanerId: req.cleaner.id,
+    link: '/cleaners',
+  });
+
   res.json({ date, available: !!available });
 });
 
 router.delete('/overrides/:id', requireCleaner, async (req, res) => {
   await run('DELETE FROM cleaner_availability_overrides WHERE id = $1 AND cleaner_id = $2', [req.params.id, req.cleaner.id]);
   res.json({ deleted: true });
+});
+
+/**
+ * Put the calendar back to the weekly pattern.
+ *
+ * Changing "I work Sundays" on the schedule does nothing to a date the
+ * cleaner has already overridden — the override is more specific and wins.
+ * So a schedule edit silently fails to take on exactly the days somebody
+ * has touched, which is the confusing half of having two screens.
+ *
+ * This is the way out, and it is narrow on purpose. Two things are never
+ * cleared:
+ *
+ * - Anything in the past. Those dates are the record of what happened;
+ *   a tidy-up button must not rewrite them.
+ * - Any date with a live job. Reverting an "I can come on Tuesday" that
+ *   somebody has since scheduled a clean against would quietly withdraw a
+ *   day the owner is relying on. Those stay, and are reported back so the
+ *   cleaner can see what was left alone and deal with each properly by
+ *   declining.
+ */
+router.post('/overrides/reset', requireCleaner, async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+
+  const kept = await getAll(
+    `SELECT o.date FROM cleaner_availability_overrides o
+      WHERE o.cleaner_id = $1 AND o.date >= $2
+        AND EXISTS (SELECT 1 FROM cleaning_jobs j
+                     WHERE j.cleaner_id = o.cleaner_id
+                       AND j.cleaning_date = o.date
+                       AND j.status NOT IN ('declined', 'cancelled'))
+      ORDER BY o.date`,
+    [req.cleaner.id, today]
+  );
+
+  const cleared = await getAll(
+    `DELETE FROM cleaner_availability_overrides o
+      WHERE o.cleaner_id = $1 AND o.date >= $2
+        AND NOT EXISTS (SELECT 1 FROM cleaning_jobs j
+                         WHERE j.cleaner_id = o.cleaner_id
+                           AND j.cleaning_date = o.date
+                           AND j.status NOT IN ('declined', 'cancelled'))
+      RETURNING date`,
+    [req.cleaner.id, today]
+  );
+
+  // One line, not one per day. A cleaner tidying up their calendar in the
+  // morning should not fill the owner's feed with twenty rows.
+  if (cleared.length) {
+    await notify({
+      event: 'availability_changed',
+      title: `${req.cleaner.name} put ${cleared.length} day${cleared.length === 1 ? '' : 's'} back to their usual schedule`,
+      cleanerId: req.cleaner.id,
+      link: '/cleaners',
+    });
+  }
+
+  res.json({ cleared: cleared.length, kept: kept.map((r) => r.date) });
 });
 
 // Messaging (only for Passport-auth users — PIN-auth cleaners use WhatsApp)

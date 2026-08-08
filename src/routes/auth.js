@@ -7,6 +7,55 @@ const { getOne, getAll, run } = require('../db/database');
 // header for why an exact string match locked cleaners out.
 const { samePhone } = require('../services/phone');
 
+/**
+ * Start a cleaner session, and only a cleaner session.
+ *
+ * Every way into the cleaner's app goes through here — PIN, invitation,
+ * and the magic link in a WhatsApp message — because the rule only holds
+ * if it holds on all of them. The magic link is the one that matters
+ * most: it is tapped on a phone, by somebody who may well be signed into
+ * the main app in the same browser.
+ *
+ * Regenerating first drops everything the old session held, Passport's
+ * entry included. What comes out is a cleaner and nothing else, so there
+ * is no manager identity left to fall back to. Getting into the main app
+ * means going back to the login screen.
+ *
+ * It also gives each sign-in a fresh session id, which is the standard
+ * defence against a fixed one being planted beforehand.
+ */
+async function signInAsCleaner(req, res, cleaner, authType) {
+  try {
+    await new Promise((resolve, reject) =>
+    req.session.regenerate((err) => err ? reject(err) : resolve())
+    );
+  } catch (err) {
+    console.error(`cleaner sign-in (${authType}): could not regenerate the session — ${err.message}`);
+    return res.status(500).json({ error: 'Could not sign you in. Try again.' });
+  }
+
+  req.session.cleanerId = cleaner.id;
+  req.session.cleanerName = cleaner.name;
+  req.session.cleanerPhone = cleaner.phone;
+  req.session.save(() => {
+    res.json({ id: cleaner.id, name: cleaner.name, phone: cleaner.phone, role: 'cleaner', authType });
+  });
+}
+
+/**
+ * The reverse: signing into the main app ends any cleaner session.
+ *
+ * Passport 0.7 regenerates the session inside req.logIn, which would
+ * clear these anyway. Stating it here does not depend on that staying
+ * true — the separation is a rule of this app, not a side effect of a
+ * library default that a future upgrade could reasonably change.
+ */
+function clearCleanerSession(req) {
+  delete req.session.cleanerId;
+  delete req.session.cleanerName;
+  delete req.session.cleanerPhone;
+}
+
 // Email/password login
 router.post('/login', (req, res, next) => {
   passport.authenticate('local', (err, user, info) => {
@@ -14,6 +63,7 @@ router.post('/login', (req, res, next) => {
     if (!user) return res.status(401).json({ error: info?.message || 'Invalid credentials' });
     req.logIn(user, (err) => {
       if (err) return next(err);
+      clearCleanerSession(req);
       res.json({ id: user.id, email: user.email, name: user.name, role: user.role, avatar_url: user.avatar_url });
     });
   })(req, res, next);
@@ -51,12 +101,7 @@ router.post('/cleaner-login', async (req, res) => {
   const match = bcrypt.compareSync(pin, cleaner.pin);
   if (!match) return res.status(401).json({ error: 'Invalid phone or PIN' });
 
-  req.session.cleanerId = cleaner.id;
-  req.session.cleanerName = cleaner.name;
-  req.session.cleanerPhone = cleaner.phone;
-  req.session.save(() => {
-    res.json({ id: cleaner.id, name: cleaner.name, phone: cleaner.phone, role: 'cleaner', authType: 'pin' });
-  });
+  return signInAsCleaner(req, res, cleaner, 'pin');
 });
 
 /**
@@ -109,12 +154,7 @@ router.post('/invite/:token', async (req, res) => {
 
   await run('UPDATE cleaners SET pin = $1 WHERE id = $2', [bcrypt.hashSync(pin, 10), cleaner.id]);
 
-  req.session.cleanerId = cleaner.id;
-  req.session.cleanerName = cleaner.name;
-  req.session.cleanerPhone = cleaner.phone;
-  req.session.save(() => {
-    res.json({ id: cleaner.id, name: cleaner.name, role: 'cleaner', authType: 'invite' });
-  });
+  return signInAsCleaner(req, res, cleaner, 'invite');
 });
 
 // Magic-link token login (for WhatsApp links)
@@ -128,12 +168,7 @@ router.post('/cleaner-token', async (req, res) => {
   const cleaner = await getOne('SELECT * FROM cleaners WHERE id = $1', [row.cleaner_id]);
   if (!cleaner) return res.status(401).json({ error: 'Cleaner not found' });
 
-  req.session.cleanerId = cleaner.id;
-  req.session.cleanerName = cleaner.name;
-  req.session.cleanerPhone = cleaner.phone;
-  req.session.save(() => {
-    res.json({ id: cleaner.id, name: cleaner.name, phone: cleaner.phone, role: 'cleaner', authType: 'token' });
-  });
+  return signInAsCleaner(req, res, cleaner, 'token');
 });
 
 // Google SSO
@@ -141,7 +176,10 @@ router.get('/google', passport.authenticate('google', { scope: ['profile', 'emai
 
 router.get('/google/callback',
   passport.authenticate('google', { failureRedirect: '/login?error=google_failed' }),
-  (req, res) => res.redirect(req.user.role === 'cleaner' ? '/cleaner-portal' : '/')
+  (req, res) => {
+    clearCleanerSession(req);
+    res.redirect(req.user.role === 'cleaner' ? '/cleaner-portal' : '/');
+  }
 );
 
 // Logout
@@ -159,6 +197,22 @@ router.post('/logout', (req, res) => {
 
 // Current user
 router.get('/me', (req, res) => {
+  // The cleaner is checked first, not as a fallback.
+  //
+  // This is what the browser uses to decide which app to render, and it
+  // used to prefer the Passport user: a session holding both answered
+  // "admin", so signing in with a PIN put the manager's app on screen.
+  // Sessions are exclusive now, but the order still matters — if the two
+  // ever coexist again, the answer should be the smaller of the two.
+  if (req.session && req.session.cleanerId) {
+    return res.json({
+      id: req.session.cleanerId,
+      name: req.session.cleanerName,
+      phone: req.session.cleanerPhone,
+      role: 'cleaner',
+      authType: 'pin'
+    });
+  }
   if (req.isAuthenticated && req.isAuthenticated()) {
     return res.json({
       id: req.user.id,
@@ -167,16 +221,6 @@ router.get('/me', (req, res) => {
       role: req.user.role,
       avatar_url: req.user.avatar_url,
       has_smoobu_key: !!(req.user.smoobu_api_key_encrypted && req.user.smoobu_api_key_iv),
-    });
-  }
-  // Fallback: cleaner PIN session
-  if (req.session && req.session.cleanerId) {
-    return res.json({
-      id: req.session.cleanerId,
-      name: req.session.cleanerName,
-      phone: req.session.cleanerPhone,
-      role: 'cleaner',
-      authType: 'pin'
     });
   }
   res.status(401).json({ error: 'Not authenticated' });

@@ -10,7 +10,7 @@ import {
   dateEqual } from
 '../data/properties';
 import { BookingBar } from './BookingBar';
-import { ChevronLeft, ChevronRight, Moon } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Moon, Check } from 'lucide-react';
 interface MonthCalendarProps {
   propertyId: number;
   bookings: Booking[];
@@ -34,6 +34,28 @@ interface MonthCalendarProps {
    * to drop the money.
    */
   barLabel?: (booking: Booking) => string;
+  /**
+   * Tapping a day. Optional — omit it and the calendar behaves exactly
+   * as before, so the manager's view is untouched.
+   */
+  onDayClick?: (date: Date) => void;
+  /** Days the person cannot work, drawn as such. */
+  /**
+   * What each day means, keyed YYYY-MM-DD: 'off' cannot work, 'free' can
+   * work with nothing booked, 'booked' has a job. "Off" alone was not
+   * enough — a day you have offered and a day somebody has put you to
+   * work on are different facts.
+   */
+  dayStates?: Record<string, 'off' | 'free' | 'booked'>;
+  /**
+   * Drop the channel from the bars — colour and badge both.
+   *
+   * Which site sold the stay is the owner's concern. A cleaner is going
+   * to the same property whether it came through Airbnb or Booking.com,
+   * so the colour carried no information for them and competed with the
+   * marks that do.
+   */
+  plainBars?: boolean;
 }
 export function MonthCalendar({
   propertyId,
@@ -42,7 +64,10 @@ export function MonthCalendar({
   showRates = true,
   months = 3,
   markedDays,
-  barLabel
+  barLabel,
+  onDayClick,
+  dayStates,
+  plainBars
 }: MonthCalendarProps) {
   // The months shown were hardcoded to March–May 2026, so the calendar
   // never moved: by August every day it drew was in the past, and the
@@ -79,6 +104,15 @@ export function MonthCalendar({
       ? `${mon(first)} – ${mon(last)} ${last.getFullYear()}`
       : `${mon(first)} ${first.getFullYear()} – ${mon(last)} ${last.getFullYear()}`;
   }, [anchor]);
+
+  // A stable lane per property, so a given property keeps the same row
+  // in every cell rather than jumping about as bookings come and go.
+  const propOrder = useMemo(
+    () => [...new Set(bookings.map((b) => b.propId))].sort((x, y) => x - y),
+    [bookings]
+  );
+  // Thin enough that three lanes fit where one bar used to sit.
+  const BAR_HEIGHT = propOrder.length > 1 ? 16 : 22;
 
   const monthsData = useMemo(() => {
     return Array.from({ length: months }, (_, i) => i).
@@ -268,6 +302,8 @@ export function MonthCalendar({
               CLEANER_TOGGLE && cleaners[propertyId]?.includes(cell.date.getDate()));
               // Covered by a booking passed in, not by the shared list —
               // the portal is given only its own properties' stays.
+              const dayState = dayStates ? dayStates[dateKey(cell.date)] : undefined;
+              const isWeekend = cell.date.getDay() === 0 || cell.date.getDay() === 6;
               const isCovered = bookings.some(
                 (b) => b.propId === propertyId && cell.date >= b.checkIn && cell.date < b.checkOut);
               // Smoobu's own block flag: the night is not for sale, which
@@ -282,7 +318,11 @@ export function MonthCalendar({
               return (
                 <div
                   key={idx}
+                  onClick={onDayClick && !isPast ? () => onDayClick(cell.date) : undefined}
                   className={`h-[84px] relative ${edges} ${
+                  dayState === 'booked' ? 'bg-[#EAF4F0] ' :
+                  dayState === 'off' ? 'bg-[#FAFAFA] ' : ''}${
+                  onDayClick && !isPast ? 'cursor-pointer active:bg-[#EBEBEB] ' : ''}${
                   isToday ? 'bg-[#F7F7F7]' : isClosed ? 'bg-[#F2F2F2]' : ''}`}>
 
                     {/* Date on the left, price on the right, both on one
@@ -297,7 +337,7 @@ export function MonthCalendar({
                       <div
                       className={`w-[24px] h-[24px] rounded-full flex items-center justify-center text-[13px] shrink-0 font-normal
                           ${isToday ? 'bg-[#222222] text-white font-semibold' : ''}
-                          ${isClosed && !isToday ? 'text-[#8A8A8A] line-through decoration-[1.5px]' : ''}
+                          ${(isClosed || dayState === 'off') && !isToday ? 'text-[#8A8A8A] line-through decoration-[1.5px]' : ''}
                           ${!isClosed && !isToday ? (isPast ? 'text-[#B0B0B0]' : 'text-[#222222]') : ''}
                         `}>
                         {cell.date.getDate()}
@@ -347,8 +387,27 @@ export function MonthCalendar({
                       </span>
                   }
 
-                    {/* Cleaner Dot */}
-                    {hasCleaner &&
+                    {/* Marked off. A word as well as a tint — a pale wash
+                        alone is easy to miss on a phone in daylight. */}
+                    {/* A mark, not a word. "Booked" did not fit a phone-width
+                        cell and truncated to "BOOKE". Struck out means
+                        cannot work, a tick means somebody is expecting you,
+                        and an open day says nothing at all — which is what
+                        an open day should say. */}
+                    {/* Available says something, rather than being the
+                        absence of everything. A hollow ring reads as "open,
+                        nothing on it"; the filled tick reads as "taken". */}
+                    {dayState === 'free' &&
+                  <span className="absolute bottom-2 left-2 w-3 h-3 rounded-full border-[1.5px] border-[#B0B0B0]" />
+                  }
+                    {dayState === 'booked' &&
+                  <Check className="absolute bottom-2 left-2 w-4 h-4 text-[#0F6E56]" strokeWidth={3} />
+                  }
+
+                    {/* Cleaner Dot. Suppressed where a tick already says
+                        somebody is booked — two marks for one fact is how
+                        a dot ends up meaning nothing. */}
+                    {hasCleaner && dayState !== 'booked' &&
                   <div
                     title="Cleaning scheduled"
                     className="absolute w-[5px] h-[5px] bg-[#00A699] rounded-full bottom-2.5 right-1.5" />
@@ -388,7 +447,15 @@ export function MonthCalendar({
               widthPct = Math.max(widthPct, cellWidthPct * 0.25);
               // Cell is 84px; the date/price line occupies the top ~30px,
               // so the bar lane starts below it.
-              const topPx = seg.rowIdx * 84 + 34;
+              // One lane per property, stacked.
+              //
+              // Every bar used to sit at the same height, so two
+              // properties booked on the same night drew on top of each
+              // other and one of them simply vanished. A cleaner working
+              // two places could not see both. Thinner bars in their own
+              // lanes fit three in the space one used to occupy.
+              const lane = Math.max(0, propOrder.indexOf(seg.booking.propId));
+              const topPx = seg.rowIdx * 84 + 30 + lane * (BAR_HEIGHT + 2);
               // Border radius logic
               const isSingleRow = isFirst && isLast;
               let borderRadius = '0';
@@ -399,12 +466,14 @@ export function MonthCalendar({
                 <BookingBar
                   key={`${seg.booking.id}-${sIdx}`}
                   booking={seg.booking}
+                  plain={plainBars}
                   label={barLabel}
                   onClick={onBookingClick}
                   style={{
                     left: `${leftPct}%`,
                     width: `${widthPct}%`,
                     top: `${topPx}px`,
+                    height: `${BAR_HEIGHT}px`,
                     borderRadius,
                     pointerEvents: 'auto'
                   }} />);

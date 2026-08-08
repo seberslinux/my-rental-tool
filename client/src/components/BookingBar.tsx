@@ -10,8 +10,10 @@ interface BookingBarProps {
    * a cleaner must never be shown what a guest paid.
    */
   label?: (booking: Booking) => string;
+  /** Neutral bar: no channel colour, no channel badge. */
+  plain?: boolean;
 }
-export function BookingBar({ booking, style, onClick, label }: BookingBarProps) {
+export function BookingBar({ booking, style, onClick, label, plain }: BookingBarProps) {
   const isPast = booking.checkOut <= TODAY;
   const getStyles = () => {
     switch (booking.type) {
@@ -43,7 +45,9 @@ export function BookingBar({ booking, style, onClick, label }: BookingBarProps) 
         };
     }
   };
-  const styles = getStyles();
+  const styles = plain ?
+  { bar: 'bg-[#8A8A8A] text-white', icon: '', customBg: undefined } :
+  getStyles();
   const renderIcon = () => {
     switch (booking.type) {
       case 'airbnb':
@@ -70,17 +74,19 @@ export function BookingBar({ booking, style, onClick, label }: BookingBarProps) 
       onClick={() => onClick?.(booking)}
       // Past stays are de-emphasised, not erased — at opacity-30 a whole
       // completed week read as a rendering fault rather than as history.
-      className={`absolute h-[26px] flex items-center gap-1.5 px-1.5 overflow-hidden text-[10px] font-semibold cursor-pointer transition-opacity hover:opacity-100 active:opacity-75 shadow-[0_1px_2px_rgba(0,0,0,0.06)] ${styles.bar} ${isPast ? 'grayscale-[40%] opacity-55' : ''}`}
+      className={`absolute flex items-center gap-1.5 px-1.5 overflow-hidden text-[10px] leading-none font-semibold cursor-pointer transition-opacity hover:opacity-100 active:opacity-75 shadow-[0_1px_2px_rgba(0,0,0,0.06)] ${styles.bar} ${isPast ? 'grayscale-[40%] opacity-55' : ''}`}
       style={{
         ...style,
         background: styles.customBg || undefined
       }}>
       
+      {!plain &&
       <div
         className={`w-[18px] h-[18px] rounded-full flex items-center justify-center shrink-0 overflow-hidden ${styles.icon}`}>
         
         {renderIcon()}
       </div>
+      }
       <div className="truncate flex-1 min-w-0 pr-1">
         {label ?
         label(booking) :

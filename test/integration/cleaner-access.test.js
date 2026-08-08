@@ -164,3 +164,83 @@ test('a cleaner cannot create or edit inventory checklists', async () => {
   const read = await agent.get(`/api/cleaner-portal/inventory/${property.id}`);
   assert.equal(read.status, 200);
 });
+
+// --- one session, one identity ------------------------------------------
+
+/**
+ * The person who is both a manager and a cleaner.
+ *
+ * The restriction above used to read `cleanerId && !req.user`, so holding
+ * both logins at once switched it off entirely. Signing in on the phone
+ * tab while already signed into the main app produced a session that was
+ * both: /api/auth/me answered with the manager, the browser drew the
+ * manager's app, and revenue came back 200 to somebody who had just typed
+ * a 4-digit PIN.
+ *
+ * The rule is that a session carries one identity. Each sign-in ends the
+ * other, in both directions, and getting into the main app means going
+ * back to the login screen.
+ */
+
+test('signing in as a cleaner ends a manager session', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner({ phone: '+27821110001' });
+  await pool.query('UPDATE cleaners SET pin = $1 WHERE id = $2', [
+    bcrypt.hashSync('1234', 4), cleaner.id,
+  ]);
+  await linkCleanerToProperty(cleaner, property);
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  await agent.get('/api/dashboard/kpis').expect(200);
+
+  await agent.post('/api/auth/cleaner-login')
+    .send({ phone: '+27821110001', pin: '1234' }).expect(200);
+
+  const me = await agent.get('/api/auth/me').expect(200);
+  assert.equal(me.body.role, 'cleaner',
+    'the browser decides which app to draw from this — it must not say admin');
+
+  for (const path of ['/api/dashboard/kpis', '/api/analytics/data', '/api/bookings', '/api/cleaners']) {
+    await agent.get(path).expect(403);
+  }
+  // And the cleaner can still do their own job.
+  await agent.get('/api/cleaner-portal/me').expect(200);
+});
+
+test('signing into the main app ends a cleaner session', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  await seedProperty({ owner });
+  const cleaner = await seedCleaner({ phone: '+27821110002' });
+  await pool.query('UPDATE cleaners SET pin = $1 WHERE id = $2', [
+    bcrypt.hashSync('1234', 4), cleaner.id,
+  ]);
+
+  const agent = await getAgent();
+  await agent.post('/api/auth/cleaner-login')
+    .send({ phone: '+27821110002', pin: '1234' }).expect(200);
+  await agent.get('/api/dashboard/kpis').expect(403);
+
+  // The login screen is the only way back in, and it is a clean swap.
+  await loginAs(agent, owner);
+  await agent.get('/api/dashboard/kpis').expect(200);
+  // No cleaner identity left behind.
+  await agent.get('/api/cleaner-portal/me').expect(403);
+});
+
+test('a Passport user whose role is cleaner is restricted too', async () => {
+  // The client hands this role the cleaner's app, so the API has to
+  // agree — otherwise the same data is one Google sign-in away.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  await seedProperty({ owner });
+  const staff = await seedUser({ role: 'cleaner' });
+
+  const agent = await getAgent();
+  await loginAs(agent, staff);
+  await agent.get('/api/dashboard/kpis').expect(403);
+  await agent.get('/api/analytics/data').expect(403);
+});
