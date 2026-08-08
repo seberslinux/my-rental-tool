@@ -104,6 +104,9 @@ export function CleanersPage() {
   const [formRate, setFormRate] = useState('');
   const [formRateType, setFormRateType] = useState('hourly');
   const [formPin, setFormPin] = useState('');
+  const [invitingId, setInvitingId] = useState<number | null>(null);
+  const [invite, setInvite] = useState<
+  { cleanerId: number; url: string; days: number; copied: boolean } | null>(null);
   const [formNotes, setFormNotes] = useState('');
   const [formPropertyIds, setFormPropertyIds] = useState<number[]>([]);
   const [formAvailability, setFormAvailability] = useState<{ enabled: boolean; start: string; end: string }[]>(
@@ -246,6 +249,34 @@ export function CleanersPage() {
   };
 
   // Delete cleaner handler
+  /**
+   * Issue a one-time invitation for this cleaner.
+   *
+   * Nothing is sent from here — the endpoint returns a link and the owner
+   * passes it on however they like. That keeps this working with no
+   * messaging service at all, and lets automatic delivery be added later
+   * without changing any of it.
+   */
+  const handleInvite = async (id: number) => {
+    setInvitingId(id);
+    try {
+      const res = await fetch(`/api/cleaners/${id}/invite`, {
+        method: 'POST',
+        credentials: 'same-origin',
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Could not create an invitation');
+      }
+      const data = await res.json();
+      setInvite({ cleanerId: id, url: data.url, days: data.expires_in_days, copied: false });
+    } catch (err: any) {
+      alert(err.message);
+    } finally {
+      setInvitingId(null);
+    }
+  };
+
   const handleDeleteCleaner = async (id: number) => {
     if (!confirm('Are you sure you want to remove this cleaner?')) return;
     try {
@@ -560,7 +591,38 @@ export function CleanersPage() {
                     </div>
                   </div>
                 </div>
+                {/* The invitation link, once issued. Shown here rather than
+                    in a toast because it has to be copied, and a message
+                    that vanishes is no use for that. */}
+                {invite && invite.cleanerId === cleaner.id &&
+                <div className="mx-3 md:mx-4 mb-3 mt-1 p-3 bg-[#F0FDF4] border border-[#86EFAC] rounded-[8px]">
+                    <p className="text-[12px] font-medium text-[#166534] mb-1.5">
+                      Send this to {cleaner.name}. It works once, for {invite.days} days.
+                    </p>
+                    <div className="flex gap-2">
+                      <input
+                      readOnly
+                      value={invite.url}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="flex-1 min-w-0 px-2 py-1.5 text-[12px] bg-white border border-[#86EFAC] rounded-[6px] text-[#222222]" />
+                      <button
+                      onClick={() => {
+                        navigator.clipboard?.writeText(invite.url);
+                        setInvite({ ...invite, copied: true });
+                      }}
+                      className="shrink-0 px-3 py-1.5 text-[12px] font-semibold bg-[#166534] text-white rounded-[6px] hover:bg-[#14532D]">
+                        {invite.copied ? 'Copied' : 'Copy'}
+                      </button>
+                    </div>
+                  </div>
+                }
                 <div className="p-3 md:p-4 bg-[#F7F7F7] border-t border-[#F0F0F0] flex justify-end gap-2">
+                  <button
+                    onClick={() => handleInvite(cleaner.id)}
+                    disabled={invitingId === cleaner.id}
+                    className="px-3 py-1.5 text-[12px] md:text-[13px] font-medium bg-white border border-[#EBEBEB] rounded-[6px] hover:bg-[#F0F0F0] text-[#222222] disabled:opacity-60">
+                    {invitingId === cleaner.id ? 'Creating…' : 'Invite'}
+                  </button>
                   <button className="px-3 py-1.5 text-[12px] md:text-[13px] font-medium bg-white border border-[#EBEBEB] rounded-[6px] hover:bg-[#F0F0F0] text-[#222222]">
                     Edit
                   </button>
