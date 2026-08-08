@@ -170,12 +170,120 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
   return null;
 }
 
+/**
+ * A date as YYYY-MM-DD, whatever the driver handed back.
+ *
+ * node-pg returns DATE columns as JS Date objects, so comparing a job's
+ * cleaning_date to a booking's check_out with === compares two object
+ * references and is always false. That would have made every job look
+ * mis-dated and moved the lot.
+ */
+function ymd(value) {
+  if (!value) return null;
+  if (value instanceof Date) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+  }
+  return String(value).slice(0, 10);
+}
+
+/**
+ * Bring existing cleaning jobs back in line with their bookings.
+ *
+ * Assignment only ever created. The query it runs treats "this booking
+ * already has a job" as "nothing to do", so once a job existed it was
+ * never looked at again — and a booking that moved left its clean behind
+ * on the old date forever. Production had a stay running 22 Apr to 31 Jul
+ * whose clean sat on 30 June, a date nothing checked out on. The webhook
+ * path handles this by deleting and re-creating the job, but a change
+ * that arrives by sync instead — a missed webhook, the app restarting,
+ * webhooks never configured — never reached that code.
+ *
+ * Three things can be wrong with a job, and all three are the same
+ * question: does the booking still justify a clean on that date?
+ *
+ *   - the booking moved      -> move the job with it
+ *   - the booking is gone or cancelled -> the clean is not happening
+ *   - the booking is a block -> nobody slept there, so nobody cleans
+ *
+ * Two rules bound it. Work that has been started or finished is never
+ * touched: those timestamps are the record of what somebody actually did,
+ * and no reconciliation is worth rewriting them. And only today onwards
+ * is considered — a job in the past is history, right or wrong, and
+ * quietly editing last month's schedule helps nobody.
+ */
+async function reconcileCleaningJobs() {
+  const today = new Date().toISOString().split('T')[0];
+
+  const rows = await getAll(
+    `SELECT cj.id, cj.cleaning_date, cj.booking_id,
+            b.smoobu_id, b.check_out, b.platform, b.status AS booking_status
+       FROM cleaning_jobs cj
+       LEFT JOIN bookings b ON b.smoobu_id = cj.booking_id
+      WHERE cj.started_at IS NULL
+        AND cj.completed_at IS NULL
+        AND cj.booking_id IS NOT NULL
+        AND (cj.cleaning_date >= $1 OR b.check_out >= $1)`,
+    [today]
+  );
+
+  const moved = [];
+  const removed = [];
+
+  for (const row of rows) {
+    const orphaned = !row.smoobu_id;
+    const cancelled = !orphaned && row.booking_status !== 'confirmed';
+    const blocked = !orphaned && isBlockedPlatform(row.platform);
+
+    if (orphaned || cancelled || blocked) {
+      // Guarded again rather than trusting the row we read: a cleaner may
+      // have tapped "Start cleaning" between the select and here, and a
+      // clean in progress is not ours to delete.
+      const gone = await getAll(
+        `DELETE FROM cleaning_jobs
+          WHERE id = $1 AND started_at IS NULL AND completed_at IS NULL
+          RETURNING id`,
+        [row.id]
+      );
+      if (gone.length) {
+        removed.push({ id: row.id, why: orphaned ? 'booking gone' : cancelled ? 'cancelled' : 'blocked' });
+      }
+      continue;
+    }
+
+    const was = ymd(row.cleaning_date);
+    const should = ymd(row.check_out);
+    if (was !== should) {
+      const changed = await getAll(
+        `UPDATE cleaning_jobs SET cleaning_date = $1
+          WHERE id = $2 AND started_at IS NULL AND completed_at IS NULL
+          RETURNING id`,
+        [should, row.id]
+      );
+      if (changed.length) moved.push({ id: row.id, from: was, to: should });
+    }
+  }
+
+  if (moved.length || removed.length) {
+    console.log(
+      `Cleaning jobs reconciled: ${moved.length} moved, ${removed.length} removed` +
+      (moved.length ? ` (${moved.map((m) => `#${m.id} ${m.from}->${m.to}`).join(', ')})` : '')
+    );
+  }
+
+  return { moved, removed };
+}
+
 // Run assignment for all upcoming checkouts
 async function runAssignmentForAllCheckouts() {
   const today = new Date().toISOString().split('T')[0];
   const futureDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
     .toISOString()
     .split('T')[0];
+
+  // Existing jobs are brought back in line first, because the query below
+  // treats "this booking already has a job" as "nothing to do" — see
+  // reconcileCleaningJobs for why that is not the same thing.
+  await reconcileCleaningJobs();
 
   // Get all bookings with upcoming checkouts that don't have a cleaning job yet
   const rows = await getAll(
@@ -281,6 +389,7 @@ function formatTime(minutes) {
 }
 
 module.exports = {
+  reconcileCleaningJobs,
   assignCleanerForCheckout,
   runAssignmentForAllCheckouts,
   unassignCleanerFromBooking,

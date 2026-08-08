@@ -333,3 +333,150 @@ test('runAssignmentForAllCheckouts: only bookings checking out inside the 30-day
 function daysFromNow(n) {
   return new Date(Date.now() + n * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
+
+// --- reconciliation: jobs follow their booking ---------------------------
+
+/**
+ * Assignment only ever created.
+ *
+ * Its query skips any booking that already has a job, so once a job
+ * existed nothing looked at it again. A booking that moved left its clean
+ * behind: production had a stay running to 31 July whose clean sat on 30
+ * June, a date nothing checked out on. The webhook path rebuilds the job,
+ * but a change arriving by sync never reached that code.
+ */
+
+const { reconcileCleaningJobs } = require('../../src/services/cleaner-assignment');
+
+/** A date N days from today, as YYYY-MM-DD. */
+const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+
+async function jobFor(smoobuId) {
+  const { rows } = await pool.query(
+    'SELECT * FROM cleaning_jobs WHERE booking_id = $1', [smoobuId]
+  );
+  return rows[0] || null;
+}
+
+async function seedJob({ property, cleaner, smoobuId, date }) {
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, booking_id, cleaning_date,
+       start_time, end_time, status)
+     VALUES ($1, $2, $3, $4, '10:00', '13:00', 'pending')`,
+    [property.id, cleaner.id, smoobuId, date]
+  );
+}
+
+test('a booking that moved takes its cleaning job with it', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await linkCleanerToProperty(cleaner, property);
+
+  // The stay now ends later than when the job was created.
+  const booking = await seedBooking({
+    property, smoobu_id: 999001, check_in: inDays(1), check_out: inDays(20),
+  });
+  await seedJob({ property, cleaner, smoobuId: 999001, date: inDays(5) });
+
+  const out = await reconcileCleaningJobs();
+
+  const job = await jobFor(999001);
+  assert.equal(
+    job.cleaning_date instanceof Date
+      ? job.cleaning_date.toISOString().slice(0, 10)
+      : String(job.cleaning_date).slice(0, 10),
+    inDays(20),
+    'the clean belongs on the day the guest actually leaves'
+  );
+  assert.equal(out.moved.length, 1);
+  assert.equal(booking.smoobu_id, 999001);
+});
+
+test('a cancelled booking loses its cleaning job', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await seedBooking({
+    property, smoobu_id: 999002, check_in: inDays(1), check_out: inDays(6),
+    status: 'cancelled',
+  });
+  await seedJob({ property, cleaner, smoobuId: 999002, date: inDays(6) });
+
+  await reconcileCleaningJobs();
+  assert.equal(await jobFor(999002), null);
+});
+
+test('a job left over from a blocked night is removed', async () => {
+  // Smoobu writes "Blocked channel auto" rows for nights off sale. Nobody
+  // slept there, so nobody cleans.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await seedBooking({
+    property, smoobu_id: 999003, check_in: inDays(2), check_out: inDays(3),
+    platform: 'Blocked channel auto',
+  });
+  await seedJob({ property, cleaner, smoobuId: 999003, date: inDays(3) });
+
+  await reconcileCleaningJobs();
+  assert.equal(await jobFor(999003), null);
+});
+
+test('a job whose booking no longer exists is removed', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await seedJob({ property, cleaner, smoobuId: 999004, date: inDays(4) });
+
+  await reconcileCleaningJobs();
+  assert.equal(await jobFor(999004), null, 'nothing justifies this clean');
+});
+
+test('work already started is never touched', async () => {
+  // started_at and completed_at are the record of what somebody actually
+  // did. No reconciliation is worth rewriting them.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await seedBooking({
+    property, smoobu_id: 999005, check_in: inDays(1), check_out: inDays(9),
+    status: 'cancelled',
+  });
+  await seedJob({ property, cleaner, smoobuId: 999005, date: inDays(2) });
+  await pool.query("UPDATE cleaning_jobs SET started_at = NOW() WHERE booking_id = 999005");
+
+  await reconcileCleaningJobs();
+  assert.ok(await jobFor(999005), 'a clean in progress survives a cancelled booking');
+});
+
+test('the past is left alone', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await seedJob({ property, cleaner, smoobuId: 999006, date: inDays(-30) });
+
+  await reconcileCleaningJobs();
+  assert.ok(await jobFor(999006), 'last month is history, right or wrong');
+});
+
+test('a job already on the right day is not churned', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await seedBooking({
+    property, smoobu_id: 999007, check_in: inDays(1), check_out: inDays(7),
+  });
+  await seedJob({ property, cleaner, smoobuId: 999007, date: inDays(7) });
+
+  const out = await reconcileCleaningJobs();
+  assert.equal(out.moved.length, 0, 'a Date object compared with === would move everything');
+  assert.equal(out.removed.length, 0);
+});
