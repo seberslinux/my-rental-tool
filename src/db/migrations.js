@@ -278,6 +278,26 @@ async function runMigrations() {
       FOREIGN KEY (cleaner_id) REFERENCES cleaners(id) ON DELETE CASCADE
     );
 
+    -- A cleaner may put an item on the shopping list.
+    --
+    -- added_by is a foreign key to users, and a cleaner signing in with a
+    -- PIN has no user row — so the endpoint refused them outright:
+    -- "Shopping list not available for PIN-auth cleaners". The person who
+    -- runs out of bin liners is precisely the person standing in the
+    -- kitchen. Either column may be null; exactly one is set.
+    ALTER TABLE shopping_list ALTER COLUMN added_by DROP NOT NULL;
+    ALTER TABLE shopping_list ADD COLUMN IF NOT EXISTS added_by_cleaner_id INTEGER
+      REFERENCES cleaners(id) ON DELETE SET NULL;
+
+    -- When the cleaner arrived and when they finished.
+    --
+    -- cleaning_jobs carried a status and no times at all, so nothing
+    -- recorded when a property was actually turned over or how long it
+    -- took — the two facts that tell you whether the next check-in is
+    -- safe and whether an hourly rate matches the work.
+    ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+    ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+
     -- One-time invitations that let a cleaner set their own PIN.
     --
     -- The owner decides who gets access; the cleaner decides how they get
@@ -475,10 +495,23 @@ async function runMigrations() {
     ON CONFLICT (user_id, property_id) DO NOTHING
   `);
 
-  // Add 'ready' to cleaning_jobs status CHECK constraint (PG)
+  // The cleaning_jobs status CHECK lives here and nowhere else.
+  //
+  // 'declined' lets a cleaner say no: without it the only way to refuse
+  // was silence, and a job left at 'pending' is indistinguishable from
+  // one nobody has read, so an owner never knows to reassign it.
+  // 'in_progress' is set when they check in.
+  //
+  // Editing this in a second place does not work — it is rebuilt here on
+  // every boot, so an earlier ALTER in the schema block above is simply
+  // overwritten a few hundred lines later. That is exactly what happened
+  // on the first attempt, and the tests caught it.
   try {
     await pool.query("ALTER TABLE cleaning_jobs DROP CONSTRAINT IF EXISTS cleaning_jobs_status_check");
-    await pool.query("ALTER TABLE cleaning_jobs ADD CONSTRAINT cleaning_jobs_status_check CHECK(status IN ('pending', 'confirmed', 'completed', 'ready'))");
+    await pool.query(
+      "ALTER TABLE cleaning_jobs ADD CONSTRAINT cleaning_jobs_status_check " +
+      "CHECK(status IN ('pending', 'confirmed', 'declined', 'in_progress', 'completed', 'ready'))"
+    );
   } catch (e) { /* constraint already updated */ }
 
   // Unique index for review deduplication
