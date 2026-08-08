@@ -104,9 +104,16 @@ export function CleanersPage() {
   const [formRate, setFormRate] = useState('');
   const [formRateType, setFormRateType] = useState('hourly');
   const [formPin, setFormPin] = useState('');
+  const [editingId, setEditingId] = useState<number | null>(null);
+  // Schedule and Edit open the same form — the weekly availability lives
+  // in it — so Schedule scrolls straight to that section rather than
+  // dropping the user at the top of a long form.
+  const [focusAvailability, setFocusAvailability] = useState(false);
+  const availabilityRef = React.useRef<HTMLDivElement>(null);
   const [invitingId, setInvitingId] = useState<number | null>(null);
   const [invite, setInvite] = useState<
-  { cleanerId: number; url: string; days: number; copied: boolean } | null>(null);
+  { cleanerId: number; url: string; days: number; copied: boolean;
+    sent: boolean; reason?: string } | null>(null);
   const [formNotes, setFormNotes] = useState('');
   const [formPropertyIds, setFormPropertyIds] = useState<number[]>([]);
   const [formAvailability, setFormAvailability] = useState<{ enabled: boolean; start: string; end: string }[]>(
@@ -195,7 +202,59 @@ export function CleanersPage() {
     }
   }
 
-  // Add cleaner handler
+  /**
+   * Open the form on an existing cleaner.
+   *
+   * Edit and Schedule were rendered as buttons with no onClick — they
+   * looked live and did nothing, so a cleaner's details could be created
+   * but never corrected. Fixing a wrong phone number, which is what
+   * stands between a cleaner and their first login, was impossible from
+   * the UI.
+   */
+  const handleEditCleaner = (cleaner: any, focus: 'details' | 'availability' = 'details') => {
+    setEditingId(cleaner.id);
+    setFocusAvailability(focus === 'availability');
+    setFormName(cleaner.name || '');
+    setFormPhone(cleaner.phone || '');
+    setFormEmail(cleaner.email || '');
+    setFormRateType(cleaner.rate_type === 'hourly' ? 'hourly' : 'flat');
+    setFormRate(String(
+      cleaner.rate_type === 'hourly' ? cleaner.hourly_rate || '' : cleaner.flat_rate || ''
+    ));
+    setFormNotes(cleaner.notes || '');
+    // Left blank on purpose: PINs are hashed and cannot be read back, and
+    // the server keeps the existing one when this is empty. Typing a new
+    // one replaces it.
+    setFormPin('');
+    setFormPropertyIds((cleaner.properties || []).map((p: any) => p.id ?? p));
+
+    // day_of_week (0=Sun) back to form order (0=Mon … 6=Sun).
+    const formIndex = [6, 0, 1, 2, 3, 4, 5];
+    const slots = [0, 1, 2, 3, 4, 5, 6].map(() => ({ enabled: false, start: '09:00', end: '17:00' }));
+    (cleaner.availability || []).forEach((a: any) => {
+      const i = formIndex[a.day_of_week];
+      if (i !== undefined) slots[i] = { enabled: true, start: a.start_time, end: a.end_time };
+    });
+    setFormAvailability(slots);
+    setShowAddForm(true);
+  };
+
+  React.useEffect(() => {
+    if (showAddForm && focusAvailability) {
+      availabilityRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setFocusAvailability(false);
+    }
+  }, [showAddForm, focusAvailability]);
+
+  const resetForm = () => {
+    setEditingId(null);
+    setFormName(''); setFormPhone(''); setFormEmail(''); setFormRate('');
+    setFormRateType('hourly'); setFormPin(''); setFormNotes('');
+    setFormPropertyIds([]);
+    setFormAvailability([0,1,2,3,4,5,6].map(() => ({ enabled: false, start: '09:00', end: '17:00' })));
+  };
+
+  // Add or update, depending on whether the form was opened on a cleaner
   const handleAddCleaner = async () => {
     // Build availability array: day_of_week uses 0=Sun mapping
     // Form index 0=Mon(1), 1=Tue(2), ..., 5=Sat(6), 6=Sun(0)
@@ -224,27 +283,28 @@ export function CleanersPage() {
       property_ids: formPropertyIds,
     };
 
+    // An empty PIN on an edit means "leave it alone" — the server only
+    // overwrites when a value is sent, and a hashed PIN cannot be shown
+    // back to be re-submitted.
+    if (editingId && !formPin) delete body.pin;
+
     try {
-      const res = await fetch('/api/cleaners', {
-        method: 'POST',
+      const res = await fetch(editingId ? `/api/cleaners/${editingId}` : '/api/cleaners', {
+        method: editingId ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify(body),
       });
       if (res.ok) {
         setShowAddForm(false);
-        // Reset form
-        setFormName(''); setFormPhone(''); setFormEmail(''); setFormRate('');
-        setFormRateType('hourly'); setFormPin(''); setFormNotes('');
-        setFormPropertyIds([]);
-        setFormAvailability([0,1,2,3,4,5,6].map(() => ({ enabled: false, start: '09:00', end: '17:00' })));
+        resetForm();
         fetchData();
       } else {
         const err = await res.json().catch(() => ({}));
-        alert(`Failed to add cleaner: ${err.error || res.statusText}`);
+        alert(`Failed to ${editingId ? 'update' : 'add'} cleaner: ${err.error || res.statusText}`);
       }
     } catch (e) {
-      alert('Network error adding cleaner');
+      alert(`Network error ${editingId ? 'updating' : 'adding'} cleaner`);
     }
   };
 
@@ -269,7 +329,14 @@ export function CleanersPage() {
         throw new Error(data.error || 'Could not create an invitation');
       }
       const data = await res.json();
-      setInvite({ cleanerId: id, url: data.url, days: data.expires_in_days, copied: false });
+      setInvite({
+        cleanerId: id,
+        url: data.url,
+        days: data.expires_in_days,
+        copied: false,
+        sent: !!data.sent,
+        reason: data.reason,
+      });
     } catch (err: any) {
       alert(err.message);
     } finally {
@@ -595,25 +662,43 @@ export function CleanersPage() {
                     in a toast because it has to be copied, and a message
                     that vanishes is no use for that. */}
                 {invite && invite.cleanerId === cleaner.id &&
-                <div className="mx-3 md:mx-4 mb-3 mt-1 p-3 bg-[#F0FDF4] border border-[#86EFAC] rounded-[8px]">
-                    <p className="text-[12px] font-medium text-[#166534] mb-1.5">
-                      Send this to {cleaner.name}. It works once, for {invite.days} days.
-                    </p>
-                    <div className="flex gap-2">
-                      <input
-                      readOnly
-                      value={invite.url}
-                      onFocus={(e) => e.currentTarget.select()}
-                      className="flex-1 min-w-0 px-2 py-1.5 text-[12px] bg-white border border-[#86EFAC] rounded-[6px] text-[#222222]" />
-                      <button
-                      onClick={() => {
-                        navigator.clipboard?.writeText(invite.url);
-                        setInvite({ ...invite, copied: true });
-                      }}
-                      className="shrink-0 px-3 py-1.5 text-[12px] font-semibold bg-[#166534] text-white rounded-[6px] hover:bg-[#14532D]">
-                        {invite.copied ? 'Copied' : 'Copy'}
-                      </button>
-                    </div>
+                <div className={`mx-3 md:mx-4 mb-3 mt-1 p-3 rounded-[8px] border ${
+                invite.sent ?
+                'bg-[#F0FDF4] border-[#86EFAC]' :
+                'bg-[#FFFBEB] border-[#FCD34D]'}`}>
+
+                    {invite.sent ?
+                  <p className="text-[12px] font-medium text-[#166534]">
+                        Sent to {cleaner.name} on WhatsApp. The link works once, for {invite.days} days.
+                      </p> :
+
+                  <>
+                        {/* The reason is shown rather than hidden. A message
+                            that silently did not arrive is worse than one
+                            that visibly did not. */}
+                        <p className="text-[12px] font-medium text-[#92400E] mb-1">
+                          Couldn't send on WhatsApp{invite.reason ? `: ${invite.reason}` : ''}
+                        </p>
+                        <p className="text-[12px] text-[#92400E] mb-1.5">
+                          Send this to {cleaner.name} yourself. It works once, for {invite.days} days.
+                        </p>
+                        <div className="flex gap-2">
+                          <input
+                        readOnly
+                        value={invite.url}
+                        onFocus={(e) => e.currentTarget.select()}
+                        className="flex-1 min-w-0 px-2 py-1.5 text-[12px] bg-white border border-[#FCD34D] rounded-[6px] text-[#222222]" />
+                          <button
+                        onClick={() => {
+                          navigator.clipboard?.writeText(invite.url);
+                          setInvite({ ...invite, copied: true });
+                        }}
+                        className="shrink-0 px-3 py-1.5 text-[12px] font-semibold bg-[#92400E] text-white rounded-[6px] hover:bg-[#78350F]">
+                            {invite.copied ? 'Copied' : 'Copy'}
+                          </button>
+                        </div>
+                      </>
+                  }
                   </div>
                 }
                 <div className="p-3 md:p-4 bg-[#F7F7F7] border-t border-[#F0F0F0] flex justify-end gap-2">
@@ -623,10 +708,14 @@ export function CleanersPage() {
                     className="px-3 py-1.5 text-[12px] md:text-[13px] font-medium bg-white border border-[#EBEBEB] rounded-[6px] hover:bg-[#F0F0F0] text-[#222222] disabled:opacity-60">
                     {invitingId === cleaner.id ? 'Creating…' : 'Invite'}
                   </button>
-                  <button className="px-3 py-1.5 text-[12px] md:text-[13px] font-medium bg-white border border-[#EBEBEB] rounded-[6px] hover:bg-[#F0F0F0] text-[#222222]">
+                  <button
+                    onClick={() => handleEditCleaner(cleaner)}
+                    className="px-3 py-1.5 text-[12px] md:text-[13px] font-medium bg-white border border-[#EBEBEB] rounded-[6px] hover:bg-[#F0F0F0] text-[#222222]">
                     Edit
                   </button>
-                  <button className="px-3 py-1.5 text-[12px] md:text-[13px] font-medium bg-white border border-[#EBEBEB] rounded-[6px] hover:bg-[#F0F0F0] text-[#222222]">
+                  <button
+                    onClick={() => handleEditCleaner(cleaner, 'availability')}
+                    className="px-3 py-1.5 text-[12px] md:text-[13px] font-medium bg-white border border-[#EBEBEB] rounded-[6px] hover:bg-[#F0F0F0] text-[#222222]">
                     Schedule
                   </button>
                   <button
@@ -648,7 +737,7 @@ export function CleanersPage() {
       <div>
         {!showAddForm ?
         <button
-          onClick={() => setShowAddForm(true)}
+          onClick={() => { resetForm(); setShowAddForm(true); }}
           className="flex items-center gap-2 text-[#007AFF] font-semibold text-[14px] hover:underline">
 
             <Plus className="w-4 h-4" />
@@ -658,10 +747,10 @@ export function CleanersPage() {
         <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB] overflow-hidden">
             <div className="p-4 md:p-5 border-b border-[#EBEBEB] flex justify-between items-center bg-[#F7F7F7]">
               <h2 className="text-[15px] md:text-[16px] font-semibold text-[#222222]">
-                Add New Cleaner
+                {editingId ? 'Edit Cleaner' : 'Add New Cleaner'}
               </h2>
               <button
-              onClick={() => setShowAddForm(false)}
+              onClick={() => { setShowAddForm(false); resetForm(); }}
               className="text-[#717171] hover:text-[#222222]">
 
                 <X className="w-5 h-5" />
@@ -695,7 +784,7 @@ export function CleanersPage() {
                 </div>
                 <div>
                   <label className="block text-[12px] md:text-[13px] font-medium text-[#222222] mb-1.5">
-                    PIN (4 digits)
+                    PIN (4 digits) <span className="font-normal text-[#717171]">optional</span>
                   </label>
                   <input
                   type="text"
@@ -703,6 +792,11 @@ export function CleanersPage() {
                   value={formPin}
                   onChange={(e) => setFormPin(e.target.value)}
                   className="w-full h-10 px-3 border border-[#EBEBEB] rounded-[8px] text-[13px] md:text-[14px] focus:outline-none focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF]" />
+                  <p className="mt-1 text-[11px] text-[#717171]">
+                    {editingId ?
+                    'Leave blank to keep their current PIN.' :
+                    'Leave blank — Invite lets them choose their own.'}
+                  </p>
 
                 </div>
               </div>
@@ -777,7 +871,7 @@ export function CleanersPage() {
                 </div>
               </div>
 
-              <div>
+              <div ref={availabilityRef}>
                 <label className="block text-[12px] md:text-[13px] font-medium text-[#222222] mb-3">
                   Weekly Availability
                 </label>
@@ -903,7 +997,7 @@ export function CleanersPage() {
 
               <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-4 border-t border-[#F0F0F0]">
                 <button
-                onClick={() => setShowAddForm(false)}
+                onClick={() => { setShowAddForm(false); resetForm(); }}
                 className="w-full sm:w-auto px-4 py-2 text-[13px] md:text-[14px] font-semibold text-[#222222] bg-white border border-[#EBEBEB] rounded-[8px] hover:bg-[#F7F7F7]">
 
                   Cancel
@@ -912,7 +1006,7 @@ export function CleanersPage() {
                 onClick={handleAddCleaner}
                 className="w-full sm:w-auto px-4 py-2 text-[13px] md:text-[14px] font-semibold text-white bg-[#007AFF] rounded-[8px] hover:bg-[#0066CC] shadow-[0_1px_3px_rgba(0,122,255,0.3)]">
 
-                  Add Cleaner
+                  {editingId ? 'Save Changes' : 'Add Cleaner'}
                 </button>
               </div>
             </div>
