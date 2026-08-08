@@ -15,47 +15,91 @@
  * for a formatting mismatch — the one thing the cleaner would retype,
  * and the one thing that was never wrong.
  *
+ * ## Why there is no default country
+ *
+ * The obvious fix is to read a leading zero as the South African trunk
+ * prefix and bolt 27 onto the front. That is wrong the moment a cleaner
+ * is not South African: a German number typed in German national form,
+ * "030 12345678", would become 27 3012345678 — a Cape Town prefix on a
+ * Berlin line — and never match the +49 number on file.
+ *
+ * A leading zero means "national format" in South Africa, Germany, the
+ * UK and most of Europe, and nothing in the string says which. So this
+ * does not guess. It compares the national part against the *stored*
+ * number and lets that number supply the country: if the digits on file
+ * end with the digits typed, and what remains in front is the length of
+ * a country code, they are the same line. That works for +27 and +49
+ * alike without a table of dialling codes.
+ *
  * Nothing is rewritten in the database. Both sides are normalised at the
  * moment of comparison, so existing rows keep whatever format they were
  * entered in.
  */
 
-// The properties are in Cape Town and cleaners are local, so a number
-// written in national form ("082...") is South African. Only the leading
-// zero is ambiguous; anything already carrying a country code is left
-// alone.
-const DEFAULT_COUNTRY_CODE = '27';
+// Country codes are one to three digits (+1, +27, +49, +351). Anything
+// longer in front of a matching national number is not a country code,
+// it is a different number.
+const MAX_COUNTRY_CODE_DIGITS = 3;
+
+// Short strings must not match by suffix: "234567" should not sign
+// someone in against +27821234567. Real subscriber numbers are longer.
+const MIN_NATIONAL_DIGITS = 6;
 
 /**
- * Reduce a number to comparable digits.
+ * Reduce a number to its digits, resolving only what is unambiguous.
  *
  *   "+27 82 123 4567" -> "27821234567"
- *   "082 123 4567"    -> "27821234567"
- *   "(082) 123-4567"  -> "27821234567"
+ *   "(082) 123-4567"  -> "0821234567"    (national form, country unknown)
+ *   "0049 30 1234"    -> "49301234"      (00 is international everywhere)
  *
- * Returns '' for anything with no digits at all, which never matches —
- * an empty stored number must not let someone log in by sending "".
+ * The leading zero is deliberately left in place: resolving it needs a
+ * country, and this function is not given one. samePhone() resolves it
+ * against the number on file.
  */
 function normalizePhone(raw) {
   if (raw === null || raw === undefined) return '';
   const digits = String(raw).replace(/\D/g, '');
   if (!digits) return '';
-
-  // 00 is the international prefix in much of the world — 0027... is the
-  // same number as +27...
+  // 00 is the international access prefix in most of the world, so
+  // 0027... and 0049... are unambiguous.
   if (digits.startsWith('00')) return digits.slice(2);
-
-  // A single leading zero is the national trunk prefix: drop it and add
-  // the country code.
-  if (digits.startsWith('0')) return DEFAULT_COUNTRY_CODE + digits.replace(/^0+/, '');
-
   return digits;
+}
+
+/** The subscriber part of a national-format number, or null. */
+function nationalPart(digits) {
+  if (!digits.startsWith('0')) return null;
+  const national = digits.replace(/^0+/, '');
+  return national.length >= MIN_NATIONAL_DIGITS ? national : null;
+}
+
+/**
+ * Is `international` the same line as national-format `national`?
+ * True when the full number ends with it and the country code in front
+ * is a plausible length.
+ */
+function matchesWithCountryCode(international, national) {
+  if (!international.endsWith(national)) return false;
+  const cc = international.length - national.length;
+  return cc >= 1 && cc <= MAX_COUNTRY_CODE_DIGITS;
 }
 
 /** Do two numbers refer to the same line, however they were written? */
 function samePhone(a, b) {
   const na = normalizePhone(a);
-  return na !== '' && na === normalizePhone(b);
+  const nb = normalizePhone(b);
+  if (na === '' || nb === '') return false;
+  if (na === nb) return true;
+
+  // One side written nationally, the other with its country code — the
+  // international one tells us which country the zero stood for.
+  const partA = nationalPart(na);
+  if (partA && matchesWithCountryCode(nb, partA)) return true;
+
+  const partB = nationalPart(nb);
+  if (partB && matchesWithCountryCode(na, partB)) return true;
+
+  return false;
 }
 
-module.exports = { normalizePhone, samePhone, DEFAULT_COUNTRY_CODE };
+module.exports = { normalizePhone, samePhone };

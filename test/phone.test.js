@@ -9,78 +9,97 @@ const { normalizePhone, samePhone } = require('../src/services/phone');
  * saved as "+27821234567", and the rejection said "Invalid phone or
  * PIN": it blamed the PIN, the one thing that was never wrong.
  *
- * These pin the shapes a person actually types.
+ * The first fix read a leading zero as the South African trunk prefix.
+ * That breaks for any cleaner who is not South African — a German
+ * number typed as "030 12345678" would have become 27 3012345678, a
+ * Cape Town prefix on a Berlin line. No country is assumed now; the
+ * stored number supplies it.
  */
 
-const CANONICAL = '27821234567';
+// --- one number, however it is written ----------------------------------
 
-// --- the forms one South African number arrives in ----------------------
-
-test('spaces, as the login placeholder itself suggests', () => {
-  assert.equal(normalizePhone('+27 82 123 4567'), CANONICAL);
+test('the placeholder form and the stored form are the same line', () => {
+  assert.ok(samePhone('+27 82 123 4567', '+27821234567'));
 });
 
-test('national form with the trunk zero', () => {
-  assert.equal(normalizePhone('082 123 4567'), CANONICAL);
+test('national form matches the international number on file', () => {
+  assert.ok(samePhone('082 123 4567', '+27821234567'));
 });
 
-test('the 00 international prefix', () => {
-  assert.equal(normalizePhone('0027821234567'), CANONICAL);
+test('the 00 international prefix resolves without a country guess', () => {
+  assert.equal(normalizePhone('0027821234567'), '27821234567');
+  assert.ok(samePhone('0027821234567', '+27 82 123 4567'));
 });
 
-test('brackets and dashes', () => {
-  assert.equal(normalizePhone('(082) 123-4567'), CANONICAL);
-});
-
-test('already canonical, left alone', () => {
-  assert.equal(normalizePhone('27821234567'), CANONICAL);
-});
-
-test('every one of those is the same line', () => {
-  const forms = [
-    '+27 82 123 4567',
-    '082 123 4567',
-    '0027821234567',
-    '(082) 123-4567',
-    '27821234567',
-    '+27-82-123-4567',
-  ];
-  for (const f of forms) {
+test('brackets, dashes and spaces are all noise', () => {
+  for (const f of ['(082) 123-4567', '082-123-4567', '082 123 4567', '0821234567']) {
     assert.ok(samePhone(f, '+27821234567'), `${f} should match`);
   }
 });
 
-// --- numbers that must not be conflated ---------------------------------
-
-test('different numbers stay different', () => {
-  assert.ok(!samePhone('082 123 4567', '082 123 4568'));
+test('it works in both directions', () => {
+  // Whichever side happens to be stored nationally.
+  assert.ok(samePhone('+27821234567', '082 123 4567'));
+  assert.ok(samePhone('082 123 4567', '+27821234567'));
 });
 
-test('a foreign number keeps its own country code', () => {
-  // Jane's stored number is a 17-digit +34... string. It must normalise
-  // to itself, not have a 27 bolted on.
-  assert.equal(normalizePhone('+34435433243242'), '34435433243242');
-  assert.ok(!samePhone('+34435433243242', '0435433243242'));
+// --- any country, not just South Africa ---------------------------------
+
+test('a German number typed in German national form matches', () => {
+  // The case that broke the first version: +49 on file, 030… typed.
+  assert.ok(samePhone('+49 30 12345678', '030 12345678'));
+});
+
+test('German international forms match each other', () => {
+  assert.ok(samePhone('+49 30 12345678', '0049 30 12345678'));
+  assert.ok(samePhone('+49 30 12345678', '49 30 12345678'));
+});
+
+test('a UK number in national form matches', () => {
+  assert.ok(samePhone('+44 20 7123 4567', '020 7123 4567'));
+});
+
+test('normalizePhone leaves the national zero alone', () => {
+  // Resolving it needs a country, and this function is not given one.
+  assert.equal(normalizePhone('082 123 4567'), '0821234567');
+  assert.equal(normalizePhone('+27 82 123 4567'), '27821234567');
+});
+
+// --- numbers that must not be conflated ---------------------------------
+
+test('the same digits under different country codes are different lines', () => {
+  assert.ok(!samePhone('+27 82 123 4567', '+49 82 123 4567'));
+});
+
+test('different subscriber numbers stay different', () => {
+  assert.ok(!samePhone('082 123 4567', '082 123 4568'));
+  assert.ok(!samePhone('+49 30 12345678', '+49 30 12345679'));
+});
+
+test('a suffix match is not enough on its own', () => {
+  // "1234567" appearing at the end of a longer number must not sign
+  // anyone in — what precedes it has to be country-code length.
+  assert.ok(!samePhone('01234567', '+27 99 888 1234567'));
+});
+
+test('a short string cannot match by suffix', () => {
+  assert.ok(!samePhone('0234567', '+27821234567'));
+  assert.ok(!samePhone('0', '+27 82 123 4567'));
 });
 
 // --- the empty case, which is a security question -----------------------
 
 test('an empty stored number never matches anything', () => {
   // A cleaner row saved with no phone must not let someone in by
-  // submitting "" — or by submitting a string of punctuation.
+  // submitting "" — or a string of punctuation.
   assert.equal(normalizePhone(''), '');
   assert.ok(!samePhone('', ''));
   assert.ok(!samePhone('+-() ', ''));
   assert.ok(!samePhone(null, null));
-  assert.ok(!samePhone(undefined, ''));
+  assert.ok(!samePhone(undefined, '+27821234567'));
 });
 
 test('non-string input does not throw', () => {
-  assert.equal(normalizePhone(27821234567), CANONICAL);
+  assert.equal(normalizePhone(27821234567), '27821234567');
   assert.equal(normalizePhone(null), '');
-});
-
-test('a lone zero is not a phone number', () => {
-  assert.equal(normalizePhone('0'), '27');
-  assert.ok(!samePhone('0', '+27 82 123 4567'));
 });
