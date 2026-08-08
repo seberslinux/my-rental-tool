@@ -58,6 +58,29 @@ export const CLEANER_TOGGLE = true;
 export let properties: Property[] = [];
 export let bookings: Booking[] = [];
 export let cleaners: Record<number, number[]> = {};
+
+/** One entry per date: who is free, what is scheduled, what is short. */
+export interface CleaningDay {
+  available: {id: number;name: string;property_ids: number[];}[];
+  jobs: {
+    id: number;property_id: number;property_name: string;
+    cleaner_id: number | null;cleaner_name: string | null;
+    status: string;cleaner_available: boolean;
+  }[];
+  checkouts: {booking_id: number;property_id: number;property_name: string;}[];
+  unmet: {property_id: number;property_name: string;booking_id: number;}[];
+}
+
+/**
+ * The cleaning picture, keyed by date.
+ *
+ * Replaces the `cleaners` map above for anything that needs to be right.
+ * That one holds day-of-month numbers, so a job on the 19th of August
+ * marked the 19th of every month — and it knew nothing about
+ * availability at all, which is why a cleaner setting their days changed
+ * nothing the manager could see.
+ */
+export let cleaningDays: Record<string, CleaningDay> = {};
 // propId → 'YYYY-MM-DD' → rate. Only days Smoobu has actually published
 // appear; a missing day means "no rate synced", which the calendar draws as
 // blank rather than guessing.
@@ -206,6 +229,16 @@ export function holidaysDuring(b: Booking): HolidayWindow[] {
  * rates — the endpoint refuses it — so the grid renders no money without
  * anybody having to ask it not to.
  */
+/** Pull the cleaning picture for a date range into `cleaningDays`. */
+export async function loadCleaningDays(from: string, to: string): Promise<void> {
+  const res = await fetch(`/api/cleaners/calendar?from=${from}&to=${to}`, {
+    credentials: 'same-origin',
+  });
+  if (!res.ok) return;
+  const data = await res.json();
+  cleaningDays = data.days || {};
+}
+
 export async function loadCleanerCalendarData(): Promise<void> {
   const [meRes, jobsRes, staysRes] = await Promise.all([
     fetch('/api/cleaner-portal/me', { credentials: 'same-origin' }),

@@ -244,3 +244,96 @@ test('a Passport user whose role is cleaner is restricted too', async () => {
   await agent.get('/api/dashboard/kpis').expect(403);
   await agent.get('/api/analytics/data').expect(403);
 });
+
+// --- the manager's cleaning calendar -------------------------------------
+
+/**
+ * What the manager's calendar can see.
+ *
+ * It previously drew one marker from pending jobs keyed by day-of-month —
+ * a job on the 19th of August marked the 19th of every month — and knew
+ * nothing about availability at all, so a cleaner setting their days
+ * changed nothing anybody could see.
+ */
+
+test('the cleaning calendar reports who is free, per date', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await linkCleanerToProperty(cleaner, property);
+  // Tuesdays only.
+  await pool.query(
+    `INSERT INTO cleaner_availability (cleaner_id, day_of_week, start_time, end_time)
+     VALUES ($1, 2, '09:00', '17:00')`, [cleaner.id]
+  );
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.get('/api/cleaners/calendar?from=2026-08-10&to=2026-08-12').expect(200);
+
+  assert.deepEqual(res.body.days['2026-08-10'].available, [], 'Monday is not theirs');
+  assert.equal(res.body.days['2026-08-11'].available.length, 1, 'Tuesday is');
+  assert.deepEqual(res.body.days['2026-08-12'].available, [], 'Wednesday is not');
+});
+
+test('a checkout with nobody attached is reported as unmet', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  await seedBooking({ property, smoobu_id: 5150, check_in: '2026-08-08', check_out: '2026-08-11' });
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.get('/api/cleaners/calendar?from=2026-08-11&to=2026-08-11').expect(200);
+
+  const day = res.body.days['2026-08-11'];
+  assert.equal(day.checkouts.length, 1);
+  assert.equal(day.unmet.length, 1, 'every checkout needs a cleaner or its nights get blocked');
+});
+
+test('a blocked night is not a checkout and needs nobody', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  await seedBooking({
+    property, smoobu_id: 5151, check_in: '2026-08-10', check_out: '2026-08-11',
+    platform: 'Blocked channel auto',
+  });
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.get('/api/cleaners/calendar?from=2026-08-11&to=2026-08-11').expect(200);
+  assert.equal(res.body.days['2026-08-11'].unmet.length, 0, 'nobody slept there');
+});
+
+test('a cleaner who has since gone unavailable shows as a clash, not as covered', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await linkCleanerToProperty(cleaner, property);
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, cleaning_date, start_time, end_time, status)
+     VALUES ($1, $2, '2026-08-11', '10:00', '13:00', 'confirmed')`,
+    [property.id, cleaner.id]
+  );
+  await pool.query(
+    `INSERT INTO cleaner_availability_overrides (cleaner_id, date, available)
+     VALUES ($1, '2026-08-11', 0)`, [cleaner.id]
+  );
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.get('/api/cleaners/calendar?from=2026-08-11&to=2026-08-11').expect(200);
+
+  const job = res.body.days['2026-08-11'].jobs[0];
+  assert.equal(job.cleaner_available, false,
+    'assigned is not the same as still willing, and nothing else says so');
+});
+
+test('a cleaner session cannot read the cleaning calendar', async () => {
+  // It names every cleaner and where they work.
+  const { agent } = await cleanerSession('+27821119999');
+  await agent.get('/api/cleaners/calendar?from=2026-08-11&to=2026-08-11').expect(403);
+});
