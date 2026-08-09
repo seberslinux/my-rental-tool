@@ -289,6 +289,7 @@ export function App() {
       <CleaningDaySheet
         date={pickedDay}
         day={cleaningDays[pickedDay]}
+        propertyId={propertyId}
         propertyName={properties.find((p) => p.id === propertyId)?.name || ''}
         onClose={() => setPickedDay(null)}
         onAssigned={() => {
