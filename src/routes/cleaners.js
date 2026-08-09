@@ -4,6 +4,12 @@ const { getAll, getOne, run, transaction, inParams } = require('../db/database')
 const crypto = require('crypto');
 const { requireRole } = require('../middleware/auth');
 const { sendInviteLink } = require('../services/cleaner-notify');
+// One definition of who can work when, shared with assignment.
+const { loadAvailability, cleanerDayStatus, ymd } = require('../services/availability');
+// One place decides who gets told what.
+const { notify } = require('../services/notify');
+// One definition of what "blocked" means, shared with revenue.
+const { isBlockedPlatform } = require('../services/analytics-calc');
 
 // Long enough that an owner can send it at their convenience, short
 // enough that a link forwarded once and forgotten does not stay live.
@@ -33,6 +39,108 @@ router.get('/', async (req, res) => {
   }
 
   res.json(cleaners);
+});
+
+/**
+ * The calendar's view of cleaning: who is free, what needs doing, and
+ * where the two do not meet.
+ *
+ * The manager's calendar had no idea any of this existed. It drew its
+ * only cleaner marker from pending jobs keyed by day-of-month, so a job
+ * on the 19th of August marked the 19th of every month, and a cleaner
+ * setting their availability in their own app changed nothing anybody
+ * could see.
+ *
+ * The shape is one entry per date, because that is how a grid is drawn.
+ * The interesting field is `unmet`: a checkout with nobody attached.
+ * Every checkout needs a cleaner or its nights get blocked, and until
+ * now there was nowhere to see which ones were still short.
+ */
+router.get('/calendar', async (req, res) => {
+  const from = String(req.query.from || '').slice(0, 10);
+  const to = String(req.query.to || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({ error: 'from and to must be YYYY-MM-DD' });
+  }
+
+  const cleaners = await getAll('SELECT id, name FROM cleaners ORDER BY name');
+  const links = await getAll('SELECT cleaner_id, property_id FROM cleaner_properties');
+  const av = await loadAvailability(cleaners.map((c) => c.id));
+
+  const jobs = await getAll(
+    `SELECT cj.id, cj.property_id, cj.cleaning_date, cj.status, cj.cleaner_id,
+            c.name AS cleaner_name, p.name AS property_name
+       FROM cleaning_jobs cj
+       LEFT JOIN cleaners c ON c.id = cj.cleaner_id
+       LEFT JOIN properties p ON p.id = cj.property_id
+      WHERE cj.cleaning_date >= $1 AND cj.cleaning_date <= $2`,
+    [from, to]
+  );
+
+  // Checkouts are what create the work. Blocks are excluded for the same
+  // reason assignment excludes them: nobody slept there.
+  const checkoutRows = await getAll(
+    `SELECT b.smoobu_id, b.property_id, b.check_out, b.platform, p.name AS property_name
+       FROM bookings b
+       LEFT JOIN properties p ON p.id = b.property_id
+      WHERE b.check_out >= $1 AND b.check_out <= $2 AND b.status = 'confirmed'`,
+    [from, to]
+  );
+  const checkouts = checkoutRows.filter((b) => !isBlockedPlatform(b.platform));
+
+  const days = {};
+  const dayOf = (key) => {
+    if (!days[key]) days[key] = { available: [], jobs: [], checkouts: [], unmet: [] };
+    return days[key];
+  };
+
+  // Walk the range rather than the rows, so a day with nothing on it
+  // still reports who could have worked it.
+  for (let d = new Date(`${from}T00:00:00`); ymd(d) <= to; d.setDate(d.getDate() + 1)) {
+    const key = ymd(d);
+    const day = dayOf(key);
+    cleaners.forEach((c) => {
+      const status = cleanerDayStatus(av, c.id, key);
+      if (status.available) {
+        day.available.push({
+          id: c.id, name: c.name,
+          property_ids: links.filter((l) => l.cleaner_id === c.id).map((l) => l.property_id),
+        });
+      }
+    });
+  }
+
+  jobs.forEach((j) => {
+    const day = dayOf(ymd(j.cleaning_date));
+    // Assigned is not the same as still willing. A cleaner can mark
+    // themselves unavailable on a day they were already given, and
+    // nothing anywhere pointed that out — the job simply sat there
+    // looking covered.
+    const stillFree = j.cleaner_id ?
+    cleanerDayStatus(av, j.cleaner_id, ymd(j.cleaning_date)).available :
+    false;
+    day.jobs.push({
+      id: j.id, property_id: j.property_id, property_name: j.property_name,
+      cleaner_id: j.cleaner_id, cleaner_name: j.cleaner_name, status: j.status,
+      cleaner_available: stillFree,
+    });
+  });
+
+  checkouts.forEach((b) => {
+    const key = ymd(b.check_out);
+    const day = dayOf(key);
+    day.checkouts.push({
+      booking_id: b.smoobu_id, property_id: b.property_id, property_name: b.property_name,
+    });
+    const covered = day.jobs.some(
+      (j) => j.property_id === b.property_id && j.status !== 'declined'
+    );
+    if (!covered) {
+      day.unmet.push({ property_id: b.property_id, property_name: b.property_name, booking_id: b.smoobu_id });
+    }
+  });
+
+  res.json({ from, to, days });
 });
 
 // Pay summary for a month
@@ -309,6 +417,19 @@ router.post('/jobs/assign', async (req, res) => {
   );
 
   const job = await getOne('SELECT * FROM cleaning_jobs WHERE id = $1', [result.rows[0].id]);
+
+  // Tell them. Assigning somebody by hand used to be silent — the job
+  // appeared in their app only if they happened to look, which is not a
+  // way to staff a turnover.
+  const where = await getOne('SELECT name, address FROM properties WHERE id = $1', [property_id]);
+  await notify({
+    event: 'job_assigned',
+    title: `You are cleaning ${where ? where.name : 'a property'} on ${ymd(job.cleaning_date)}`,
+    body: `From ${job.start_time}.${where && where.address ? ' ' + where.address + '.' : ''}`,
+    propertyId: property_id, cleanerId: cleaner_id, jobId: job.id,
+    link: '/',
+  });
+
   res.status(201).json(job);
 });
 

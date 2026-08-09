@@ -39,6 +39,20 @@ interface MonthCalendarProps {
    * as before, so the manager's view is untouched.
    */
   onDayClick?: (date: Date) => void;
+  /**
+   * The cleaning picture for the manager, keyed YYYY-MM-DD.
+   *
+   * Two facts get drawn from it. How many cleaners are free that day,
+   * because a checkout is only coverable if somebody can come. And
+   * whether a checkout has nobody attached — the one thing on this grid
+   * that needs acting on, since every checkout either gets a cleaner or
+   * its nights get blocked.
+   */
+  cleaningDays?: Record<string, {
+    available: {id: number;name: string;property_ids: number[];}[];
+    jobs: {property_id: number;cleaner_available: boolean;}[];
+    unmet: {property_id: number;}[];
+  }>;
   /** Days the person cannot work, drawn as such. */
   /**
    * What each day means, keyed YYYY-MM-DD: 'off' cannot work, 'free' can
@@ -66,6 +80,7 @@ export function MonthCalendar({
   markedDays,
   barLabel,
   onDayClick,
+  cleaningDays,
   dayStates,
   plainBars
 }: MonthCalendarProps) {
@@ -309,6 +324,19 @@ export function MonthCalendar({
               // Smoobu's own block flag: the night is not for sale, which
               // is not the same as having a booking on it.
               const isClosed = rate ? !rate.available : false;
+              // The manager's cleaning picture for this day, scoped to the
+              // property whose row this is.
+              const cleanDay = cleaningDays ? cleaningDays[dateKey(cell.date)] : undefined;
+              const freeHere = cleanDay ?
+              cleanDay.available.filter((c) => c.property_ids.includes(propertyId)).length :
+              0;
+              const unmetHere = cleanDay ?
+              cleanDay.unmet.some((u) => u.property_id === propertyId) :
+              false;
+              // Assigned, but the cleaner has since said they cannot come.
+              const clashHere = cleanDay ?
+              cleanDay.jobs.some((j) => j.property_id === propertyId && !j.cleaner_available) :
+              false;
               const edges = 'border-r border-b border-[#EBEBEB]';
 
               if (cell.isOtherMonth) {
@@ -407,10 +435,44 @@ export function MonthCalendar({
                     {/* Cleaner Dot. Suppressed where a tick already says
                         somebody is booked — two marks for one fact is how
                         a dot ends up meaning nothing. */}
-                    {hasCleaner && dayState !== 'booked' &&
+                    {hasCleaner && dayState !== 'booked' && !cleaningDays &&
                   <div
                     title="Cleaning scheduled"
                     className="absolute w-[5px] h-[5px] bg-[#00A699] rounded-full bottom-2.5 right-1.5" />
+                  }
+
+                    {/* The manager's version, once real per-date data is
+                        available. Three separate facts, deliberately not
+                        collapsed into one dot:
+
+                        a checkout nobody is attached to, which is the only
+                        thing here that needs doing something about;
+                        a cleaner who has since marked themselves off a day
+                        they were already given, which looks covered and is
+                        not; and how many people could take it, because
+                        "needs a cleaner" is a different problem when the
+                        answer is nobody. */}
+                    {cleanDay && !isPast &&
+                  <div className="absolute bottom-1.5 right-1.5 flex items-center gap-1">
+                        {freeHere > 0 && !unmetHere && !clashHere &&
+                    <span title={`${freeHere} cleaner${freeHere === 1 ? '' : 's'} free`}
+                      className="text-[10px] leading-none text-[#717171] tabular-nums">
+                            {freeHere}
+                          </span>
+                    }
+                        {clashHere &&
+                    <span title="Assigned, but the cleaner is not available that day"
+                      className="w-[7px] h-[7px] rounded-full bg-[#BA7517]" />
+                    }
+                        {unmetHere &&
+                    <span title={freeHere > 0 ? 'Checkout with no cleaner yet' : 'Checkout with no cleaner, and nobody free'}
+                      className={`w-[7px] h-[7px] rounded-full ${freeHere > 0 ? 'bg-[#BA7517]' : 'bg-[#C13515]'}`} />
+                    }
+                        {hasCleaner && !unmetHere && !clashHere &&
+                    <span title="Cleaning scheduled"
+                      className="w-[5px] h-[5px] bg-[#00A699] rounded-full" />
+                    }
+                      </div>
                   }
                   </div>);
 

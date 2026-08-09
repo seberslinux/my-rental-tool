@@ -17,7 +17,8 @@ import { CleanersPage } from './components/CleanersPage';
 import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
 import { SmoobuConnectionPage } from './components/SmoobuConnectionPage';
-import { properties, bookings, Booking, loadCalendarData } from './data/properties';
+import { CleaningDaySheet } from './components/CleaningDaySheet';
+import { properties, bookings, Booking, loadCalendarData, cleaningDays, loadCleaningDays, dateKey } from './data/properties';
 import { loadDashboardData, setPropertyFilter, setOnDataChanged, needsAttention, lastSyncedAt } from './data/dashboard';
 import { relativeTime } from './data/time';
 import { loadAnalyticsData } from './data/analytics';
@@ -36,6 +37,8 @@ export function App() {
     return m ? decodeURIComponent(m[1]) : null;
   });
   const [userRole, setUserRole] = useState<string>('');
+  const [pickedDay, setPickedDay] = useState<string | null>(null);
+  const [cleaningVersion, setCleaningVersion] = useState(0);
   const [authChecked, setAuthChecked] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState('home');
@@ -111,6 +114,20 @@ export function App() {
       loadData();
     }
   }, [isLoggedIn, userRole, loadData]);
+
+  // The cleaning picture — who is free and which checkouts are short.
+  //
+  // Loaded separately from the rest because it is the only part that
+  // changes when a cleaner touches their own calendar, and because the
+  // range is the grid's range rather than the booking window's.
+  useEffect(() => {
+    if (!isLoggedIn || userRole === 'cleaner') return;
+    const from = new Date();
+    from.setDate(from.getDate() - 7);
+    const to = new Date();
+    to.setDate(to.getDate() + 120);
+    loadCleaningDays(dateKey(from), dateKey(to)).then(() => setCleaningVersion((v) => v + 1));
+  }, [isLoggedIn, userRole, dashboardVersion]);
 
   // Filter bookings based on channel — use dataLoaded as dep to re-compute after fetch
   const filteredBookings = useMemo(() => {
@@ -245,7 +262,9 @@ export function App() {
         <MonthCalendar
           propertyId={propertyId}
           bookings={singleModeBookings}
-          onBookingClick={setSelectedBooking} /> :
+          onBookingClick={setSelectedBooking}
+          cleaningDays={cleaningDays}
+          onDayClick={(d) => setPickedDay(dateKey(d))} /> :
 
 
         <TimelineView
@@ -265,6 +284,18 @@ export function App() {
       </main>
 
       <TabBar activeTab={activeTab} onTabChange={setActiveTab} homeBadge={attentionCount} />
+
+      {activeTab === 'calendar' && pickedDay &&
+      <CleaningDaySheet
+        date={pickedDay}
+        day={cleaningDays[pickedDay]}
+        propertyName={properties.find((p) => p.id === propertyId)?.name || ''}
+        onClose={() => setPickedDay(null)}
+        onAssigned={() => {
+          setPickedDay(null);
+          setDashboardVersion((v) => v + 1);
+        }} />
+      }
 
       {activeTab === 'calendar' &&
       <BookingDetailSheet

@@ -7,6 +7,8 @@ const { isBlockedPlatform } = require('./analytics-calc');
 // One place decides who gets told what — see that module for why four
 // bare sendMessage calls left every job reading notified = 0.
 const { notify } = require('./notify');
+// Who can work when — one definition, shared with the calendar.
+const { loadAvailability, cleanerDayStatus } = require('./availability');
 
 // Run cleaner assignment for a specific property and checkout date
 // booking: { id, smoobu_id, property_id, check_out, check_in_next, num_guests_next, guest_name_next }
@@ -40,10 +42,6 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
     );
   }
 
-  // Check which day of week the checkout falls on (0=Sun, 6=Sat)
-  const date = new Date(checkoutDate + 'T00:00:00');
-  const dayOfWeek = date.getDay();
-
   // Find eligible cleaners: assigned to this property
   const assignedCleaners = await getAll(
     `SELECT c.* FROM cleaners c
@@ -52,35 +50,17 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
     [property.id]
   );
 
+  // One definition of who is free, shared with the calendar. This used
+  // to be inlined here; the calendar needs the same answer for a hundred
+  // days at once, and a second copy is how two screens start disagreeing
+  // about which cleaner can come.
+  const av = await loadAvailability(assignedCleaners.map((c) => c.id));
+
   for (const cleaner of assignedCleaners) {
-    // Check for date-specific override
-    const override = await getOne(
-      'SELECT * FROM cleaner_availability_overrides WHERE cleaner_id = $1 AND date = $2',
-      [cleaner.id, checkoutDate]
-    );
-
-    if (override && !override.available) {
-      continue; // Cleaner is explicitly unavailable on this date
-    }
-
-    // If no override marking available, check weekly schedule
-    if (!override) {
-      const availability = await getOne(
-        'SELECT * FROM cleaner_availability WHERE cleaner_id = $1 AND day_of_week = $2',
-        [cleaner.id, dayOfWeek]
-      );
-
-      if (!availability) {
-        continue; // No availability set for this day
-      }
-
-      // Check if cleaning window fits within their availability
-      const availStart = parseTime(availability.start_time);
-      const availEnd = parseTime(availability.end_time);
-      if (windowStart < availStart || windowEnd > availEnd) {
-        continue; // Window doesn't fit
-      }
-    }
+    const status = cleanerDayStatus(av, cleaner.id, checkoutDate, {
+      start: windowStart, end: windowEnd,
+    });
+    if (!status.available) continue;
 
     // Check if cleaner already has a job at the same time
     const existingJob = await getOne(
