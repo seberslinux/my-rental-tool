@@ -4,6 +4,8 @@ const { sendCheckinMessages, sendCheckoutMessages } = require('../services/messa
 const { runAssignmentForAllCheckouts } = require('../services/cleaner-assignment');
 const { getAll, getOne, run } = require('../db/database');
 const { notify } = require('../services/notify');
+// Dates as somebody would say them, and one definition of YYYY-MM-DD.
+const { prettyDate, ymd } = require('../services/availability');
 
 // Daily at 6:00 AM SAST (UTC+2) = 4:00 AM UTC — run pricing engine
 cron.schedule('0 4 * * *', async () => {
@@ -182,6 +184,72 @@ cron.schedule('0 6 * * *', async () => {
     await sendAdvanceNotice(in7Days, 'Upcoming (7 days):', 'notify_7_days');
   } catch (err) {
     console.error('Advance notification cron error:', err.message);
+  }
+});
+
+/**
+ * Chase requests nobody has answered.
+ *
+ * A job is created pending and stays that way until the cleaner accepts
+ * or declines. Nothing chased it. Four of Jane's five upcoming jobs sat
+ * unanswered, and the only way to notice was to go and look — by which
+ * time the day may have arrived with nobody committed to turning up.
+ *
+ * Twice: once to the cleaner while there is still time for them to
+ * answer, and once to the owner if the day is nearly here and they still
+ * have not — because at that point it stops being the cleaner's problem
+ * to solve and becomes a property with nobody coming.
+ *
+ * answer_chased_at is what stops this becoming a daily nag. One reminder
+ * per job; if that does not produce an answer, chasing harder is the
+ * owner's job, not a cron's.
+ */
+cron.schedule('0 7 * * *', async () => {
+  try {
+    const soon = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const today = new Date().toISOString().slice(0, 10);
+
+    const waiting = await getAll(
+      `SELECT cj.*, c.name AS cleaner_name, p.name AS property_name
+         FROM cleaning_jobs cj
+         JOIN cleaners c ON c.id = cj.cleaner_id
+         JOIN properties p ON p.id = cj.property_id
+        WHERE cj.status = 'pending'
+          AND cj.cleaning_date >= $1 AND cj.cleaning_date <= $2
+          AND cj.answer_chased_at IS NULL`,
+      [today, soon]
+    );
+
+    for (const job of waiting) {
+      const when = prettyDate(job.cleaning_date);
+      await notify({
+        event: 'job_reminder',
+        title: `Can you still do ${job.property_name} on ${when}?`,
+        body: `${job.start_time}–${job.end_time}. Accept it or decline it so the owner knows where they stand.`,
+        propertyId: job.property_id, cleanerId: job.cleaner_id, jobId: job.id,
+        link: '/',
+      });
+
+      // One day out and still no answer is the owner's problem now.
+      const daysOut = Math.round(
+        (new Date(`${ymd(job.cleaning_date)}T00:00:00`) - new Date(`${today}T00:00:00`)) / 86400000
+      );
+      if (daysOut <= 1) {
+        await notify({
+          event: 'job_unanswered',
+          title: `${job.cleaner_name} has not answered about ${job.property_name} on ${when}`,
+          body: 'Nobody is committed to that clean yet.',
+          propertyId: job.property_id, cleanerId: job.cleaner_id, jobId: job.id,
+          link: '/cleaners',
+        });
+      }
+
+      await run('UPDATE cleaning_jobs SET answer_chased_at = NOW() WHERE id = $1', [job.id]);
+    }
+
+    if (waiting.length) console.log(`Chased ${waiting.length} unanswered request(s).`);
+  } catch (err) {
+    console.error('Unanswered-request cron error:', err.message);
   }
 });
 

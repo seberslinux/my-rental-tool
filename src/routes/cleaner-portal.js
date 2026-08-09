@@ -67,9 +67,14 @@ router.get('/jobs/:jobId/checklist', requireCleaner, async (req, res) => {
   const job = await getOne('SELECT * FROM cleaning_jobs WHERE id = $1 AND cleaner_id = $2', [req.params.jobId, req.cleaner.id]);
   if (!job) return res.status(404).json({ error: 'Job not found' });
 
+  // The property's standing list, plus anything asked for this stay
+  // alone. One list to the cleaner: they do not care which table a line
+  // came from, only what to count.
   const items = await getAll(
-    'SELECT * FROM inventory_checklists WHERE property_id = $1 ORDER BY category, sort_order, item_name',
-    [job.property_id]
+    `SELECT * FROM inventory_checklists
+      WHERE property_id = $1 AND (booking_id IS NULL OR booking_id = $2)
+      ORDER BY booking_id NULLS FIRST, category, sort_order, item_name`,
+    [job.property_id, job.booking_id]
   );
   const checks = await getAll(
     'SELECT * FROM inventory_checks WHERE cleaning_job_id = $1',
@@ -85,73 +90,26 @@ router.get('/jobs/:jobId/checklist', requireCleaner, async (req, res) => {
   res.json(merged);
 });
 
-// Mark job as ready for check-in
-router.post('/jobs/:jobId/ready', requireCleaner, async (req, res) => {
-  const job = await getOne('SELECT cj.*, p.name as property_name FROM cleaning_jobs cj JOIN properties p ON cj.property_id = p.id WHERE cj.id = $1 AND cj.cleaner_id = $2', [req.params.jobId, req.cleaner.id]);
-  if (!job) return res.status(404).json({ error: 'Job not found' });
-
-  // Verify all checklist items are completed
-  const items = await getAll('SELECT id FROM inventory_checklists WHERE property_id = $1', [job.property_id]);
-  if (items.length > 0) {
-    const checks = await getAll('SELECT checklist_item_id FROM inventory_checks WHERE cleaning_job_id = $1', [job.id]);
-    const checkedIds = new Set(checks.map(c => c.checklist_item_id));
-    const missing = items.filter(i => !checkedIds.has(i.id));
-    if (missing.length > 0) {
-      return res.status(400).json({ error: `${missing.length} checklist item(s) not completed` });
-    }
-  }
-
-  await run("UPDATE cleaning_jobs SET status = 'ready' WHERE id = $1", [job.id]);
-
-  // Send WhatsApp notification to admin and property manager
-  const adminPhone = process.env.ADMIN_WHATSAPP;
-  const message = `✅ ${req.cleaner.name} marked "${job.property_name}" as ready for check-in (${job.cleaning_date}).`;
-
-  // Collect phones to notify
-  const phones = [];
-  if (adminPhone) phones.push(adminPhone);
-
-  // Find property manager(s) with phone numbers
-  const managers = await getAll(
-    `SELECT u.phone FROM users u
-     JOIN user_property_access upa ON u.id = upa.user_id
-     WHERE upa.property_id = $1 AND u.phone != '' AND u.phone IS NOT NULL`,
-    [job.property_id]
-  );
-  for (const m of managers) {
-    if (m.phone && !phones.includes(m.phone)) phones.push(m.phone);
-  }
-
-  // Send WhatsApp via API if configured
-  if (process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID && phones.length > 0) {
-    for (const phone of phones) {
-      try {
-        await fetch(`https://graph.facebook.com/v18.0/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`, {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messaging_product: 'whatsapp', to: phone.replace(/^\+/, ''), type: 'text', text: { body: message } }),
-        });
-      } catch (err) {
-        console.error(`Failed to send WhatsApp to ${phone}:`, err.message);
-      }
-    }
-  } else if (phones.length > 0) {
-    console.log(`[Ready notification] Would send to ${phones.join(', ')}: ${message}`);
-  }
-
-  res.json({ ready: true, notified: phones });
-});
-
-// Update job status
 /**
- * Accept or decline a job, or move it along.
+ * What a job's status may be.
  *
- * "declined" is new. The old set — pending, confirmed, completed, ready —
- * gave a cleaner no way to say no, so somebody who could not make it left
- * the job sitting at pending, indistinguishable from one they had not
- * read. An owner cannot reassign what looks unread.
+ * Defined here rather than inline because both this route and the finish
+ * path reason about it. It was lost when the dead /ready route was cut
+ * out — it happened to sit between that route and the next one — and
+ * three tests said so immediately.
  */
 const JOB_STATUSES = ['pending', 'confirmed', 'declined', 'in_progress', 'completed', 'ready'];
+
+/**
+ * Finishing is the only way a clean ends.
+ *
+ * There used to be a second one: POST /jobs/:jobId/ready, which checked
+ * the inventory had been counted and set status = 'ready'. Nothing in the
+ * app ever called it, nothing ever read the status it wrote, and two
+ * endpoints for "this property is done" is one too many. Its one good
+ * idea — refusing while the count is outstanding — now lives in /finish,
+ * where it actually runs.
+ */
 
 router.put('/jobs/:jobId/status', requireCleaner, async (req, res) => {
   const { status } = req.body;
@@ -248,6 +206,31 @@ router.post('/jobs/:jobId/finish', requireCleaner, async (req, res) => {
     const property = await getOne('SELECT check_out_time FROM properties WHERE id = $1', [job.property_id]);
     const window = checkCleaningWindow(job, property);
     if (!window.ok) return res.status(409).json({ error: window.reason });
+  }
+
+  // The count comes before the sign-off.
+  //
+  // A checklist filled in after the fact is a guess, and one never filled
+  // in at all is how towels walk out for months unnoticed. If the property
+  // has a list, it has to be answered before the job can close — which is
+  // also the only thing that makes the list worth a manager's time.
+  const expected = await getAll(
+    `SELECT id FROM inventory_checklists
+      WHERE property_id = $1 AND (booking_id IS NULL OR booking_id = $2)`,
+    [job.property_id, job.booking_id]
+  );
+  if (expected.length > 0) {
+    const done = await getAll(
+      'SELECT checklist_item_id FROM inventory_checks WHERE cleaning_job_id = $1', [job.id]
+    );
+    const counted = new Set(done.map((c) => c.checklist_item_id));
+    const outstanding = expected.filter((i) => !counted.has(i.id)).length;
+    if (outstanding > 0) {
+      return res.status(409).json({
+        error: `Count the ${outstanding} item${outstanding === 1 ? '' : 's'} on the checklist first`,
+        checklist_outstanding: outstanding,
+      });
+    }
   }
 
   const updated = await getOne(
@@ -383,6 +366,26 @@ router.post('/overrides', requireCleaner, async (req, res) => {
  */
 router.get('/notifications', requireCleaner, async (req, res) => {
   res.json(await recentForCleaner(req.cleaner.id));
+});
+
+/**
+ * Clear one message.
+ *
+ * A feed that only ever grows is a feed people stop opening. These are
+ * the cleaner's own messages about their own shifts, and once a shift has
+ * been read there is nothing to preserve — the job itself is the record,
+ * and it lives in cleaning_jobs whatever happens here.
+ *
+ * Scoped to their own rows by both id and audience, so this cannot reach
+ * the owner's feed.
+ */
+router.delete('/notifications/:id', requireCleaner, async (req, res) => {
+  await run(
+    `DELETE FROM notifications
+      WHERE id = $1 AND cleaner_id = $2 AND audience = 'cleaner'`,
+    [req.params.id, req.cleaner.id]
+  );
+  res.json({ ok: true });
 });
 
 router.post('/notifications/read-all', requireCleaner, async (req, res) => {

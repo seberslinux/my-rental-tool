@@ -117,4 +117,18 @@ function cleanerDayStatus(av, cleanerId, date, window = null) {
   return { available: true, reason: 'works that weekday' };
 }
 
-module.exports = { loadAvailability, cleanerDayStatus, parseTime, ymd };
+/**
+ * A date as somebody would say it out loud.
+ *
+ * Messages read "on 2026-08-12", which is a database value, not a day.
+ * Nobody checks a calendar against an ISO string.
+ */
+function prettyDate(value) {
+  const key = ymd(value);
+  if (!key) return '';
+  return new Date(`${key}T00:00:00`).toLocaleDateString('en-ZA', {
+    weekday: 'short', day: 'numeric', month: 'short',
+  });
+}
+
+module.exports = { loadAvailability, cleanerDayStatus, parseTime, ymd, prettyDate };
