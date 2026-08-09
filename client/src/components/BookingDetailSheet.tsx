@@ -6,6 +6,14 @@ import { fmtParty } from '../data/format';
 interface BookingDetailSheetProps {
   booking: Booking | null;
   onClose: () => void;
+  /**
+   * Ask for a cleaner for this stay or block.
+   *
+   * Offered here because this is where you already are when you notice
+   * the need: looking at the bar. Given the date and the property, so the
+   * next screen has nothing left to guess.
+   */
+  onRequestCleaner?: (date: string, propertyId: number, reason: 'checkout' | 'checkin' | 'other') => void;
 }
 
 /**
@@ -17,7 +25,7 @@ interface BookingDetailSheetProps {
  * its title and left most of the panel empty, so from `sm` up it becomes a
  * centred dialog of readable width.
  */
-export function BookingDetailSheet({ booking, onClose }: BookingDetailSheetProps) {
+export function BookingDetailSheet({ booking, onClose, onRequestCleaner }: BookingDetailSheetProps) {
   // Escape closes it — on a laptop the click target is far from the pointer.
   useEffect(() => {
     if (!booking) return;
@@ -222,6 +230,21 @@ export function BookingDetailSheet({ booking, onClose }: BookingDetailSheetProps
           <p className="mt-5 text-[13px] text-[#717171] rounded-xl bg-[#F7F7F7] px-4 py-3">
               These dates are blocked and not for sale.
             </p>
+          }
+
+          {/* A stay wants cleaning when the guests leave. A block wants it
+              whenever you say — nobody is checking out of one, so the day
+              it starts is only a sensible guess. */}
+          {onRequestCleaner &&
+          <button
+            onClick={() => {
+              const d = isBlocked ? booking.checkIn : booking.checkOut;
+              const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+              onRequestCleaner(key, booking.propId, isBlocked ? 'other' : 'checkout');
+            }}
+            className="mt-5 w-full h-[44px] rounded-[10px] border border-[#DDDDDD] text-[14px] font-semibold hover:bg-[#F7F7F7]">
+              Request a cleaner
+            </button>
           }
         </div>
       </div>

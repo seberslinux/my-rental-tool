@@ -18,6 +18,7 @@ import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
 import { SmoobuConnectionPage } from './components/SmoobuConnectionPage';
 import { CleaningDaySheet } from './components/CleaningDaySheet';
+import { UserX, UserCheck, TriangleAlert } from 'lucide-react';
 import { properties, bookings, Booking, loadCalendarData, cleaningDays, loadCleaningDays, dateKey } from './data/properties';
 import { loadDashboardData, setPropertyFilter, setOnDataChanged, needsAttention, lastSyncedAt } from './data/dashboard';
 import { relativeTime } from './data/time';
@@ -38,6 +39,9 @@ export function App() {
   });
   const [userRole, setUserRole] = useState<string>('');
   const [pickedDay, setPickedDay] = useState<string | null>(null);
+  // Set when the day sheet was opened from a bar, which already says
+  // which property it is about.
+  const [pickedFor, setPickedFor] = useState<{propertyId: number;reason: 'checkout' | 'checkin' | 'other';} | null>(null);
   const [cleaningVersion, setCleaningVersion] = useState(0);
   const [authChecked, setAuthChecked] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
@@ -259,12 +263,35 @@ export function App() {
 
         {activeTab === 'calendar' && (
         mode === 'single' ?
+        <>
+        {/* A key, for the same reason the cleaner's calendar has one: a
+            mark you have to decode is a mark you ignore. */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 pb-2 text-[12px] text-[#717171]">
+          <span className="flex items-center gap-1.5">
+            <span className="flex items-center rounded-[4px] px-1 py-0.5 bg-[#FCEBEB] text-[#A32D2D]">
+              <UserX className="w-3.5 h-3.5" strokeWidth={2.25} />
+            </span>
+            Checks out, no cleaner
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="flex items-center rounded-[4px] px-1 py-0.5 bg-[#FAEEDA] text-[#854F0B]">
+              <TriangleAlert className="w-3.5 h-3.5" strokeWidth={2.25} />
+            </span>
+            Cleaner no longer available
+          </span>
+          <span className="flex items-center gap-1.5">
+            <UserCheck className="w-3.5 h-3.5 text-[#0F6E56]" strokeWidth={2.25} />
+            Cleaner coming
+          </span>
+          <span>Tap a day to send someone</span>
+        </div>
         <MonthCalendar
           propertyId={propertyId}
           bookings={singleModeBookings}
           onBookingClick={setSelectedBooking}
           cleaningDays={cleaningDays}
-          onDayClick={(d) => setPickedDay(dateKey(d))} /> :
+          onDayClick={(d) => { setPickedFor(null); setPickedDay(dateKey(d)); }} />
+        </> :
 
 
         <TimelineView
@@ -289,11 +316,14 @@ export function App() {
       <CleaningDaySheet
         date={pickedDay}
         day={cleaningDays[pickedDay]}
-        propertyId={propertyId}
-        propertyName={properties.find((p) => p.id === propertyId)?.name || ''}
-        onClose={() => setPickedDay(null)}
+        propertyId={pickedFor ? pickedFor.propertyId : propertyId}
+        propertyName={properties.find((p) => p.id === (pickedFor ? pickedFor.propertyId : propertyId))?.name || ''}
+        lockProperty={!!pickedFor}
+        initialReason={pickedFor ? pickedFor.reason : 'checkout'}
+        onClose={() => { setPickedDay(null); setPickedFor(null); }}
         onAssigned={() => {
           setPickedDay(null);
+          setPickedFor(null);
           setDashboardVersion((v) => v + 1);
         }} />
       }
@@ -301,7 +331,12 @@ export function App() {
       {activeTab === 'calendar' &&
       <BookingDetailSheet
         booking={selectedBooking}
-        onClose={() => setSelectedBooking(null)} />
+        onClose={() => setSelectedBooking(null)}
+        onRequestCleaner={(date, pid, reason) => {
+          setSelectedBooking(null);
+          setPickedFor({ propertyId: pid, reason });
+          setPickedDay(date);
+        }} />
 
       }
     {showNotifications &&
