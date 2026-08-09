@@ -61,11 +61,15 @@ export let cleaners: Record<number, number[]> = {};
 
 /** One entry per date: who is free, what is scheduled, what is short. */
 export interface CleaningDay {
-  available: {id: number;name: string;property_ids: number[];}[];
+  available: {id: number;name: string;reason: string;property_ids: number[];}[];
+  /** Not free that day — still askable, since a job is a request. */
+  unavailable: {id: number;name: string;reason: string;property_ids: number[];}[];
   jobs: {
     id: number;property_id: number;property_name: string;
     cleaner_id: number | null;cleaner_name: string | null;
     status: string;cleaner_available: boolean;
+    start_time: string;end_time: string;
+    reason: string | null;note: string | null;
   }[];
   checkouts: {booking_id: number;property_id: number;property_name: string;}[];
   unmet: {property_id: number;property_name: string;booking_id: number;}[];

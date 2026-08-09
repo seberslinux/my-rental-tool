@@ -295,6 +295,15 @@ async function runMigrations() {
     -- recorded when a property was actually turned over or how long it
     -- took — the two facts that tell you whether the next check-in is
     -- safe and whether an hourly rate matches the work.
+    -- Why somebody is going, when it is not simply the turnover.
+    --
+    -- Cleaning jobs were created only by assignment, which runs off a
+    -- checkout, so a job always meant "a guest has left". A manager
+    -- cannot use the calendar to send somebody in to prepare for an
+    -- arrival, or for a deep clean between seasons, without a way to say
+    -- which of those it is. Null keeps the old meaning: the turnover.
+    ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS reason TEXT;
+    ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS note TEXT;
     ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
     ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
 

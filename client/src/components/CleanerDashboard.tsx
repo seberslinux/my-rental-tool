@@ -34,6 +34,9 @@ interface Job {
   num_guests: number | null;
   special_requirements: string | null;
   check_in: string | null;
+  /** Why they are going, when it is not simply the turnover. */
+  reason: string | null;
+  note: string | null;
   started_at: string | null;
   completed_at: string | null;
 }
@@ -420,6 +423,23 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
             <Users className="w-4 h-4 shrink-0" />
             Guests arrive same day{job.num_guests ? ` · ${job.num_guests} people` : ''}
           </p>
+        }
+
+        {/* A visit that is not a turnover. Without this it reads as an
+            ordinary clean, and turning up at 12:30 to prepare for guests
+            arriving at 15:00 is a different job from clearing up after
+            the last lot. */}
+        {job.reason === 'checkin' &&
+        <p className="mt-2 text-[13px] text-[#0F6E56] font-medium">
+            Before check-in — ready before the guests arrive
+          </p>
+        }
+        {job.reason === 'other' &&
+        <p className="mt-2 text-[13px] text-[#717171] font-medium">Not a turnover</p>
+        }
+
+        {job.note &&
+        <p className="mt-2 text-[13px] bg-[#F7F7F7] rounded-[8px] px-3 py-2">{job.note}</p>
         }
 
         {job.special_requirements &&
@@ -967,6 +987,10 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
               <p className="text-[14px] font-medium">{j.property_name}</p>
               <p className="text-[13px] text-[#717171]">{j.start_time}–{j.end_time}</p>
               {j.property_address && <p className="text-[13px] text-[#717171]">{j.property_address}</p>}
+              {j.reason === 'checkin' &&
+            <p className="text-[13px] text-[#0F6E56] mt-1">Before check-in</p>
+            }
+              {j.note && <p className="text-[13px] mt-1">{j.note}</p>}
               {j.special_requirements &&
             <p className="text-[13px] mt-1">{j.special_requirements}</p>
             }

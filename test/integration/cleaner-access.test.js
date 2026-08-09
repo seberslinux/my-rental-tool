@@ -337,3 +337,156 @@ test('a cleaner session cannot read the cleaning calendar', async () => {
   const { agent } = await cleanerSession('+27821119999');
   await agent.get('/api/cleaners/calendar?from=2026-08-11&to=2026-08-11').expect(403);
 });
+
+// --- sending somebody on a day, booking or no booking --------------------
+
+/**
+ * A cleaning job used to mean one thing.
+ *
+ * Only assignment created them, and assignment runs off a checkout, so
+ * there was no way to send somebody in to prepare for an arrival or for a
+ * deep clean in a quiet week — the work hung off a booking, and without
+ * one there was nothing to hang it on. It belongs to the property.
+ */
+
+const { recentForCleaner } = require('../../src/services/notify');
+
+test('a cleaner can be sent on a day with no booking at all', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await linkCleanerToProperty(cleaner, property);
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.post('/api/cleaners/jobs/assign').send({
+    cleaner_id: cleaner.id, property_id: property.id,
+    cleaning_date: '2026-08-19', reason: 'other', note: 'Deep clean',
+  }).expect(201);
+
+  assert.equal(res.body.booking_id, null, 'attached to the property, not a stay');
+  assert.equal(res.body.reason, 'other');
+  assert.equal(res.body.note, 'Deep clean');
+});
+
+test('a preparation is timed to finish before the guests arrive', async () => {
+  // The end is what is fixed, not the start. Working that out in the
+  // browser as well is how the two would drift.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  await pool.query(
+    `UPDATE properties SET check_in_time = '15:00', cleaning_hours_required = 2.5 WHERE id = $1`,
+    [property.id]
+  );
+  const cleaner = await seedCleaner();
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.post('/api/cleaners/jobs/assign').send({
+    cleaner_id: cleaner.id, property_id: property.id,
+    cleaning_date: '2026-08-19', reason: 'checkin',
+  }).expect(201);
+
+  assert.equal(res.body.start_time, '12:30');
+  assert.equal(res.body.end_time, '15:00');
+});
+
+test('a turnover starts when the guests leave', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  await pool.query(
+    `UPDATE properties SET check_out_time = '11:00', cleaning_hours_required = 2 WHERE id = $1`,
+    [property.id]
+  );
+  const cleaner = await seedCleaner();
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.post('/api/cleaners/jobs/assign').send({
+    cleaner_id: cleaner.id, property_id: property.id,
+    cleaning_date: '2026-08-19', reason: 'checkout',
+  }).expect(201);
+
+  assert.equal(res.body.start_time, '11:00');
+  assert.equal(res.body.end_time, '13:00');
+});
+
+test('a property with no times set falls back rather than to midnight', async () => {
+  // Number('') is 0, so an unset column would read as 00:00.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  await pool.query(`UPDATE properties SET check_out_time = '' WHERE id = $1`, [property.id]);
+  const cleaner = await seedCleaner();
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.post('/api/cleaners/jobs/assign').send({
+    cleaner_id: cleaner.id, property_id: property.id,
+    cleaning_date: '2026-08-19', reason: 'checkout',
+  }).expect(201);
+
+  assert.equal(res.body.start_time, '10:00', 'not 00:00');
+});
+
+test('somebody who is not free can still be asked, and is asked rather than told', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner({ phone: '+27821234567' });
+  await linkCleanerToProperty(cleaner, property);
+  // No weekly schedule at all, so no day is theirs.
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  await agent.post('/api/cleaners/jobs/assign').send({
+    cleaner_id: cleaner.id, property_id: property.id, cleaning_date: '2026-08-22',
+  }).expect(201);
+
+  const feed = await recentForCleaner(cleaner.id);
+  assert.match(feed[0].title, /Can you cover/, 'asked, not told');
+  assert.match(feed[0].body, /decline it if you cannot/);
+});
+
+test('somebody who is free is told, not asked', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner({ phone: '+27821234568' });
+  await linkCleanerToProperty(cleaner, property);
+  await pool.query(
+    `INSERT INTO cleaner_availability (cleaner_id, day_of_week, start_time, end_time)
+     VALUES ($1, 6, '08:00', '18:00')`, [cleaner.id]
+  );
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  // 2026-08-22 is a Saturday.
+  await agent.post('/api/cleaners/jobs/assign').send({
+    cleaner_id: cleaner.id, property_id: property.id, cleaning_date: '2026-08-22',
+  }).expect(201);
+
+  const feed = await recentForCleaner(cleaner.id);
+  assert.match(feed[0].title, /You are cleaning/);
+  assert.ok(!/Can you cover/.test(feed[0].title));
+});
+
+test('the calendar lists who is not free, so there is somebody to ask', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await linkCleanerToProperty(cleaner, property);
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.get('/api/cleaners/calendar?from=2026-08-22&to=2026-08-22').expect(200);
+
+  const day = res.body.days['2026-08-22'];
+  assert.equal(day.available.length, 0);
+  assert.equal(day.unavailable.length, 1, 'being short of a cleaner is when you need this most');
+  assert.ok(day.unavailable[0].reason, 'and why');
+});

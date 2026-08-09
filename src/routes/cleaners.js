@@ -69,6 +69,7 @@ router.get('/calendar', async (req, res) => {
 
   const jobs = await getAll(
     `SELECT cj.id, cj.property_id, cj.cleaning_date, cj.status, cj.cleaner_id,
+            cj.start_time, cj.end_time, cj.reason, cj.note,
             c.name AS cleaner_name, p.name AS property_name
        FROM cleaning_jobs cj
        LEFT JOIN cleaners c ON c.id = cj.cleaner_id
@@ -90,7 +91,7 @@ router.get('/calendar', async (req, res) => {
 
   const days = {};
   const dayOf = (key) => {
-    if (!days[key]) days[key] = { available: [], jobs: [], checkouts: [], unmet: [] };
+    if (!days[key]) days[key] = { available: [], unavailable: [], jobs: [], checkouts: [], unmet: [] };
     return days[key];
   };
 
@@ -101,12 +102,15 @@ router.get('/calendar', async (req, res) => {
     const day = dayOf(key);
     cleaners.forEach((c) => {
       const status = cleanerDayStatus(av, c.id, key);
-      if (status.available) {
-        day.available.push({
-          id: c.id, name: c.name,
-          property_ids: links.filter((l) => l.cleaner_id === c.id).map((l) => l.property_id),
-        });
-      }
+      const entry = {
+        id: c.id, name: c.name, reason: status.reason,
+        property_ids: links.filter((l) => l.cleaner_id === c.id).map((l) => l.property_id),
+      };
+      // Both lists, not just the free one. Somebody who is not available
+      // can still be asked — the job is created pending and they answer
+      // it — and a manager short of a cleaner needs to see who there is
+      // to ask before deciding to block the nights instead.
+      (status.available ? day.available : day.unavailable).push(entry);
     });
   }
 
@@ -123,6 +127,8 @@ router.get('/calendar', async (req, res) => {
       id: j.id, property_id: j.property_id, property_name: j.property_name,
       cleaner_id: j.cleaner_id, cleaner_name: j.cleaner_name, status: j.status,
       cleaner_available: stillFree,
+      start_time: j.start_time, end_time: j.end_time,
+      reason: j.reason, note: j.note,
     });
   });
 
@@ -403,17 +409,69 @@ router.post('/', async (req, res) => {
 });
 
 // Assign a cleaning job
+/**
+ * Send somebody to a property on a day.
+ *
+ * A cleaning job used to mean one thing, because only assignment created
+ * them and assignment runs off a checkout. So there was no way to send a
+ * cleaner in to prepare for an arrival, or for a deep clean between
+ * seasons — the work was attached to a booking, and without a booking
+ * there was nothing to attach it to. It belongs to the property; the
+ * booking, when there is one, is just what prompted it.
+ *
+ * Times follow the reason unless they are given, and they are worked out
+ * here rather than in the browser: a turnover starts when the guests
+ * leave, a preparation has to be finished before the next lot arrive, and
+ * anything else is a working morning. Duplicating that arithmetic in the
+ * client is how the two would drift.
+ */
+const REASONS = new Set(['checkout', 'checkin', 'other']);
+
 router.post('/jobs/assign', async (req, res) => {
-  const { cleaner_id, property_id, booking_id, cleaning_date, start_time, end_time } = req.body;
+  const { cleaner_id, property_id, booking_id, cleaning_date, start_time, end_time, note } = req.body;
+  const reason = REASONS.has(req.body.reason) ? req.body.reason : 'checkout';
 
   if (!cleaner_id || !property_id || !cleaning_date) {
     return res.status(400).json({ error: 'cleaner_id, property_id, and cleaning_date are required' });
   }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(cleaning_date))) {
+    return res.status(400).json({ error: 'cleaning_date must be YYYY-MM-DD' });
+  }
+
+  const prop = await getOne(
+    'SELECT name, address, check_in_time, check_out_time, cleaning_hours_required FROM properties WHERE id = $1',
+    [property_id]
+  );
+  if (!prop) return res.status(404).json({ error: 'Property not found' });
+
+  const hours = Number(prop.cleaning_hours_required) || 2.5;
+  const mins = (t, fallback) => {
+    const m = /^(\d{1,2}):(\d{2})/.exec(String(t || '').trim());
+    // Number('') is 0, so an unset column would otherwise read as midnight.
+    return m ? Number(m[1]) * 60 + Number(m[2]) : fallback;
+  };
+  const clock = (m) => {
+    const wrapped = Math.max(0, Math.min(23 * 60 + 59, m));
+    return `${String(Math.floor(wrapped / 60)).padStart(2, '0')}:${String(wrapped % 60).padStart(2, '0')}`;
+  };
+
+  let from;
+  if (reason === 'checkin') {
+    // Finished before they arrive, so it is the end that is fixed.
+    from = mins(prop.check_in_time, 15 * 60) - hours * 60;
+  } else if (reason === 'checkout') {
+    from = mins(prop.check_out_time, 10 * 60);
+  } else {
+    from = 10 * 60;
+  }
+
+  const startsAt = start_time || clock(from);
+  const endsAt = end_time || clock(mins(startsAt, from) + hours * 60);
 
   const result = await run(
-    `INSERT INTO cleaning_jobs (cleaner_id, property_id, booking_id, cleaning_date, start_time, end_time, status)
-     VALUES ($1, $2, $3, $4, $5, $6, 'pending') RETURNING id`,
-    [cleaner_id, property_id, booking_id || null, cleaning_date, start_time || '10:00', end_time || '13:00']
+    `INSERT INTO cleaning_jobs (cleaner_id, property_id, booking_id, cleaning_date, start_time, end_time, status, reason, note)
+     VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8) RETURNING id`,
+    [cleaner_id, property_id, booking_id || null, cleaning_date, startsAt, endsAt, reason, (note || '').trim() || null]
   );
 
   const job = await getOne('SELECT * FROM cleaning_jobs WHERE id = $1', [result.rows[0].id]);
@@ -421,11 +479,26 @@ router.post('/jobs/assign', async (req, res) => {
   // Tell them. Assigning somebody by hand used to be silent — the job
   // appeared in their app only if they happened to look, which is not a
   // way to staff a turnover.
-  const where = await getOne('SELECT name, address FROM properties WHERE id = $1', [property_id]);
+  // Asking somebody who is not free is a different message from telling
+  // somebody who is. The job is pending either way and they answer it,
+  // but a person who has said they cannot work that day should be asked,
+  // not informed — and told plainly that no is an answer.
+  const av = await loadAvailability([cleaner_id]);
+  const free = cleanerDayStatus(av, Number(cleaner_id), cleaning_date).available;
+
+  const what = reason === 'checkin' ? 'preparing' : reason === 'other' ? 'going to' : 'cleaning';
   await notify({
     event: 'job_assigned',
-    title: `You are cleaning ${where ? where.name : 'a property'} on ${ymd(job.cleaning_date)}`,
-    body: `From ${job.start_time}.${where && where.address ? ' ' + where.address + '.' : ''}`,
+    title: free ?
+    `You are ${what} ${prop.name} on ${ymd(job.cleaning_date)}` :
+    `Can you cover ${prop.name} on ${ymd(job.cleaning_date)}?`,
+    body: [
+    free ? '' : 'You are marked as not available that day, so this is a request — decline it if you cannot.',
+    `${job.start_time}–${job.end_time}.`,
+    reason === 'checkin' ? 'Guests arrive that day, so it needs to be ready before they do.' : '',
+    (note || '').trim(),
+    prop.address || '',
+    ].filter(Boolean).join(' '),
     propertyId: property_id, cleanerId: cleaner_id, jobId: job.id,
     link: '/',
   });
