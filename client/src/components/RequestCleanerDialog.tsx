@@ -92,9 +92,13 @@ export function RequestCleanerDialog({
         </select>
 
         <label className="block text-[12px] font-medium text-[#717171] mb-1">Day</label>
+        {/* Not yesterday. A clean cannot be requested for a day that has
+            already happened, and letting it be typed only produces a job
+            nobody can ever start. */}
         <input
           type="date"
           value={date}
+          min={new Date().toISOString().slice(0, 10)}
           onChange={(e) => setDate(e.target.value)}
           className="w-full px-3 py-2 border border-[#DDDDDD] rounded-[8px] text-[14px] mb-3" />
 

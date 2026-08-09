@@ -470,7 +470,10 @@ test('somebody who is free is told, not asked', async () => {
   }).expect(201);
 
   const feed = await recentForCleaner(cleaner.id);
-  assert.match(feed[0].title, /You are cleaning/);
+  // Told, not asked — and said the way somebody would say it, rather than
+  // "You are going to X on 2026-08-22", which is a sentence assembled
+  // from columns.
+  assert.match(feed[0].title, /^Clean /);
   assert.ok(!/Can you cover/.test(feed[0].title));
 });
 
@@ -489,4 +492,239 @@ test('the calendar lists who is not free, so there is somebody to ask', async ()
   assert.equal(day.available.length, 0);
   assert.equal(day.unavailable.length, 1, 'being short of a cleaner is when you need this most');
   assert.ok(day.unavailable[0].reason, 'and why');
+});
+
+// --- one job, not several -------------------------------------------------
+
+test('asking the same person for the same day twice is refused', async () => {
+  // It produced two identical rows, one confirmed and one pending, and
+  // the cleaner saw the same shift listed twice.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const body = {
+    cleaner_id: cleaner.id, property_id: property.id, cleaning_date: '2026-08-10',
+  };
+  await agent.post('/api/cleaners/jobs/assign').send(body).expect(201);
+  const second = await agent.post('/api/cleaners/jobs/assign').send(body).expect(409);
+  assert.match(second.body.error, /already down/i);
+
+  const { rows } = await pool.query(
+    'SELECT count(*)::int n FROM cleaning_jobs WHERE property_id = $1 AND cleaning_date = $2',
+    [property.id, '2026-08-10']
+  );
+  assert.equal(rows[0].n, 1);
+});
+
+test('a job with nobody on it is filled rather than duplicated', async () => {
+  // ON DELETE SET NULL leaves these behind when a cleaner is removed.
+  // Creating a second row beside the empty one leaves the gap on screen
+  // looking like more work than there is.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, cleaning_date, start_time, end_time, status)
+     VALUES ($1, NULL, '2026-08-10', '10:00', '12:30', 'pending')`,
+    [property.id]
+  );
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  await agent.post('/api/cleaners/jobs/assign').send({
+    cleaner_id: cleaner.id, property_id: property.id, cleaning_date: '2026-08-10',
+  }).expect(201);
+
+  const { rows } = await pool.query(
+    'SELECT cleaner_id FROM cleaning_jobs WHERE property_id = $1 AND cleaning_date = $2',
+    [property.id, '2026-08-10']
+  );
+  assert.equal(rows.length, 1, 'the hole was filled, not doubled');
+  assert.equal(rows[0].cleaner_id, cleaner.id);
+});
+
+test('a second, different cleaner on the same day is still allowed', async () => {
+  // Two people on one property in a day is a real thing — a big turnover,
+  // or a preparation after a clean. Only the exact repeat is a mistake.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const one = await seedCleaner();
+  const two = await seedCleaner();
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  await agent.post('/api/cleaners/jobs/assign').send({
+    cleaner_id: one.id, property_id: property.id, cleaning_date: '2026-08-10',
+  }).expect(201);
+  await agent.post('/api/cleaners/jobs/assign').send({
+    cleaner_id: two.id, property_id: property.id, cleaning_date: '2026-08-10', reason: 'checkin',
+  }).expect(201);
+
+  const { rows } = await pool.query(
+    'SELECT count(*)::int n FROM cleaning_jobs WHERE property_id = $1 AND cleaning_date = $2',
+    [property.id, '2026-08-10']
+  );
+  assert.equal(rows[0].n, 2);
+});
+
+test('a declined job does not block asking somebody again', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, cleaning_date, start_time, end_time, status)
+     VALUES ($1, $2, '2026-08-10', '10:00', '12:30', 'declined')`,
+    [property.id, cleaner.id]
+  );
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  await agent.post('/api/cleaners/jobs/assign').send({
+    cleaner_id: cleaner.id, property_id: property.id, cleaning_date: '2026-08-10',
+  }).expect(201);
+});
+
+// --- the checklist, and when it closes a job -----------------------------
+
+/**
+ * The count comes before the sign-off.
+ *
+ * There was a second endpoint for this — POST /jobs/:jobId/ready — which
+ * checked exactly this and was called by nothing, while /finish closed
+ * the job with no check at all. The gate now lives where the job actually
+ * ends.
+ */
+
+async function seedItem(propertyId, name, bookingId = null) {
+  const { rows } = await pool.query(
+    `INSERT INTO inventory_checklists (property_id, item_name, category, expected_quantity, booking_id)
+     VALUES ($1, $2, 'General', 1, $3) RETURNING id`,
+    [propertyId, name, bookingId]
+  );
+  return rows[0].id;
+}
+
+async function startedJob(property, cleaner, bookingId = null) {
+  const today = new Date().toISOString().slice(0, 10);
+  const { rows } = await pool.query(
+    `INSERT INTO cleaning_jobs
+       (property_id, cleaner_id, booking_id, cleaning_date, start_time, end_time, status, started_at)
+     VALUES ($1, $2, $3, $4, '10:00', '12:30', 'in_progress', NOW()) RETURNING id`,
+    [property.id, cleaner.id, bookingId, today]
+  );
+  return rows[0].id;
+}
+
+test('a job with an uncounted checklist cannot be finished', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner({ phone: '+27821234567' });
+  await pool.query('UPDATE cleaners SET pin = $1 WHERE id = $2', [bcrypt.hashSync('1234', 4), cleaner.id]);
+  await seedItem(property.id, 'Bath towels');
+  const jobId = await startedJob(property, cleaner);
+
+  const agent = await getAgent();
+  await agent.post('/api/auth/cleaner-login').send({ phone: '+27821234567', pin: '1234' }).expect(200);
+
+  const res = await agent.post(`/api/cleaner-portal/jobs/${jobId}/finish`).expect(409);
+  assert.match(res.body.error, /checklist/i);
+  assert.equal(res.body.checklist_outstanding, 1);
+});
+
+test('once counted, the same job finishes', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner({ phone: '+27821234568' });
+  await pool.query('UPDATE cleaners SET pin = $1 WHERE id = $2', [bcrypt.hashSync('1234', 4), cleaner.id]);
+  const itemId = await seedItem(property.id, 'Bath towels');
+  const jobId = await startedJob(property, cleaner);
+
+  const agent = await getAgent();
+  await agent.post('/api/auth/cleaner-login').send({ phone: '+27821234568', pin: '1234' }).expect(200);
+  await agent.post('/api/cleaner-portal/inventory/check').send({
+    cleaning_job_id: jobId,
+    items: [{ checklist_item_id: itemId, actual_quantity: 6, status: 'ok' }],
+  }).expect(200);
+
+  await agent.post(`/api/cleaner-portal/jobs/${jobId}/finish`).expect(200);
+});
+
+test('a property with no checklist finishes with nothing to count', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner({ phone: '+27821234569' });
+  await pool.query('UPDATE cleaners SET pin = $1 WHERE id = $2', [bcrypt.hashSync('1234', 4), cleaner.id]);
+  const jobId = await startedJob(property, cleaner);
+
+  const agent = await getAgent();
+  await agent.post('/api/auth/cleaner-login').send({ phone: '+27821234569', pin: '1234' }).expect(200);
+  await agent.post(`/api/cleaner-portal/jobs/${jobId}/finish`).expect(200);
+});
+
+test('an item asked for on one stay reaches that clean and no other', async () => {
+  // The property list is right for towels. It is wrong for "the cot is
+  // out for this family", which is true of one booking and nonsense on
+  // every other.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner({ phone: '+27821234570' });
+  await pool.query('UPDATE cleaners SET pin = $1 WHERE id = $2', [bcrypt.hashSync('1234', 4), cleaner.id]);
+
+  await seedItem(property.id, 'Bath towels');
+  await seedItem(property.id, 'Cot', 55501);
+  const thisStay = await startedJob(property, cleaner, 55501);
+  const otherStay = await startedJob(property, cleaner, 55502);
+
+  const agent = await getAgent();
+  await agent.post('/api/auth/cleaner-login').send({ phone: '+27821234570', pin: '1234' }).expect(200);
+
+  const mine = await agent.get(`/api/cleaner-portal/jobs/${thisStay}/checklist`).expect(200);
+  assert.deepEqual(mine.body.map((i) => i.item_name).sort(), ['Bath towels', 'Cot']);
+
+  const theirs = await agent.get(`/api/cleaner-portal/jobs/${otherStay}/checklist`).expect(200);
+  assert.deepEqual(theirs.body.map((i) => i.item_name), ['Bath towels'],
+    'somebody else\'s cot is not their problem');
+});
+
+test('a stay-only item also blocks finishing that clean', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner({ phone: '+27821234571' });
+  await pool.query('UPDATE cleaners SET pin = $1 WHERE id = $2', [bcrypt.hashSync('1234', 4), cleaner.id]);
+  await seedItem(property.id, 'Cot', 55503);
+  const jobId = await startedJob(property, cleaner, 55503);
+
+  const agent = await getAgent();
+  await agent.post('/api/auth/cleaner-login').send({ phone: '+27821234571', pin: '1234' }).expect(200);
+  await agent.post(`/api/cleaner-portal/jobs/${jobId}/finish`).expect(409);
+});
+
+test('the cleaning calendar survives a range containing an arrival', async () => {
+  // Regression: the check-in loop was written above the helper it calls,
+  // so the endpoint threw a temporal-dead-zone ReferenceError — but only
+  // for ranges that actually contained a check-in. A single-day query
+  // passed and the whole month 500'd, taking every calendar marker with
+  // it. Nothing in the suite covered a realistic range.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  await seedBooking({ property, smoobu_id: 66601, check_in: '2026-08-12', check_out: '2026-08-15' });
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.get('/api/cleaners/calendar?from=2026-08-01&to=2026-08-31').expect(200);
+  assert.equal(res.body.days['2026-08-12'].checkins.length, 1);
+  assert.equal(res.body.days['2026-08-15'].checkouts.length, 1);
 });

@@ -53,11 +53,47 @@ export function CleaningDaySheet({
   const [note, setNote] = useState('');
   const [propId, setPropId] = useState(propertyId);
 
-  const jobs = (day?.jobs || []).filter((j) => j.property_id === propId);
+  const allJobs = (day?.jobs || []).filter((j) => j.property_id === propId);
+  // A job with nobody on it is not a booking, it is a gap. Listing it
+  // under "already booked" said the opposite of what it meant.
+  // Still to happen, versus been and gone. Listing a finished clean under
+  // "coming that day" says the opposite of what happened, and putting the
+  // two together makes it impossible to see at a glance whether the day is
+  // covered or already behind you.
+  const jobs = allJobs.filter((j) => j.cleaner_name && !j.done);
+  const doneJobs = allJobs.filter((j) => j.cleaner_name && j.done);
+  const unstaffed = allJobs.filter((j) => !j.cleaner_name);
   const unmet = (day?.unmet || []).filter((u) => u.property_id === propId);
-  const free = (day?.available || []).filter((c) => c.property_ids.includes(propId));
-  const busyFolk = (day?.unavailable || []).filter((c) => c.property_ids.includes(propId));
+  // Whoever is already down for this property that day is not somebody
+  // you can send: that choice is made. Offering them again produced the
+  // same person twice on one day — which is a mis-tap, not a second pair
+  // of hands. A genuinely different cleaner is still offered, because two
+  // people on one turnover is a real thing.
+  // Only work still live. A clean somebody finished this morning does not
+  // stop them being asked back this afternoon — the same rule the database
+  // enforces, so the screen and the constraint agree.
+  const alreadyOn = new Set(
+    allJobs.filter((j) => !j.done).map((j) => j.cleaner_id).filter(Boolean));
+  const free = (day?.available || []).filter(
+    (c) => c.property_ids.includes(propId) && !alreadyOn.has(c.id));
+  const busyFolk = (day?.unavailable || []).filter(
+    (c) => c.property_ids.includes(propId) && !alreadyOn.has(c.id));
+  const everyoneOn = alreadyOn.size > 0 && free.length === 0 && busyFolk.length === 0;
   const chosenName = allProperties.find((p) => p.id === propId)?.name || propertyName;
+
+  // What actually happens at this property that day. "After checkout" on
+  // a day nothing checks out of, or "before check-in" on a day nobody
+  // arrives, are not choices — they are words that cannot mean anything,
+  // and a button you can press that does something senseless is worse
+  // than one that is not there.
+  const hasCheckout = (day?.checkouts || []).some((c) => c.property_id === propId);
+  const hasCheckin = (day?.checkins || []).some((c) => c.property_id === propId);
+  const allowed = (r: Reason) =>
+  r === 'checkout' ? hasCheckout : r === 'checkin' ? hasCheckin : true;
+
+  // Changing property can invalidate what was picked, so settle on
+  // something that is actually possible before anything is sent.
+  const effectiveReason: Reason = allowed(reason) ? reason : 'other';
 
   const label = new Date(date + 'T00:00:00').toLocaleDateString('en-ZA', {
     weekday: 'long', day: 'numeric', month: 'long',
@@ -75,9 +111,9 @@ export function CleaningDaySheet({
         property_id: propId,
         // Attached to the booking only when the day actually has one to
         // attach to. Everything else belongs to the property alone.
-        booking_id: reason === 'checkout' ? unmet[0]?.booking_id ?? null : null,
+        booking_id: effectiveReason === 'checkout' ? unmet[0]?.booking_id ?? null : null,
         cleaning_date: date,
-        reason,
+        reason: effectiveReason,
         note,
       }),
     });
@@ -138,39 +174,76 @@ export function CleaningDaySheet({
 
         {/* A checkout nobody is on. Stated first, because it is the only
             thing here that is a problem rather than an option. */}
-        {unmet.length > 0 &&
-        <p className="mt-4 text-[14px] font-medium flex items-center gap-1.5 text-[#92400E]">
-            <AlertCircle className="w-4 h-4 text-[#BA7517]" />
-            Checks out that day, with no cleaner
-          </p>
+        {(unmet.length > 0 || unstaffed.length > 0) &&
+        <div className="mt-4 border border-[#F0C36D] bg-[#FFFBEB] rounded-[10px] px-3 py-2.5">
+            <p className="text-[14px] font-medium flex items-center gap-1.5 text-[#92400E]">
+              <AlertCircle className="w-4 h-4 text-[#BA7517] shrink-0" />
+              {unmet.length > 0 ? 'Checks out that day, with no cleaner' : 'A visit is scheduled with nobody on it'}
+            </p>
+            {unstaffed.map((j) =>
+          <p key={j.id} className="text-[13px] text-[#92400E] mt-0.5">
+                {j.start_time}–{j.end_time} — picking somebody below fills this.
+              </p>
+          )}
+          </div>
         }
 
         {/* Who is already coming. */}
         {jobs.length > 0 &&
         <div className="mt-4">
             <p className="text-[12px] font-semibold uppercase tracking-wide text-[#717171] mb-2">
-              Already booked
+              Coming that day
             </p>
             {jobs.map((j) =>
           <div key={j.id} className="flex items-start gap-2 py-2 border-b border-[#F0F0F0] last:border-0">
+                {/* The icon is about whether there is a problem, and
+                    nothing else. A tick beside the word "Pending" read as
+                    "confirmed" — two different facts wearing one mark. */}
                 {j.cleaner_available ?
             <Check className="w-4 h-4 text-[#0F6E56] mt-0.5 shrink-0" /> :
             <AlertCircle className="w-4 h-4 text-[#BA7517] mt-0.5 shrink-0" />
             }
                 <div className="min-w-0">
                   <p className="text-[14px]">
-                    {j.cleaner_name || 'Nobody'} · {j.start_time}–{j.end_time}
+                    <span className="font-medium">{j.cleaner_name}</span> · {j.start_time}–{j.end_time}
                     {j.reason && j.reason !== 'checkout' &&
                 <span className="text-[#717171]"> · {j.reason === 'checkin' ? 'before check-in' : 'other'}</span>
                 }
                   </p>
                   {j.note && <p className="text-[13px] text-[#717171]">{j.note}</p>}
-                  {!j.cleaner_available && j.cleaner_name &&
+                  {/* Only for work still ahead. Once somebody has turned
+                      up, what they later said about their availability is
+                      history, not a problem. */}
+                  {!j.cleaner_available && !j.started &&
               <p className="text-[13px] text-[#92400E]">
-                      {j.cleaner_name} has marked themselves unavailable that day.
+                      Has marked themselves unavailable that day.
                     </p>
               }
-                  <p className="text-[12px] text-[#717171] capitalize">{j.status}</p>
+                  <p className="text-[12px] text-[#717171]">
+                    {j.status === 'pending' ? 'Waiting for them to accept' :
+                j.status === 'confirmed' ? 'Accepted' :
+                j.status === 'in_progress' ? 'On site now' :
+                j.status === 'completed' ? 'Done' : j.status}
+                  </p>
+                </div>
+              </div>
+          )}
+          </div>
+        }
+
+        {doneJobs.length > 0 &&
+        <div className="mt-4">
+            <p className="text-[12px] font-semibold uppercase tracking-wide text-[#717171] mb-2">
+              Already done
+            </p>
+            {doneJobs.map((j) =>
+          <div key={j.id} className="flex items-start gap-2 py-2 border-b border-[#F0F0F0] last:border-0">
+                <Check className="w-4 h-4 text-[#0F6E56] mt-0.5 shrink-0" />
+                <div className="min-w-0">
+                  <p className="text-[14px]">
+                    <span className="font-medium">{j.cleaner_name}</span> · {j.start_time}–{j.end_time}
+                  </p>
+                  {j.note && <p className="text-[13px] text-[#717171]">{j.note}</p>}
                 </div>
               </div>
           )}
@@ -185,21 +258,28 @@ export function CleaningDaySheet({
           </p>
 
           <div className="flex flex-wrap gap-1.5">
-            {REASONS.map((r) =>
-            <button
-              key={r.key}
-              onClick={() => setReason(r.key)}
-              title={r.hint}
-              className={`px-3 py-1.5 rounded-full text-[13px] border ${
-              reason === r.key ?
-              'bg-[#222222] text-white border-[#222222]' :
-              'bg-white text-[#222222] border-[#DDDDDD]'}`}>
-                {r.label}
-              </button>
-            )}
+            {REASONS.map((r) => {
+              const can = allowed(r.key);
+              return (
+                <button
+                  key={r.key}
+                  disabled={!can}
+                  onClick={() => setReason(r.key)}
+                  title={can ? r.hint :
+                  r.key === 'checkout' ? 'Nothing checks out that day' : 'Nobody arrives that day'}
+                  className={`px-3 py-1.5 rounded-full text-[13px] border ${
+                  !can ?
+                  'bg-[#F7F7F7] text-[#B0B0B0] border-[#EBEBEB] cursor-not-allowed' :
+                  effectiveReason === r.key ?
+                  'bg-[#222222] text-white border-[#222222]' :
+                  'bg-white text-[#222222] border-[#DDDDDD]'}`}>
+                  {r.label}
+                </button>);
+
+            })}
           </div>
           <p className="text-[12px] text-[#717171] mt-1.5">
-            {REASONS.find((r) => r.key === reason)?.hint}
+            {REASONS.find((r) => r.key === effectiveReason)?.hint}
           </p>
 
           <input
@@ -234,7 +314,9 @@ export function CleaningDaySheet({
 
           {free.length === 0 && busyFolk.length === 0 &&
           <p className="mt-3 text-[13px] text-[#717171]">
-              No cleaner is assigned to this property yet.
+              {everyoneOn ?
+            'Everybody who cleans this property is already down for that day.' :
+            'No cleaner is assigned to this property yet.'}
             </p>
           }
         </div>

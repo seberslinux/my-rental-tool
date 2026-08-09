@@ -7,7 +7,8 @@ import {
   getRate,
   formatRate,
   dateKey,
-  dateEqual } from
+  dateEqual,
+  cleanForBooking } from
 '../data/properties';
 import { BookingBar } from './BookingBar';
 import { ChevronLeft, ChevronRight, Moon, Check, UserX, UserCheck, TriangleAlert } from 'lucide-react';
@@ -50,7 +51,7 @@ interface MonthCalendarProps {
    */
   cleaningDays?: Record<string, {
     available: {id: number;name: string;property_ids: number[];}[];
-    jobs: {property_id: number;cleaner_available: boolean;}[];
+    jobs: {property_id: number;cleaner_available: boolean;status: string;cleaner_name: string | null;done: boolean;}[];
     unmet: {property_id: number;}[];
   }>;
   /** Days the person cannot work, drawn as such. */
@@ -334,9 +335,19 @@ export function MonthCalendar({
               cleanDay.unmet.some((u) => u.property_id === propertyId) :
               false;
               // Assigned, but the cleaner has since said they cannot come.
-              const clashHere = cleanDay ?
-              cleanDay.jobs.some((j) => j.property_id === propertyId && !j.cleaner_available) :
-              false;
+              const jobsHere = cleanDay ?
+              cleanDay.jobs.filter((j) => j.property_id === propertyId) :
+              [];
+              const clashHere = jobsHere.some((j) => j.cleaner_name && !j.cleaner_available);
+              // Settled: somebody said yes and is still able to come. The
+              // cleaner's own calendar tints a booked day green and ticks
+              // it, and that is the one that reads well, so the manager's
+              // gets the same treatment for the same fact.
+              const settledHere = jobsHere.some(
+                (j) => j.cleaner_name && j.cleaner_available &&
+                ['confirmed', 'in_progress', 'completed'].includes(j.status));
+              // Asked, but nobody has answered yet.
+              const askedHere = jobsHere.some((j) => j.cleaner_name && j.status === 'pending');
               const edges = 'border-r border-b border-[#EBEBEB]';
 
               if (cell.isOtherMonth) {
@@ -348,6 +359,7 @@ export function MonthCalendar({
                   key={idx}
                   onClick={onDayClick && !isPast ? () => onDayClick(cell.date) : undefined}
                   className={`h-[84px] relative ${edges} ${
+                  settledHere && !clashHere && !unmetHere ? 'bg-[#EAF4F0] ' :
                   dayState === 'booked' ? 'bg-[#EAF4F0] ' :
                   dayState === 'off' ? 'bg-[#FAFAFA] ' : ''}${
                   onDayClick && !isPast ? 'cursor-pointer active:bg-[#EBEBEB] ' : ''}${
@@ -479,15 +491,25 @@ export function MonthCalendar({
                           </span>
                     }
 
-                        {hasCleaner && !unmetHere && !clashHere &&
-                    <span title="A cleaner is coming" className="flex items-center text-[#0F6E56]">
+                        {/* Confirmed and asked are not the same state and
+                            should not wear the same mark. A tick on a
+                            green day means it is settled; the person icon
+                            means somebody has been asked and has not
+                            answered. */}
+                        {settledHere && !unmetHere && !clashHere &&
+                    <span title="Confirmed" className="flex items-center text-[#0F6E56]">
+                            <Check className="w-4 h-4" strokeWidth={3} />
+                          </span>
+                    }
+                        {askedHere && !settledHere && !unmetHere && !clashHere &&
+                    <span title="Asked, waiting for an answer" className="flex items-center text-[#717171]">
                             <UserCheck className="w-3.5 h-3.5" strokeWidth={2.25} />
                           </span>
                     }
 
                         {/* How many could take it. Grey and quiet: it is
                             context for the marks above, not an alarm. */}
-                        {freeHere > 0 && !hasCleaner &&
+                        {freeHere > 0 && !settledHere && !askedHere && !unmetHere &&
                     <span title={`${freeHere} cleaner${freeHere === 1 ? '' : 's'} free`}
                       className="text-[10px] leading-none text-[#B0B0B0] tabular-nums">
                             {freeHere}
@@ -549,6 +571,15 @@ export function MonthCalendar({
                 <BookingBar
                   key={`${seg.booking.id}-${sIdx}`}
                   booking={seg.booking}
+                  cleanState={(() => {
+                    // Only the manager's grid links the two — the cleaner's
+                    // portal has no business seeing every stay's staffing.
+                    if (!cleaningDays || seg.booking.type === 'blocked') return null;
+                    const c = cleanForBooking(seg.booking);
+                    if (!c) return null;
+                    return ['confirmed', 'in_progress', 'completed'].includes(c.status) &&
+                    c.cleaner_available ? 'confirmed' : 'asked';
+                  })()}
                   plain={plainBars}
                   label={barLabel}
                   onClick={onBookingClick}

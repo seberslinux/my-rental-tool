@@ -8,7 +8,7 @@ const { isBlockedPlatform } = require('./analytics-calc');
 // bare sendMessage calls left every job reading notified = 0.
 const { notify } = require('./notify');
 // Who can work when — one definition, shared with the calendar.
-const { loadAvailability, cleanerDayStatus } = require('./availability');
+const { loadAvailability, cleanerDayStatus, prettyDate } = require('./availability');
 
 // Run cleaner assignment for a specific property and checkout date
 // booking: { id, smoobu_id, property_id, check_out, check_in_next, num_guests_next, guest_name_next }
@@ -111,7 +111,7 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
 
     const sent = await notify({
       event: 'job_assigned',
-      title: `You are cleaning ${property.name} on ${checkoutDate}`,
+      title: `Clean ${property.name} — ${prettyDate(checkoutDate)}`,
       body: `From ${checkoutTime}, about ${property.cleaning_hours_required} hours. ` +
       `${property.address ? property.address + '. ' : ''}${nextGuestInfo}`,
       propertyId: property.id, cleanerId: cleaner.id, jobId,
@@ -234,7 +234,7 @@ async function reconcileCleaningJobs() {
         removed.push({ id: row.id, why });
         await notify({
           event: 'job_cancelled',
-          title: `${row.property_name || 'A property'} on ${ymd(row.cleaning_date)} is off`,
+          title: `${row.property_name || 'A property'} on ${prettyDate(row.cleaning_date)} is off`,
           body: why === 'blocked' ?
           'Those nights were taken off sale, so there is no turnover to clean.' :
           'That booking is no longer going ahead.',
@@ -261,8 +261,8 @@ async function reconcileCleaningJobs() {
         // have turned up on the old day — or not at all on the new one.
         await notify({
           event: 'job_rescheduled',
-          title: `${row.property_name || 'A property'} has moved to ${should}`,
-          body: `It was ${was}. The booking changed, so your clean moved with it.`,
+          title: `${row.property_name || 'A property'} has moved to ${prettyDate(should)}`,
+          body: `It was ${prettyDate(was)}. The booking changed, so your clean moved with it.`,
           propertyId: row.property_id, cleanerId: row.cleaner_id, jobId: row.id,
           link: '/',
         });
@@ -352,7 +352,7 @@ async function unassignCleanerFromBooking(smoobuId) {
 
     await notify({
       event: 'job_cancelled',
-      title: `${job.property_name} on ${ymd(job.cleaning_date)} is off`,
+      title: `${job.property_name} on ${prettyDate(job.cleaning_date)} is off`,
       body: 'That booking was cancelled, so the clean is no longer needed.',
       propertyId: job.property_id, cleanerId: job.cleaner_id, jobId: job.id,
       link: '/',

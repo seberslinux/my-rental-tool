@@ -9,6 +9,7 @@ import {
   Percent,
   MessageSquare,
   BarChart2,
+  ClipboardList,
   Save,
   RefreshCw,
   Sparkles,
@@ -20,6 +21,7 @@ import {
   X,
   Plus } from
 'lucide-react';
+import { ChecklistEditor } from './ChecklistEditor';
 
 interface Property {
   id: number;
@@ -158,6 +160,8 @@ const inputCls =
 'w-full h-9 px-3 border border-[#EBEBEB] rounded-[8px] text-[13px] focus:outline-none focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF]';
 export function PropertiesPage() {
   const [expandedProperty, setExpandedProperty] = useState<number | null>(null);
+  // Which property's cleaning checklist is being edited.
+  const [checklistFor, setChecklistFor] = useState<Property | null>(null);
   const [properties, setProperties] = useState<Property[]>([]);
   const [forms, setForms] = useState<Record<number, PropertyForm>>({});
   const [syncing, setSyncing] = useState(false);
@@ -309,6 +313,17 @@ export function PropertiesPage() {
 
                     <BarChart2 className="w-3.5 h-3.5" />
                     Performance
+                  </button>
+                  {/* The cleaner's checklist for this property. The API has
+                      always existed and nothing had ever called it, so
+                      every list was empty and every cleaner was told no
+                      checklist had been set up. */}
+                  <button
+                    className="flex items-center gap-1 text-[12px] font-semibold text-[#007AFF] hover:underline"
+                    onClick={(e) => { e.stopPropagation(); setChecklistFor(prop); }}>
+
+                    <ClipboardList className="w-3.5 h-3.5" />
+                    Checklist
                   </button>
                   <button
                     className="flex items-center gap-1 px-3 py-1.5 text-[12px] font-semibold text-white bg-[#007AFF] rounded-[6px] hover:bg-[#0066CC]"
@@ -647,6 +662,13 @@ export function PropertiesPage() {
           Save Settings
         </button>
       </div>
+
+      {checklistFor &&
+      <ChecklistEditor
+        propertyId={checklistFor.id}
+        propertyName={checklistFor.name}
+        onClose={() => setChecklistFor(null)} />
+      }
     </div>);
 
 }

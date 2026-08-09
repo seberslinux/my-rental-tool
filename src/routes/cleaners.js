@@ -5,7 +5,7 @@ const crypto = require('crypto');
 const { requireRole } = require('../middleware/auth');
 const { sendInviteLink } = require('../services/cleaner-notify');
 // One definition of who can work when, shared with assignment.
-const { loadAvailability, cleanerDayStatus, ymd } = require('../services/availability');
+const { loadAvailability, cleanerDayStatus, ymd, prettyDate } = require('../services/availability');
 // One place decides who gets told what.
 const { notify } = require('../services/notify');
 // One definition of what "blocked" means, shared with revenue.
@@ -70,6 +70,7 @@ router.get('/calendar', async (req, res) => {
   const jobs = await getAll(
     `SELECT cj.id, cj.property_id, cj.cleaning_date, cj.status, cj.cleaner_id,
             cj.start_time, cj.end_time, cj.reason, cj.note,
+            cj.started_at, cj.completed_at,
             c.name AS cleaner_name, p.name AS property_name
        FROM cleaning_jobs cj
        LEFT JOIN cleaners c ON c.id = cj.cleaner_id
@@ -89,9 +90,20 @@ router.get('/calendar', async (req, res) => {
   );
   const checkouts = checkoutRows.filter((b) => !isBlockedPlatform(b.platform));
 
+  // Arrivals too, because "before check-in" is only a thing you can ask
+  // for on a day somebody actually arrives. Offering it on a day with no
+  // arrival is offering a choice that cannot mean anything.
+  const checkinRows = await getAll(
+    `SELECT b.smoobu_id, b.property_id, b.check_in, b.platform, p.name AS property_name
+       FROM bookings b
+       LEFT JOIN properties p ON p.id = b.property_id
+      WHERE b.check_in >= $1 AND b.check_in <= $2 AND b.status = 'confirmed'`,
+    [from, to]
+  );
+
   const days = {};
   const dayOf = (key) => {
-    if (!days[key]) days[key] = { available: [], unavailable: [], jobs: [], checkouts: [], unmet: [] };
+    if (!days[key]) days[key] = { available: [], unavailable: [], jobs: [], checkouts: [], checkins: [], unmet: [] };
     return days[key];
   };
 
@@ -120,15 +132,29 @@ router.get('/calendar', async (req, res) => {
     // themselves unavailable on a day they were already given, and
     // nothing anywhere pointed that out — the job simply sat there
     // looking covered.
-    const stillFree = j.cleaner_id ?
+    // Work that has been started or finished is settled. Whether that
+    // cleaner is "available" on the day stopped mattering the moment they
+    // turned up — a finished clean flagged as a problem because the person
+    // who did it has since marked the day off is nonsense, and it is the
+    // loudest kind, because it wears the same amber as a real gap.
+    const settled = Boolean(j.started_at || j.completed_at);
+    const stillFree = settled || (j.cleaner_id ?
     cleanerDayStatus(av, j.cleaner_id, ymd(j.cleaning_date)).available :
-    false;
+    false);
     day.jobs.push({
       id: j.id, property_id: j.property_id, property_name: j.property_name,
       cleaner_id: j.cleaner_id, cleaner_name: j.cleaner_name, status: j.status,
       cleaner_available: stillFree,
+      done: Boolean(j.completed_at),
+      started: Boolean(j.started_at),
       start_time: j.start_time, end_time: j.end_time,
       reason: j.reason, note: j.note,
+    });
+  });
+
+  checkinRows.filter((b) => !isBlockedPlatform(b.platform)).forEach((b) => {
+    dayOf(ymd(b.check_in)).checkins.push({
+      booking_id: b.smoobu_id, property_id: b.property_id, property_name: b.property_name,
     });
   });
 
@@ -437,6 +463,12 @@ router.post('/jobs/assign', async (req, res) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(String(cleaning_date))) {
     return res.status(400).json({ error: 'cleaning_date must be YYYY-MM-DD' });
   }
+  // The client hides past days, but the rule belongs here too: a job in
+  // the past can never be started, because the window that governs
+  // starting one closed before it was created.
+  if (cleaning_date < new Date().toISOString().slice(0, 10)) {
+    return res.status(400).json({ error: 'That day has already passed' });
+  }
 
   const prop = await getOne(
     'SELECT name, address, check_in_time, check_out_time, cleaning_hours_required FROM properties WHERE id = $1',
@@ -468,7 +500,42 @@ router.post('/jobs/assign', async (req, res) => {
   const startsAt = start_time || clock(from);
   const endsAt = end_time || clock(mins(startsAt, from) + hours * 60);
 
-  const result = await run(
+  // What is already on that property that day, so this does not quietly
+  // become the second copy of it.
+  const existing = await getAll(
+    `SELECT id, cleaner_id, status FROM cleaning_jobs
+      WHERE property_id = $1 AND cleaning_date = $2
+        AND status NOT IN ('declined', 'cancelled')`,
+    [property_id, cleaning_date]
+  );
+
+  // Asking the same person for the same day twice is a mis-tap, not a
+  // second job. It produced two identical rows, one confirmed and one
+  // pending, and a cleaner with the same shift listed twice in their app.
+  // Only work still waiting to happen counts as a clash. A clean they
+  // already finished that morning does not stop them being asked back in
+  // the afternoon.
+  if (existing.some((j) =>
+  String(j.cleaner_id) === String(cleaner_id) &&
+  ['pending', 'confirmed', 'in_progress'].includes(j.status))) {
+    return res.status(409).json({ error: 'They are already down for that property that day' });
+  }
+
+  // A job sitting there with nobody on it is the hole this is meant to
+  // fill. Filling it beats creating a second row beside it and leaving
+  // the empty one behind looking like more work than there is.
+  const orphan = existing.find((j) => j.cleaner_id === null);
+
+  const result = orphan ?
+  await run(
+    `UPDATE cleaning_jobs
+        SET cleaner_id = $1, booking_id = COALESCE($2, booking_id),
+            start_time = $3, end_time = $4, status = 'pending',
+            reason = $5, note = COALESCE($6, note)
+      WHERE id = $7 RETURNING id`,
+    [cleaner_id, booking_id || null, startsAt, endsAt, reason, (note || '').trim() || null, orphan.id]
+  ) :
+  await run(
     `INSERT INTO cleaning_jobs (cleaner_id, property_id, booking_id, cleaning_date, start_time, end_time, status, reason, note)
      VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7, $8) RETURNING id`,
     [cleaner_id, property_id, booking_id || null, cleaning_date, startsAt, endsAt, reason, (note || '').trim() || null]
@@ -486,12 +553,21 @@ router.post('/jobs/assign', async (req, res) => {
   const av = await loadAvailability([cleaner_id]);
   const free = cleanerDayStatus(av, Number(cleaner_id), cleaning_date).available;
 
-  const what = reason === 'checkin' ? 'preparing' : reason === 'other' ? 'going to' : 'cleaning';
+  // Said the way somebody would say it. "You are going to Hill Top Lodge
+  // on 2026-08-12" is a sentence assembled from columns; what a cleaner
+  // wants to read is what the job is and which day it falls on.
+  const when = prettyDate(job.cleaning_date);
+  const what = reason === 'checkin' ?
+  `Get ${prop.name} ready for guests` :
+  reason === 'other' ?
+  `${prop.name} needs you` :
+  `Clean ${prop.name}`;
+
   await notify({
     event: 'job_assigned',
     title: free ?
-    `You are ${what} ${prop.name} on ${ymd(job.cleaning_date)}` :
-    `Can you cover ${prop.name} on ${ymd(job.cleaning_date)}?`,
+    `${what} — ${when}` :
+    `Can you cover ${prop.name} on ${when}?`,
     body: [
     free ? '' : 'You are marked as not available that day, so this is a request — decline it if you cannot.',
     `${job.start_time}–${job.end_time}.`,

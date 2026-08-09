@@ -7,7 +7,8 @@ import {
   Calendar as CalendarIcon,
   Plus,
   X,
-  Check } from
+  Check,
+  ChevronDown } from
 'lucide-react';
 import { RequestCleanerDialog } from './RequestCleanerDialog';
 
@@ -109,6 +110,8 @@ export function CleanersPage() {
   // Asking somebody to come, starting from the person rather than the day.
   const [askingCleaner, setAskingCleaner] = useState<any | null>(null);
   const [askedNote, setAskedNote] = useState('');
+  // The cards are tall; the pay summary lives underneath them.
+  const [cleanersOpen, setCleanersOpen] = useState(false);
   // Schedule and Edit open the same form — the weekly availability lives
   // in it — so Schedule scrolls straight to that section rather than
   // dropping the user at the top of a long form.
@@ -387,216 +390,61 @@ export function CleanersPage() {
       </div>
       )}
 
-      {/* Combined Availability & Jobs */}
-      <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB] overflow-hidden">
-        <div className="p-4 md:p-5 border-b border-[#EBEBEB] flex flex-col sm:flex-row sm:items-center justify-between gap-3 md:gap-4">
-          <h2 className="text-[15px] md:text-[16px] font-semibold text-[#222222]">
-            Combined Availability & Jobs
-          </h2>
-          <div className="flex items-center justify-between sm:justify-end gap-2 w-full sm:w-auto">
-            <div className="flex items-center gap-1 md:gap-2">
-              <button
-                onClick={() => setWeekOffset(weekOffset - 1)}
-                className="w-8 h-8 flex items-center justify-center rounded-[6px] border border-[#EBEBEB] hover:bg-[#F7F7F7] text-[#717171]">
+      {/* "Combined Availability & Jobs" stood here.
+          It drew a week grid from each cleaner's weekly pattern alone —
+          no date overrides — so a day somebody had marked themselves off
+          still showed a green tick, and a week they had swapped looked
+          identical to every other week. The calendar answers the same
+          question from the same data the assignment service uses, per
+          date, and lets you act on it. Two answers, one of them wrong,
+          is worse than one. */}
 
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="text-[13px] md:text-[14px] font-medium text-[#222222] min-w-[120px] md:min-w-[140px] text-center">
-                {weekRangeLabel}
-              </span>
-              <button
-                onClick={() => setWeekOffset(weekOffset + 1)}
-                className="w-8 h-8 flex items-center justify-center rounded-[6px] border border-[#EBEBEB] hover:bg-[#F7F7F7] text-[#717171]">
-
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-            <button
-              onClick={() => setWeekOffset(0)}
-              className="px-3 py-1.5 text-[12px] md:text-[13px] font-medium border border-[#EBEBEB] rounded-[6px] hover:bg-[#F7F7F7] text-[#222222]">
-
-              Today
-            </button>
-          </div>
-        </div>
-        <div className="p-4 md:p-5 overflow-x-auto">
-          <div className="min-w-[500px]">
-            {/* Header Row */}
-            <div className="flex mb-2">
-              <div className="w-[80px] md:w-[120px] flex-shrink-0"></div>
-              <div className="flex-1 grid grid-cols-7 gap-1">
-                {days.map((d, i) =>
-                <div
-                  key={i}
-                  className={`text-center pb-2 ${d.active ? 'border-b-2 border-[#007AFF]' : ''}`}>
-
-                    <div
-                    className={`text-[10px] md:text-[11px] font-medium ${d.active ? 'text-[#007AFF]' : 'text-[#717171]'}`}>
-
-                      {d.day} {d.date}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Cleaner Rows */}
-            {cleaners.map((cleaner, ci) => {
-              const color = COLORS[ci % COLORS.length];
-              const availSet = new Set(cleaner.availability.map((a) => a.day_of_week));
-              return (
-                <div key={cleaner.id} className="flex items-center py-2 border-b border-[#F0F0F0]">
-                  <div className="w-[80px] md:w-[120px] flex-shrink-0 flex items-center gap-2">
-                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: color }}></div>
-                    <span className="text-[13px] md:text-[14px] text-[#222222] truncate">
-                      {cleaner.name}
-                    </span>
-                  </div>
-                  <div className="flex-1 grid grid-cols-7 gap-1">
-                    {days.map((d, i) =>
-                    <div key={i} className="flex justify-center items-center">
-                        {availSet.has(d.jsDay) ?
-                      <div className="w-full max-w-[40px] h-7 md:h-8 bg-[#ECFDF5] rounded-[4px] flex items-center justify-center">
-                            <Check
-                          className="w-3 h-3 md:w-4 md:h-4 text-[#10B981]"
-                          strokeWidth={3} />
-
-                          </div> :
-
-                      <div className="w-full max-w-[40px] h-7 md:h-8 bg-[#F7F7F7] rounded-[4px] flex items-center justify-center">
-                            <span className="text-[#B0B0B0] text-[14px] md:text-[16px] leading-none">
-                              -
-                            </span>
-                          </div>
-                      }
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-
-            {cleaners.length === 0 && (
-              <div className="flex items-center py-4 text-center">
-                <span className="text-[13px] text-[#717171] w-full">No cleaners added yet.</span>
-              </div>
-            )}
-
-            {/* Coverage Row */}
-            <div className="flex items-center py-3">
-              <div className="w-[80px] md:w-[120px] flex-shrink-0">
-                <span className="text-[13px] md:text-[14px] font-medium text-[#222222]">
-                  Coverage
-                </span>
-              </div>
-              <div className="flex-1 grid grid-cols-7 gap-1">
-                {coverage.map((count, i) =>
-                <div key={i} className="flex justify-center items-center">
-                    <div
-                    className={`w-full max-w-[40px] h-7 md:h-8 rounded-[4px] flex items-center justify-center text-[12px] md:text-[13px] font-bold ${count > 0 ? 'bg-[#FFFBEB] text-[#D97706]' : 'bg-[#FEF2F2] text-[#DC2626]'}`}>
-
-                      {count}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Upcoming Jobs */}
-      <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] border border-[#EBEBEB] overflow-hidden">
-        <div className="p-4 md:p-5 border-b border-[#EBEBEB]">
-          <h2 className="text-[15px] md:text-[16px] font-semibold text-[#222222]">
-            Upcoming Jobs (Next 7 Days)
-          </h2>
-        </div>
-
-        {/* Mobile Card Layout */}
-        <div className="block sm:hidden">
-          {cleaningJobs.length === 0 ? (
-            <div className="p-6 text-center text-[13px] text-[#717171]">
-              No upcoming jobs.
-            </div>
-          ) : (
-            <div className="divide-y divide-[#F0F0F0]">
-              {cleaningJobs.map((job) => (
-                <div key={job.id} className="p-4 space-y-1">
-                  <div className="text-[13px] font-semibold text-[#222222]">{job.property_name}</div>
-                  <div className="text-[12px] text-[#717171]">{job.cleaning_date}</div>
-                  <div className="text-[12px] text-[#717171]">{job.cleaner_name || 'Unassigned'}</div>
-                  <div className="inline-block mt-1 px-2 py-0.5 rounded-[4px] text-[11px] font-semibold bg-[#FFFBEB] text-[#D97706]">
-                    {job.status}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* Desktop Table Layout */}
-        <div className="hidden sm:block overflow-x-auto">
-          <table className="w-full text-left text-[12px]">
-            <thead className="bg-[#F7F7F7] text-[#717171]">
-              <tr>
-                <th className="p-3 pl-5 font-semibold uppercase tracking-[0.3px] text-[10px]">
-                  Date
-                </th>
-                <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px]">
-                  Time
-                </th>
-                <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px]">
-                  Property
-                </th>
-                <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px]">
-                  Type
-                </th>
-                <th className="p-3 font-semibold uppercase tracking-[0.3px] text-[10px]">
-                  Cleaner
-                </th>
-                <th className="p-3 pr-5 font-semibold uppercase tracking-[0.3px] text-[10px]">
-                  Status
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {cleaningJobs.length === 0 ? (
-              <tr>
-                <td
-                  colSpan={6}
-                  className="p-8 text-center text-[13px] text-[#717171]">
-
-                  No upcoming jobs.
-                </td>
-              </tr>
-              ) : (
-                cleaningJobs.map((job) => (
-                  <tr key={job.id} className="border-b border-[#F0F0F0]">
-                    <td className="p-3 pl-5 text-[13px] text-[#222222]">{job.cleaning_date}</td>
-                    <td className="p-3 text-[13px] text-[#717171]">-</td>
-                    <td className="p-3 text-[13px] text-[#222222]">{job.property_name}</td>
-                    <td className="p-3 text-[13px] text-[#717171]">Clean</td>
-                    <td className="p-3 text-[13px] text-[#222222]">{job.cleaner_name || 'Unassigned'}</td>
-                    <td className="p-3 pr-5">
-                      <span className="inline-block px-2 py-0.5 rounded-[4px] text-[11px] font-semibold bg-[#FFFBEB] text-[#D97706]">
-                        {job.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Your Cleaners */}
+      {/* Your Cleaners.
+          Collapsed by default. Each card carries a photo-sized avatar,
+          the properties, a week of day pills, the rate and five buttons —
+          three of those pushed the pay summary off the bottom of the
+          screen, and the thing you open this page for is usually a name
+          and a number. */}
       <div>
-        <h2 className="text-[16px] md:text-[18px] font-semibold text-[#222222] mb-3 md:mb-4">
-          Your Cleaners
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <button
+          onClick={() => setCleanersOpen(!cleanersOpen)}
+          className="w-full flex items-center justify-between mb-3 md:mb-4 text-left">
+          <h2 className="text-[16px] md:text-[18px] font-semibold text-[#222222]">
+            Your cleaners <span className="text-[#717171] font-normal">({cleaners.length})</span>
+          </h2>
+          <ChevronDown
+            className={`w-5 h-5 text-[#717171] transition-transform ${cleanersOpen ? 'rotate-180' : ''}`} />
+        </button>
+
+        {/* Closed, it is still a list — just one line each, which is what
+            you need to see who there is. */}
+        {!cleanersOpen &&
+        <div className="bg-white rounded-[12px] border border-[#EBEBEB] overflow-hidden mb-2">
+            {cleaners.map((cleaner, ci) =>
+          <button
+            key={cleaner.id}
+            onClick={() => setCleanersOpen(true)}
+            className="w-full flex items-center gap-3 px-4 py-3 border-b border-[#F0F0F0] last:border-0 text-left hover:bg-[#FAFAFA]">
+                <div
+              className="w-7 h-7 rounded-full flex items-center justify-center text-white font-semibold text-[13px] shrink-0"
+              style={{ backgroundColor: COLORS[ci % COLORS.length] }}>
+                  {cleaner.name.charAt(0).toUpperCase()}
+                </div>
+                <span className="text-[14px] font-medium text-[#222222] truncate">{cleaner.name}</span>
+                <span className="text-[13px] text-[#717171] truncate ml-auto">
+                  {cleaner.properties.length === 0 ?
+              'No properties' :
+              cleaner.properties.map((p) => p.name).join(', ')}
+                </span>
+              </button>
+          )}
+            {cleaners.length === 0 &&
+          <p className="px-4 py-3 text-[13px] text-[#717171]">Nobody yet.</p>
+          }
+          </div>
+        }
+
+        <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 ${cleanersOpen ? '' : 'hidden'}`}>
           {cleaners.map((cleaner, ci) => {
             const color = COLORS[ci % COLORS.length];
             // Build availability day letters: Mon-Sun order (day_of_week 1,2,3,4,5,6,0)

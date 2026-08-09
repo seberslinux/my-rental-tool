@@ -9,9 +9,19 @@ interface AppHeaderProps {
   };
   onRefresh?: () => Promise<void>;
   hasNotifications?: boolean;
+  /**
+   * Opening the activity feed.
+   *
+   * The bell has always rendered here, dot and all, and never had an
+   * onClick — the prop was passed in by App and quietly dropped on the
+   * way through, so clicking it did nothing at all. TypeScript could not
+   * help: an interface that omits a prop makes passing it the error, and
+   * the JSX spread never complained.
+   */
+  onOpenNotifications?: () => void;
   syncedLabel?: string;
 }
-export function AppHeader({ title, propertyFilter, onRefresh, hasNotifications, syncedLabel }: AppHeaderProps) {
+export function AppHeader({ title, propertyFilter, onRefresh, hasNotifications, onOpenNotifications, syncedLabel }: AppHeaderProps) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = async () => {
     if (isRefreshing) return;
@@ -39,7 +49,10 @@ export function AppHeader({ title, propertyFilter, onRefresh, hasNotifications, 
               strokeWidth={1.5} />
 
           </button>
-          <button className="w-9 h-9 rounded-full border border-[#EBEBEB] bg-white flex items-center justify-center text-[#222222] active:bg-[#F7F7F7] transition-colors relative">
+          <button
+            onClick={onOpenNotifications}
+            aria-label="Notifications"
+            className="w-9 h-9 rounded-full border border-[#EBEBEB] bg-white flex items-center justify-center text-[#222222] active:bg-[#F7F7F7] transition-colors relative">
             <Bell className="w-[18px] h-[18px]" strokeWidth={1.5} />
             {hasNotifications &&
             <span className="absolute top-[-1px] right-[-1px] w-2 h-2 rounded-full bg-[#D93900] border-2 border-white"></span>

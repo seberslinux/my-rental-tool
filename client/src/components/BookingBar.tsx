@@ -1,9 +1,20 @@
 import React from 'react';
+import { Check } from 'lucide-react';
 import { Booking, TODAY, formatTotal } from '../data/properties';
 interface BookingBarProps {
   booking: Booking;
   style: React.CSSProperties;
   onClick?: (booking: Booking) => void;
+  /**
+   * The clean that follows this stay, if one is arranged.
+   *
+   * Drawn on the bar itself so the two are visibly one thing. A tick when
+   * it is settled, a hollow ring when somebody has been asked and has not
+   * answered, and nothing at all when nobody is coming — the absence is
+   * the signal there, and the crossed-out person in the day cell is what
+   * says so loudly.
+   */
+  cleanState?: 'confirmed' | 'asked' | null;
   /**
    * What the bar reads. Defaults to name and total. The cleaner portal
    * passes a version without the money — the same grid serves both, and
@@ -13,7 +24,7 @@ interface BookingBarProps {
   /** Neutral bar: no channel colour, no channel badge. */
   plain?: boolean;
 }
-export function BookingBar({ booking, style, onClick, label, plain }: BookingBarProps) {
+export function BookingBar({ booking, style, onClick, label, plain, cleanState }: BookingBarProps) {
   const isPast = booking.checkOut <= TODAY;
   const getStyles = () => {
     switch (booking.type) {
@@ -93,6 +104,19 @@ export function BookingBar({ booking, style, onClick, label, plain }: BookingBar
         booking.total ?
         `${booking.name} · ${formatTotal(booking.total)}` :
         booking.name}
+      </div>
+
+      {cleanState &&
+      <span
+        title={cleanState === 'confirmed' ? 'Cleaner confirmed' : 'Cleaner asked, no answer yet'}
+        className="shrink-0 flex items-center justify-center w-[14px] h-[14px] rounded-full bg-white/90 mr-0.5">
+        {cleanState === 'confirmed' ?
+        <Check className="w-3 h-3 text-[#0F6E56]" strokeWidth={3.5} /> :
+        <span className="w-[7px] h-[7px] rounded-full border-[1.5px] border-[#717171]" />
+        }
+      </span>
+      }
+      <div className="hidden">
       </div>
     </div>);
 

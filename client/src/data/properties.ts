@@ -10,6 +10,14 @@ export type ChannelType = 'airbnb' | 'bcom' | 'direct' | 'blocked';
 
 export interface Booking {
   id: string;
+  /**
+   * Smoobu's id for the stay, which is what everything downstream keys on.
+   *
+   * cleaning_jobs.booking_id and inventory_checklists.booking_id both hold
+   * this, not the local row id — the sync deletes and re-inserts bookings,
+   * so a local id is not stable enough to hang anything off.
+   */
+  smoobuId: number;
   propId: number;
   type: ChannelType;
   name: string;
@@ -68,10 +76,12 @@ export interface CleaningDay {
     id: number;property_id: number;property_name: string;
     cleaner_id: number | null;cleaner_name: string | null;
     status: string;cleaner_available: boolean;
+    done: boolean;started: boolean;
     start_time: string;end_time: string;
     reason: string | null;note: string | null;
   }[];
   checkouts: {booking_id: number;property_id: number;property_name: string;}[];
+  checkins: {booking_id: number;property_id: number;property_name: string;}[];
   unmet: {property_id: number;property_name: string;booking_id: number;}[];
 }
 
@@ -145,6 +155,7 @@ export async function loadCalendarData(): Promise<void> {
       const type = mapPlatform(b.platform);
       return {
       id: String(b.id),
+      smoobuId: Number(b.smoobu_id ?? b.id),
       propId: b.property_id,
       type,
       // A block has no guest, so the old `|| 'Guest'` fallback labelled
@@ -233,6 +244,41 @@ export function holidaysDuring(b: Booking): HolidayWindow[] {
  * rates — the endpoint refuses it — so the grid renders no money without
  * anybody having to ask it not to.
  */
+/**
+ * The clean that follows a stay.
+ *
+ * A booking and the job that turns the property over afterwards were two
+ * unrelated things on screen: the bar said who stayed, and whether
+ * anybody was coming to clean up after them lived on a different day
+ * entirely, in a different colour, with nothing joining the two.
+ *
+ * Checkout day is where it nearly always is. Later days are searched too,
+ * because a property that is empty for a week can be turned over on any
+ * of them, and one booked for the following afternoon cannot — the first
+ * job found from checkout onwards is the one that belongs to this stay.
+ * The search stops at the next arrival for the same property, since a
+ * clean after that belongs to the next guest, not this one.
+ */
+export function cleanForBooking(
+b: {propId: number;checkOut: Date;},
+withinDays = 7)
+: CleaningDay['jobs'][number] & {date: string;} | null {
+  for (let i = 0; i < withinDays; i++) {
+    const d = new Date(b.checkOut);
+    d.setDate(d.getDate() + i);
+    const key = dateKey(d);
+    const day = cleaningDays[key];
+    if (!day) continue;
+
+    // Somebody else's stay begins: anything from here is theirs.
+    if (i > 0 && day.checkins.some((c) => c.property_id === b.propId)) return null;
+
+    const job = day.jobs.find((j) => j.property_id === b.propId && j.cleaner_name);
+    if (job) return { ...job, date: key };
+  }
+  return null;
+}
+
 /** Pull the cleaning picture for a date range into `cleaningDays`. */
 export async function loadCleaningDays(from: string, to: string): Promise<void> {
   const res = await fetch(`/api/cleaners/calendar?from=${from}&to=${to}`, {
@@ -264,6 +310,7 @@ export async function loadCleanerCalendarData(): Promise<void> {
     const stays: any[] = await staysRes.json();
     bookings = stays.map((b) => ({
       id: String(b.id),
+      smoobuId: Number(b.smoobu_id ?? b.id),
       propId: b.property_id,
       type: mapPlatform(b.platform),
       name: b.guest_name || 'Guest',

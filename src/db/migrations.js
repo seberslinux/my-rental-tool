@@ -302,6 +302,21 @@ async function runMigrations() {
     -- cannot use the calendar to send somebody in to prepare for an
     -- arrival, or for a deep clean between seasons, without a way to say
     -- which of those it is. Null keeps the old meaning: the turnover.
+    -- When we last chased an unanswered request, so chasing it again
+    -- tomorrow does not turn into a message every hour.
+    -- An item that only matters for one stay.
+    --
+    -- The list is per property, which is right for towels and coffee
+    -- pods. It is wrong for "the cot is out for this family" or "count
+    -- the wine glasses, the last lot broke two" — things true of one
+    -- booking and nonsense on every other. Null means it applies to
+    -- every clean, which is what every existing row is.
+    --
+    -- Holds a Smoobu id, matching cleaning_jobs.booking_id, so the link
+    -- survives the delete-and-reinsert that syncing does.
+    ALTER TABLE inventory_checklists ADD COLUMN IF NOT EXISTS booking_id INTEGER;
+
+    ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS answer_chased_at TIMESTAMPTZ;
     ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS reason TEXT;
     ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS note TEXT;
     ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
@@ -642,6 +657,45 @@ async function runMigrations() {
         AND NOT EXISTS (SELECT 1 FROM bookings b2 WHERE b2.smoobu_id = cj.booking_id)
     `);
   } catch (e) { /* already migrated or no rows */ }
+
+  // One *live* job per cleaner per property per day, enforced by the
+  // database.
+  //
+  // The route refuses a repeat, but a check-then-insert loses a race, and
+  // rows created before that check existed are still there. Two identical
+  // jobs showed up as the same person listed twice on one day, in the
+  // manager's sheet and in the cleaner's own app.
+  //
+  // Finished, declined and cancelled work is all excluded. A clean that
+  // is done is history: sending the same person back that afternoon is a
+  // real second job, not a duplicate, and the double-booking detector has
+  // always treated it that way. Saying no and being asked again is
+  // likewise a sequence, not a repeat.
+  try {
+    // Only ever collapses two rows that are both still waiting to happen.
+    // Anything started or finished is a record of real work and survives.
+    await pool.query(`
+      DELETE FROM cleaning_jobs a
+       USING cleaning_jobs b
+       WHERE a.property_id = b.property_id
+         AND a.cleaning_date = b.cleaning_date
+         AND a.cleaner_id = b.cleaner_id
+         AND a.cleaner_id IS NOT NULL
+         AND a.id > b.id
+         AND a.status IN ('pending','confirmed')
+         AND b.status IN ('pending','confirmed')
+         AND a.started_at IS NULL AND a.completed_at IS NULL
+         AND b.started_at IS NULL AND b.completed_at IS NULL
+    `);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS cleaning_jobs_one_live_per_cleaner_day
+        ON cleaning_jobs (property_id, cleaning_date, cleaner_id)
+        WHERE cleaner_id IS NOT NULL AND status IN ('pending','confirmed')
+    `);
+    await pool.query('DROP INDEX IF EXISTS cleaning_jobs_one_per_cleaner_day');
+  } catch (e) {
+    console.error(`Could not enforce one live job per cleaner per day: ${e.message}`);
+  }
 
   console.log('Database migrations complete.');
 }

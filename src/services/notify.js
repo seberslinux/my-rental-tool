@@ -76,6 +76,9 @@ const EVENTS = {
   cleaning_overdue: { severity: 'attention' },
   issue_reported: { severity: 'attention' },
   supplies_needed: { severity: 'attention' },
+  // Nobody has answered a request that is nearly due. The owner has to
+  // know while there is still time to ask somebody else.
+  job_unanswered: { severity: 'attention' },
 
   // The cleaner's own. Each of these replaces a bare whatsapp.sendMessage
   // that reported nothing and was recorded nowhere — which is how every

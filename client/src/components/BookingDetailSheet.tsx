@@ -1,7 +1,8 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import { Booking, properties, formatTotal, stayStatus, holidaysDuring } from '../data/properties';
+import { Booking, properties, formatTotal, stayStatus, holidaysDuring , cleanForBooking } from '../data/properties';
 import { fmtParty } from '../data/format';
+import { ChecklistEditor } from './ChecklistEditor';
 
 interface BookingDetailSheetProps {
   booking: Booking | null;
@@ -26,6 +27,8 @@ interface BookingDetailSheetProps {
  * centred dialog of readable width.
  */
 export function BookingDetailSheet({ booking, onClose, onRequestCleaner }: BookingDetailSheetProps) {
+  // Extras asked for on this stay alone.
+  const [editingExtras, setEditingExtras] = useState(false);
   // Escape closes it — on a laptop the click target is far from the pointer.
   useEffect(() => {
     if (!booking) return;
@@ -44,6 +47,8 @@ export function BookingDetailSheet({ booking, onClose, onRequestCleaner }: Booki
   );
   const perNight = nights > 0 ? Math.round(booking.total / nights) : 0;
   const isBlocked = booking.type === 'blocked';
+  // The clean that follows this stay, if one is arranged.
+  const linkedClean = booking.type === 'blocked' ? null : cleanForBooking(booking);
 
   const getPlatformDetails = (type: string) => {
     switch (type) {
@@ -232,10 +237,66 @@ export function BookingDetailSheet({ booking, onClose, onRequestCleaner }: Booki
             </p>
           }
 
+          {/* Who is turning it over afterwards. The stay and the clean
+              were two unrelated things on screen — the bar said who was
+              here, and whether anybody was coming to deal with it lived
+              on a different day in a different colour. */}
+          {!isBlocked && (() => {
+            if (!linkedClean) return null;
+            const clean = linkedClean;
+            const when = new Date(clean.date + 'T00:00:00').toLocaleDateString('en-ZA', {
+              weekday: 'short', day: 'numeric', month: 'short',
+            });
+            return (
+              <div className="mt-5 rounded-xl bg-[#F7F7F7] px-4 py-3">
+                <p className="text-[12px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0] mb-1">
+                  Cleaning after
+                </p>
+                <p className="text-[14px] font-medium text-[#222222]">
+                  {clean.cleaner_name} · {when}, {clean.start_time}–{clean.end_time}
+                </p>
+                <p className="text-[13px] text-[#717171]">
+                  {clean.status === 'pending' ? 'Waiting for them to accept' :
+                  clean.status === 'confirmed' ? 'Accepted' :
+                  clean.status === 'in_progress' ? 'On site now' :
+                  clean.status === 'completed' ? 'Done' : clean.status}
+                </p>
+                {!clean.cleaner_available &&
+                <p className="text-[13px] text-[#92400E] mt-0.5">
+                    They have since marked themselves unavailable that day.
+                  </p>
+                }
+                {onRequestCleaner &&
+                <button
+                  onClick={() => onRequestCleaner(clean.date, booking.propId, 'checkout')}
+                  className="mt-2 text-[13px] font-semibold text-[#222222] underline underline-offset-2">
+                    Change who is coming
+                  </button>
+                }
+              </div>);
+
+          })()}
+
           {/* A stay wants cleaning when the guests leave. A block wants it
               whenever you say — nobody is checking out of one, so the day
               it starts is only a sensible guess. */}
-          {onRequestCleaner &&
+          {/* Anything wanted for this stay in particular. The property's
+              standing list covers towels and coffee pods; this is where a
+              cot, or a set of glasses the last guests broke, gets counted
+              once and never again. */}
+          {!isBlocked &&
+          <button
+            onClick={() => setEditingExtras(true)}
+            className="mt-3 w-full h-[44px] rounded-[10px] border border-[#DDDDDD] text-[14px] font-semibold hover:bg-[#F7F7F7]">
+              Checklist just for this stay
+            </button>
+          }
+
+          {/* Only when there is nothing arranged. With a cleaner already
+              named above, this button asked a question that had been
+              answered — and the way to change that answer is on the day
+              itself, where the alternatives are. */}
+          {onRequestCleaner && !linkedClean &&
           <button
             onClick={() => {
               const d = isBlocked ? booking.checkIn : booking.checkOut;
@@ -248,6 +309,15 @@ export function BookingDetailSheet({ booking, onClose, onRequestCleaner }: Booki
           }
         </div>
       </div>
+
+      {editingExtras &&
+      <ChecklistEditor
+        propertyId={booking.propId}
+        propertyName={property ? property.name : ''}
+        bookingId={booking.smoobuId}
+        guestName={booking.name}
+        onClose={() => setEditingExtras(false)} />
+      }
     </>);
 
 }

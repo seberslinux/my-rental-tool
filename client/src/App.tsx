@@ -18,7 +18,7 @@ import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
 import { SmoobuConnectionPage } from './components/SmoobuConnectionPage';
 import { CleaningDaySheet } from './components/CleaningDaySheet';
-import { UserX, UserCheck, TriangleAlert } from 'lucide-react';
+import { UserX, UserCheck, TriangleAlert, Check } from 'lucide-react';
 import { properties, bookings, Booking, loadCalendarData, cleaningDays, loadCleaningDays, dateKey } from './data/properties';
 import { loadDashboardData, setPropertyFilter, setOnDataChanged, needsAttention, lastSyncedAt } from './data/dashboard';
 import { relativeTime } from './data/time';
@@ -280,8 +280,14 @@ export function App() {
             Cleaner no longer available
           </span>
           <span className="flex items-center gap-1.5">
-            <UserCheck className="w-3.5 h-3.5 text-[#0F6E56]" strokeWidth={2.25} />
-            Cleaner coming
+            <span className="flex items-center rounded-[4px] px-1 py-0.5 bg-[#EAF4F0] text-[#0F6E56]">
+              <Check className="w-3.5 h-3.5" strokeWidth={3} />
+            </span>
+            Confirmed
+          </span>
+          <span className="flex items-center gap-1.5">
+            <UserCheck className="w-3.5 h-3.5 text-[#717171]" strokeWidth={2.25} />
+            Asked, no answer yet
           </span>
           <span>Tap a day to send someone</span>
         </div>

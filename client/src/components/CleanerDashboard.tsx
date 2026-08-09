@@ -284,6 +284,8 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState<number | null>(null);
+  // The job whose finish was refused because the inventory is not counted.
+  const [needsCount, setNeedsCount] = useState<number | null>(null);
   const [openJob, setOpenJob] = useState<Job | null>(null);
   // 0 = every property. A cleaner working two places wants "when does The
   // loft need me" without reading past the other one.
@@ -340,10 +342,19 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
 
   const act = async (jobId: number, fn: () => Promise<Response>) => {
     setBusy(jobId);
+    setNeedsCount(null);
     try {
       const res = await fn();
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
+        // Refused because the inventory is outstanding: open the count
+        // rather than leaving them staring at an error for a thing they
+        // are meant to do next.
+        if (d.checklist_outstanding) {
+          setNeedsCount(jobId);
+          const job = jobs.find((j) => j.id === jobId);
+          if (job) setOpenJob(job);
+        }
         throw new Error(d.error || 'That did not work');
       }
       await load();
@@ -364,6 +375,20 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
   const upcoming = visible
     .filter((j) => j.cleaning_date >= todayStr)
     .sort((a, b) => a.cleaning_date.localeCompare(b.cleaning_date));
+
+  /**
+   * Requests still waiting on an answer, lifted to the top.
+   *
+   * In date order they sat wherever they happened to fall — one on the
+   * 12th, one on the 22nd, several screens apart — so the one thing that
+   * needs the cleaner to do something was the thing hardest to find.
+   *
+   * They appear again below in the full schedule, deliberately. The top
+   * is a short list of things to answer; the bottom is what the week
+   * actually looks like, and a day missing from it because it happens to
+   * be unanswered would be a worse lie than showing it twice.
+   */
+  const needsAnswer = upcoming.filter((j) => j.status === 'pending');
 
   const dayLabel = (date: string) => {
     const d = new Date(date + 'T00:00:00');
@@ -493,6 +518,12 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
             </button>
           }
 
+          {working && needsCount === job.id &&
+          <p className="w-full text-[13px] text-[#92400E] -mt-1 mb-1">
+              Count the checklist before you finish.
+            </p>
+          }
+
           {working &&
           <button
             disabled={busy === job.id}
@@ -502,11 +533,21 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
             </button>
           }
 
+          {/* Only once they are standing in the property.
+              It used to be on every card — unanswered requests, jobs three
+              weeks out, cleans finished last month. Counting towels a
+              fortnight early is a guess, and a button that is never any
+              use is one people learn to skip. */}
+          {(working || done) &&
           <button
             onClick={() => setOpenJob(job)}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-[8px] border border-[#DDDDDD] text-[13px] font-semibold">
-            <ClipboardList className="w-4 h-4" /> Checklist
-          </button>
+            className={`flex items-center gap-1.5 px-3 py-2 rounded-[8px] border text-[13px] font-semibold ${
+            needsCount === job.id ?
+            'border-[#BA7517] bg-[#FFFBEB] text-[#92400E]' :
+            'border-[#DDDDDD]'}`}>
+              <ClipboardList className="w-4 h-4" /> Checklist
+            </button>
+          }
 
           {!undecided && !job.started_at && job.cleaning_date !== todayStr &&
           <span className="self-center text-[12px] text-[#717171]">
@@ -870,6 +911,19 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
    */
   const unreadAlerts = alerts.filter((a) => !a.read_at).length;
 
+  /**
+   * Clear one, once it has been read.
+   *
+   * A list that only grows is a list people stop opening — and these are
+   * yesterday's shifts, which the Jobs tab already holds properly.
+   */
+  const dismissAlert = async (id: number) => {
+    setAlerts(alerts.filter((a) => a.id !== id));
+    await fetch(`/api/cleaner-portal/notifications/${id}`, {
+      method: 'DELETE', credentials: 'same-origin',
+    });
+  };
+
   const markAlertsRead = async () => {
     await post('/api/cleaner-portal/notifications/read-all');
     setAlerts(alerts.map((a) => ({ ...a, read_at: new Date().toISOString() })));
@@ -942,6 +996,13 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
                   <p className="text-[11px] text-[#92400E] mt-1">Not delivered to your phone</p>
                   }
                   </div>
+
+                  <button
+                  onClick={() => dismissAlert(a.id)}
+                  aria-label="Clear this message"
+                  className="shrink-0 -mt-1 -mr-1 p-2 rounded-full text-[#B0B0B0] hover:bg-[#F0F0F0] active:bg-[#EBEBEB]">
+                    <X className="w-4 h-4" />
+                  </button>
                 </div>
               </div>
             )}
@@ -1132,9 +1193,30 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
                 </p>
               </div>
           }
-            {upcoming.map((j, idx) =>
+
+            {/* Answer these first. A filter was worse than useless here:
+                two more pills above a list that is already two rows of
+                them, to hide things the cleaner still has to deal with. */}
+            {needsAnswer.length > 0 &&
+          <>
+                <p className="text-[15px] font-semibold mb-2">
+                  New job requests
+                </p>
+                {needsAnswer.map((j) =>
+              <div key={`new-${j.id}`}>
+                    <p className="text-[12px] text-[#717171] mb-1">{dayLabel(j.cleaning_date)}</p>
+                    <JobCard job={j} />
+                  </div>
+              )}
+                <p className="text-[15px] font-semibold mb-2 mt-6 pt-5 border-t border-[#EBEBEB]">
+                  All your jobs
+                </p>
+              </>
+          }
+
+            {upcoming.map((j, idx, arr) =>
           <div key={j.id}>
-                {(idx === 0 || upcoming[idx - 1].cleaning_date !== j.cleaning_date) &&
+                {(idx === 0 || arr[idx - 1].cleaning_date !== j.cleaning_date) &&
             <p className="text-[12px] font-semibold text-[#717171] uppercase tracking-[0.5px] mb-2 mt-4 first:mt-0">
                     {dayLabel(j.cleaning_date)}
                   </p>
