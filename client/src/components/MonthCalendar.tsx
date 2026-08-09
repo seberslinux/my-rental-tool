@@ -10,7 +10,7 @@ import {
   dateEqual } from
 '../data/properties';
 import { BookingBar } from './BookingBar';
-import { ChevronLeft, ChevronRight, Moon, Check } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Moon, Check, UserX, UserCheck, TriangleAlert } from 'lucide-react';
 interface MonthCalendarProps {
   propertyId: number;
   bookings: Booking[];
@@ -454,23 +454,44 @@ export function MonthCalendar({
                         answer is nobody. */}
                     {cleanDay && !isPast &&
                   <div className="absolute bottom-1.5 right-1.5 flex items-center gap-1">
-                        {freeHere > 0 && !unmetHere && !clashHere &&
-                    <span title={`${freeHere} cleaner${freeHere === 1 ? '' : 's'} free`}
-                      className="text-[10px] leading-none text-[#717171] tabular-nums">
-                            {freeHere}
+                        {/* Icons, not dots.
+                            A dot has to be learnt before it says anything,
+                            and three colours of the same dot is a code
+                            nobody memorises. A crossed-out person reads as
+                            "no cleaner" without a legend, which is the one
+                            thing on this grid somebody has to act on.
+                            The cleaner's own calendar already works this
+                            way, and it is the easier of the two to read. */}
+                        {unmetHere &&
+                    <span
+                      title={freeHere > 0 ? 'Checks out — no cleaner yet' : 'Checks out — no cleaner, and nobody free'}
+                      className={`flex items-center rounded-[4px] px-1 py-0.5 ${
+                      freeHere > 0 ? 'bg-[#FAEEDA] text-[#854F0B]' : 'bg-[#FCEBEB] text-[#A32D2D]'}`}>
+                            <UserX className="w-3.5 h-3.5" strokeWidth={2.25} />
                           </span>
                     }
-                        {clashHere &&
-                    <span title="Assigned, but the cleaner is not available that day"
-                      className="w-[7px] h-[7px] rounded-full bg-[#BA7517]" />
+
+                        {clashHere && !unmetHere &&
+                    <span
+                      title="Assigned, but that cleaner is no longer available"
+                      className="flex items-center rounded-[4px] px-1 py-0.5 bg-[#FAEEDA] text-[#854F0B]">
+                            <TriangleAlert className="w-3.5 h-3.5" strokeWidth={2.25} />
+                          </span>
                     }
-                        {unmetHere &&
-                    <span title={freeHere > 0 ? 'Checkout with no cleaner yet' : 'Checkout with no cleaner, and nobody free'}
-                      className={`w-[7px] h-[7px] rounded-full ${freeHere > 0 ? 'bg-[#BA7517]' : 'bg-[#C13515]'}`} />
-                    }
+
                         {hasCleaner && !unmetHere && !clashHere &&
-                    <span title="Cleaning scheduled"
-                      className="w-[5px] h-[5px] bg-[#00A699] rounded-full" />
+                    <span title="A cleaner is coming" className="flex items-center text-[#0F6E56]">
+                            <UserCheck className="w-3.5 h-3.5" strokeWidth={2.25} />
+                          </span>
+                    }
+
+                        {/* How many could take it. Grey and quiet: it is
+                            context for the marks above, not an alarm. */}
+                        {freeHere > 0 && !hasCleaner &&
+                    <span title={`${freeHere} cleaner${freeHere === 1 ? '' : 's'} free`}
+                      className="text-[10px] leading-none text-[#B0B0B0] tabular-nums">
+                            {freeHere}
+                          </span>
                     }
                       </div>
                   }

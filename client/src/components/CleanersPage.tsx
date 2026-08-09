@@ -9,6 +9,7 @@ import {
   X,
   Check } from
 'lucide-react';
+import { RequestCleanerDialog } from './RequestCleanerDialog';
 
 interface CleanerAvailability {
   day_of_week: number; // 0=Sun, 1=Mon, ..., 6=Sat
@@ -105,6 +106,9 @@ export function CleanersPage() {
   const [formRateType, setFormRateType] = useState('hourly');
   const [formPin, setFormPin] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
+  // Asking somebody to come, starting from the person rather than the day.
+  const [askingCleaner, setAskingCleaner] = useState<any | null>(null);
+  const [askedNote, setAskedNote] = useState('');
   // Schedule and Edit open the same form — the weekly availability lives
   // in it — so Schedule scrolls straight to that section rather than
   // dropping the user at the top of a long form.
@@ -709,6 +713,11 @@ export function CleanersPage() {
                     {invitingId === cleaner.id ? 'Creating…' : 'Invite'}
                   </button>
                   <button
+                    onClick={() => setAskingCleaner(cleaner)}
+                    className="px-3 py-1.5 text-[12px] md:text-[13px] font-medium bg-[#222222] border border-[#222222] rounded-[6px] hover:bg-black text-white">
+                    Ask to clean
+                  </button>
+                  <button
                     onClick={() => handleEditCleaner(cleaner)}
                     className="px-3 py-1.5 text-[12px] md:text-[13px] font-medium bg-white border border-[#EBEBEB] rounded-[6px] hover:bg-[#F0F0F0] text-[#222222]">
                     Edit
@@ -1079,6 +1088,18 @@ export function CleanersPage() {
           )}
         </div>
       </div>
+
+      {askedNote &&
+      <p className="mt-3 text-[13px] text-[#0F6E56]">{askedNote}</p>
+      }
+
+      {askingCleaner &&
+      <RequestCleanerDialog
+        cleaner={askingCleaner}
+        properties={properties}
+        onClose={() => setAskingCleaner(null)}
+        onDone={(m) => { setAskingCleaner(null); setAskedNote(m); fetchData(); }} />
+      }
     </div>);
 
 }

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Check, AlertCircle, UserPlus } from 'lucide-react';
-import { CleaningDay } from '../data/properties';
+import { CleaningDay, properties as allProperties } from '../data/properties';
 
 /**
  * One day at one property: what is happening, and who to send.
@@ -30,6 +30,7 @@ const REASONS: {key: Reason;label: string;hint: string;}[] = [
 
 export function CleaningDaySheet({
   date, day, propertyId, propertyName, onClose, onAssigned,
+  lockProperty = false, initialReason = 'checkout',
 }: {
   date: string;
   day: CleaningDay | undefined;
@@ -37,17 +38,26 @@ export function CleaningDaySheet({
   propertyName: string;
   onClose: () => void;
   onAssigned: () => void;
+  /**
+   * True when the property came from the thing that was clicked — a
+   * booking bar or a blocked bar is already about one property, and
+   * offering to change it there would only invite a mis-tap. Opened from
+   * a bare day, the property is a choice and the picker is shown.
+   */
+  lockProperty?: boolean;
+  initialReason?: Reason;
 }) {
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState('');
-  const [reason, setReason] = useState<Reason>('checkout');
+  const [reason, setReason] = useState<Reason>(initialReason);
   const [note, setNote] = useState('');
-  const [asking, setAsking] = useState(false);
+  const [propId, setPropId] = useState(propertyId);
 
-  const jobs = (day?.jobs || []).filter((j) => j.property_id === propertyId);
-  const unmet = (day?.unmet || []).filter((u) => u.property_id === propertyId);
-  const free = (day?.available || []).filter((c) => c.property_ids.includes(propertyId));
-  const busyFolk = (day?.unavailable || []).filter((c) => c.property_ids.includes(propertyId));
+  const jobs = (day?.jobs || []).filter((j) => j.property_id === propId);
+  const unmet = (day?.unmet || []).filter((u) => u.property_id === propId);
+  const free = (day?.available || []).filter((c) => c.property_ids.includes(propId));
+  const busyFolk = (day?.unavailable || []).filter((c) => c.property_ids.includes(propId));
+  const chosenName = allProperties.find((p) => p.id === propId)?.name || propertyName;
 
   const label = new Date(date + 'T00:00:00').toLocaleDateString('en-ZA', {
     weekday: 'long', day: 'numeric', month: 'long',
@@ -62,7 +72,7 @@ export function CleaningDaySheet({
       credentials: 'same-origin',
       body: JSON.stringify({
         cleaner_id: cleanerId,
-        property_id: propertyId,
+        property_id: propId,
         // Attached to the booking only when the day actually has one to
         // attach to. Everything else belongs to the property alone.
         booking_id: reason === 'checkout' ? unmet[0]?.booking_id ?? null : null,
@@ -103,12 +113,26 @@ export function CleaningDaySheet({
         <div className="flex justify-between items-start">
           <div>
             <p className="text-[18px] font-semibold">{label}</p>
-            <p className="text-[13px] text-[#717171]">{propertyName}</p>
+            <p className="text-[13px] text-[#717171]">{chosenName}</p>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1 -mr-1">
             <X className="w-5 h-5 text-[#717171]" />
           </button>
         </div>
+
+        {/* Which property. Shown whenever the click did not already say —
+            a day in the grid is a date, not a place, and the one on
+            screen is only a default. */}
+        {!lockProperty && allProperties.length > 1 &&
+        <select
+          value={propId}
+          onChange={(e) => setPropId(Number(e.target.value))}
+          className="mt-3 w-full px-3 py-2 border border-[#DDDDDD] rounded-[8px] text-[14px] bg-white">
+            {allProperties.map((p) =>
+          <option key={p.id} value={p.id}>{p.name}</option>
+          )}
+          </select>
+        }
 
         {error && <p className="mt-3 text-[13px] text-[#991B1B]">{error}</p>}
 
