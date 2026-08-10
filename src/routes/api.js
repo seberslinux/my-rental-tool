@@ -309,7 +309,29 @@ router.get('/dashboard/today', scopeProperties, async (req, res) => {
   // The clock, so a checkout that has already happened does not keep
   // announcing itself in the future tense.
   const now = new Date().toTimeString().slice(0, 5);
-  res.json(buildToday({ properties, stays, jobs, issues, blocks, isFree, today, now }));
+  // Why the next thirty nights might sell. Never allowed to take the
+  // page down — the same rule the stats endpoint applies.
+  let holidays = [];
+  try {
+    const [publicDays, schoolBreaks] = await Promise.all([
+      getUpcomingHolidays(today, { countries: ['ZA'], days: 40 }),
+      getUpcomingSchoolHolidays(today, { days: 40 }),
+    ]);
+    holidays = [
+      ...publicDays.map((h) => ({
+        start: h.date, end: h.date, name: h.name,
+        label: h.country_name, kind: 'public',
+      })),
+      ...schoolBreaks.map((h) => ({
+        start: h.start, end: h.end, name: h.name,
+        label: h.region, kind: 'school',
+      })),
+    ];
+  } catch (err) {
+    console.error('Holiday lookup failed for /dashboard/today:', err.message);
+  }
+
+  res.json(buildToday({ properties, stays, jobs, issues, blocks, isFree, today, now, holidays }));
 });
 
 router.get('/notifications', scopeProperties, async (req, res) => {

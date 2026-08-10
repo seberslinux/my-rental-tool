@@ -32,7 +32,13 @@ interface Need {
   action: {label: string;kind: string;property_id?: number;date?: string;block_id?: number;};
 }
 
+interface HolidaySoon {
+  name: string;label: string;kind: 'public' | 'school';
+  start: string;end: string;days_away: number;
+}
+
 interface Money {
+  holidays: HolidaySoon[];
   open_nights_30: number;capacity_30: number;occupancy_30: number;
   open_nights_14: number;capacity_14: number;booked_revenue_30: number;
 }
@@ -218,6 +224,23 @@ export function TodayPanel({ onGoToDay, onNeedsChange }: {
           <p className="text-[12px] text-[#717171] mt-1.5">
             R {money.booked_revenue_30.toLocaleString('en-ZA')} committed by guests arriving in the next 30 days.
           </p>
+
+          {/* Why those nights might sell. One line, because a holiday is
+              a reason to look at a price, not a thing to do. */}
+          {money.holidays.length > 0 &&
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+              {money.holidays.slice(0, 4).map((h) =>
+          <span key={`${h.name}:${h.label}:${h.start}`} className="flex items-center gap-1.5 text-[12px] text-[#6B5310]">
+                  <span className={`shrink-0 bg-[#C9A227] ${
+            h.kind === 'public' ? 'w-[5px] h-[5px] rounded-full' : 'w-[8px] h-[3px] rounded-full'}`} />
+                  {h.label} · {h.name} {h.days_away === 0 ? 'today' : h.days_away < 0 ? 'on now' : `in ${h.days_away}d`}
+                </span>
+          )}
+              {money.holidays.length > 4 &&
+          <span className="text-[12px] text-[#B0B0B0]">+{money.holidays.length - 4} more</span>
+          }
+            </div>
+        }
         </div>
       }
 

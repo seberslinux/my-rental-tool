@@ -48,7 +48,7 @@ function whenLabel(n) {
  */
 function buildToday({
   properties = [], stays = [], jobs = [], issues = [], blocks = [],
-  isFree = () => true, today, now = null,
+  isFree = () => true, today, now = null, holidays = [],
   // How far the forward list looks. Seven days is a planning window.
   horizonDays = 7,
   // How far "needs you" looks. Two, because that list is about what is
@@ -328,7 +328,21 @@ function buildToday({
     filter((v) => ymd(v.check_in) >= day && ymd(v.check_in) < ymd(addDays(day, 30))).
     reduce((sum, v) => sum + (Number(v.total_price) || 0), 0);
 
+    // Why those nights might sell. A holiday inside the window is the
+    // reason to look at a price before it passes, which is the only
+    // thing about a holiday worth saying on a page about today.
+    const to30 = ymd(addDays(day, 30));
+    const soon = holidays.
+    filter((h) => ymd(h.start) < to30 && ymd(h.end || h.start) >= day).
+    sort((a, b) => ymd(a.start).localeCompare(ymd(b.start))).
+    map((h) => ({
+      name: h.name, label: h.label, kind: h.kind,
+      start: ymd(h.start), end: ymd(h.end || h.start),
+      days_away: daysOut(h.start, day),
+    }));
+
     return {
+      holidays: soon,
       open_nights_30: Math.max(0, capacity30 - sold30),
       capacity_30: capacity30,
       occupancy_30: capacity30 ? Math.round((sold30 / capacity30) * 100) : 0,

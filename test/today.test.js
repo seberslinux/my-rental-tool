@@ -306,3 +306,37 @@ test('no properties means no money band rather than a divide by zero', () => {
   const { money } = buildToday({ properties: [], today: '2026-08-10' });
   assert.equal(money, null);
 });
+
+test('a holiday inside the next 30 days is surfaced, one beyond it is not', () => {
+  // Why those nights might sell. A holiday that has already passed, or
+  // that falls outside the window the numbers describe, is not a reason
+  // to look at a price today.
+  const properties = [{ id: 1, name: 'The loft', check_out_time: '10:00' }];
+  const holidays = [
+    { start: '2026-08-24', end: '2026-08-24', name: 'Heritage Day', label: 'South Africa', kind: 'public' },
+    { start: '2026-08-03', end: '2026-09-14', name: 'Summer Holidays', label: 'Bavaria', kind: 'school' },
+    { start: '2026-12-25', end: '2026-12-25', name: 'Christmas', label: 'South Africa', kind: 'public' },
+    { start: '2026-07-01', end: '2026-07-20', name: 'Past Term', label: 'Hamburg', kind: 'school' },
+  ];
+
+  const { money } = buildToday({ properties, holidays, today: '2026-08-10' });
+
+  const names = money.holidays.map((h) => h.name);
+  assert.deepEqual(names, ['Summer Holidays', 'Heritage Day'], 'in the window, earliest first');
+  assert.ok(!names.includes('Christmas'), 'beyond thirty days');
+  assert.ok(!names.includes('Past Term'), 'already over');
+
+  const heritage = money.holidays.find((h) => h.name === 'Heritage Day');
+  assert.equal(heritage.label, 'South Africa', 'says whose');
+  assert.equal(heritage.days_away, 14);
+});
+
+test('a term already running counts as now, not as days away', () => {
+  const properties = [{ id: 1, name: 'The loft', check_out_time: '10:00' }];
+  const holidays = [
+    { start: '2026-08-03', end: '2026-09-14', name: 'Summer Holidays', label: 'Bavaria', kind: 'school' },
+  ];
+  const { money } = buildToday({ properties, holidays, today: '2026-08-10' });
+  assert.equal(money.holidays.length, 1, 'still running, so still relevant');
+  assert.ok(money.holidays[0].days_away < 0, 'it began a week ago');
+});
