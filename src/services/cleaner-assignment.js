@@ -177,6 +177,11 @@ async function assignInternal(property, cleaningDate, reason, bookingId, nextBoo
     'Nobody assigned to this property is free in the next month. Block the nights, or add a cleaner.',
     propertyId: property.id,
     link: '/calendar',
+    // Everything the manager would otherwise retype to block these
+    // nights: which property, from when, until somebody can come.
+    meta: freeFrom ?
+    { action: 'block', property_id: property.id, from: ymd(checkoutDate), to: freeFrom } :
+    { action: 'block', property_id: property.id, from: ymd(checkoutDate) },
   });
 
   console.log(`No cleaner available for ${property.name} on ${checkoutDate}. Manager notified.`);

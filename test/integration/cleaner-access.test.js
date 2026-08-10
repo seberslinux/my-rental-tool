@@ -350,7 +350,7 @@ test('a cleaner session cannot read the cleaning calendar', async () => {
  * one there was nothing to hang it on. It belongs to the property.
  */
 
-const { recentForCleaner } = require('../../src/services/notify');
+const { recentForCleaner, recent, notify } = require('../../src/services/notify');
 
 test('a cleaner can be sent on a day with no booking at all', async () => {
   await resetDb();
@@ -830,4 +830,73 @@ test('a block cannot be lifted when nothing recorded what to cancel', async () =
   await loginAs(agent, owner);
   const res = await agent.delete(`/api/properties/${property.id}/block/${rows[0].id}`).expect(409);
   assert.match(res.body.error, /Smoobu/);
+});
+
+// --- a message you can act on, and clear --------------------------------
+
+test('the unstaffed message carries what a button needs', async () => {
+  // The prose says "block the nights until then" and contained the
+  // property and the dates only as words. A message that tells you to do
+  // something and cannot do it is worse than one that says nothing.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner, name: 'Sea View' });
+  const booking = await seedBooking({
+    property, smoobu_id: 8801, check_in: '2026-08-10', check_out: '2026-08-14',
+  });
+  // Nobody linked, so nobody can go.
+  await assignCleanerForCheckout(booking, null);
+
+  const feed = await recent({});
+  const told = feed.find((n) => n.event === 'job_unstaffed');
+  assert.ok(told);
+  assert.equal(told.meta.action, 'block');
+  assert.equal(told.meta.property_id, property.id);
+  assert.equal(told.meta.from, '2026-08-14');
+});
+
+test('a cleared message leaves the feed', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  await notify({ event: 'issue_reported', title: 'Shower dripping', propertyId: property.id });
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const before = await agent.get('/api/notifications').expect(200);
+  assert.equal(before.body.notifications.length, 1);
+
+  await agent.delete(`/api/notifications/${before.body.notifications[0].id}`).expect(200);
+
+  const after = await agent.get('/api/notifications').expect(200);
+  assert.equal(after.body.notifications.length, 0, 'gone, not greyer');
+});
+
+test('clearing the read ones leaves the unread alone', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  await notify({ event: 'issue_reported', title: 'One', propertyId: property.id });
+  await notify({ event: 'issue_reported', title: 'Two', propertyId: property.id });
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const all = await agent.get('/api/notifications').expect(200);
+  await agent.post(`/api/notifications/${all.body.notifications[0].id}/read`).expect(200);
+
+  const cleared = await agent.post('/api/notifications/clear-read').expect(200);
+  assert.equal(cleared.body.cleared, 1);
+
+  const left = await agent.get('/api/notifications').expect(200);
+  assert.equal(left.body.notifications.length, 1);
+  assert.equal(left.body.unread, 1);
+});
+
+test('a cleaner session cannot clear the owner\'s messages', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  await notify({ event: 'issue_reported', title: 'Theirs', propertyId: property.id });
+  const { agent } = await cleanerSession('+27821117777');
+  await agent.delete('/api/notifications/1').expect(403);
 });

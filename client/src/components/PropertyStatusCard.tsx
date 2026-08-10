@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Check, AlertCircle, Sparkles, User, Clock } from 'lucide-react';
+import { Check, AlertCircle, Sparkles, User, Clock, CalendarX } from 'lucide-react';
 
 /**
  * Is each property clean, and if not, when will it be.
@@ -49,6 +49,9 @@ export function PropertyStatusCard() {
   const [rows, setRows] = useState<Status[]>([]);
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState('');
+  // Which property is having nights taken off sale, and which nights.
+  const [blocking, setBlocking] = useState<number | null>(null);
+  const [range, setRange] = useState<{from: string;to: string;}>({ from: '', to: '' });
 
   const load = async () => {
     const res = await fetch('/api/properties/cleaning-status', { credentials: 'same-origin' });
@@ -82,6 +85,33 @@ export function PropertyStatusCard() {
       setError((await res.json().catch(() => ({}))).error || 'Could not put those nights back');
       return;
     }
+    load();
+  };
+
+  /**
+   * Take nights off sale from here.
+   *
+   * The other way in is the message that told you nobody could clean,
+   * which knows the dates already. This one is for the rest of the time —
+   * a burst pipe, a week away — where nothing has told you anything.
+   */
+  const block = async (propertyId: number) => {
+    if (!range.from || !range.to) return;
+    setBusy(propertyId);
+    setError('');
+    const res = await fetch(`/api/properties/${propertyId}/block`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ ...range, reason: 'Blocked by the manager' }),
+    });
+    setBusy(null);
+    if (!res.ok) {
+      setError((await res.json().catch(() => ({}))).error || 'Could not block those nights');
+      return;
+    }
+    setBlocking(null);
+    setRange({ from: '', to: '' });
     load();
   };
 
@@ -126,7 +156,40 @@ export function PropertyStatusCard() {
                     {r.status === 'ready' || r.status === 'stale' ? 'Not clean' : 'It is clean'}
                   </button>
                 }
+
+                <button
+                  onClick={() => setBlocking(blocking === r.id ? null : r.id)}
+                  aria-label={`Take nights off sale at ${r.name}`}
+                  className="shrink-0 p-1.5 rounded-[6px] border border-[#DDDDDD] text-[#717171] hover:bg-[#F7F7F7]">
+                  <CalendarX className="w-4 h-4" />
+                </button>
               </div>
+
+              {blocking === r.id &&
+              <div className="mt-2 ml-10 flex flex-wrap items-center gap-2">
+                  <input
+                  type="date"
+                  value={range.from}
+                  min={new Date().toISOString().slice(0, 10)}
+                  onChange={(e) => setRange({ ...range, from: e.target.value })}
+                  aria-label="First night off sale"
+                  className="px-2 py-1.5 border border-[#DDDDDD] rounded-[6px] text-[13px]" />
+                  <span className="text-[13px] text-[#717171]">to</span>
+                  <input
+                  type="date"
+                  value={range.to}
+                  min={range.from || new Date().toISOString().slice(0, 10)}
+                  onChange={(e) => setRange({ ...range, to: e.target.value })}
+                  aria-label="Last night off sale"
+                  className="px-2 py-1.5 border border-[#DDDDDD] rounded-[6px] text-[13px]" />
+                  <button
+                  disabled={busy === r.id || !range.from || !range.to}
+                  onClick={() => block(r.id)}
+                  className="px-3 py-1.5 rounded-[6px] bg-[#222222] text-white text-[12px] font-semibold disabled:opacity-40">
+                    {busy === r.id ? 'Blocking…' : 'Take off sale'}
+                  </button>
+                </div>
+              }
 
               {/* Nights taken off sale, and the way back. */}
               {r.blocks.map((b) =>

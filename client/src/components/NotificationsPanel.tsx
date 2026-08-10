@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Check, MessageCircle, AlertCircle } from 'lucide-react';
+import { X, Check, MessageCircle, AlertCircle, CalendarX } from 'lucide-react';
 
 /**
  * The activity feed, and the choice of how to be told.
@@ -24,6 +24,8 @@ interface Notification {
   read_at: string | null;
   property_name: string | null;
   cleaner_name: string | null;
+  /** The facts behind the sentence, when there is something to press. */
+  meta: {action?: string;property_id?: number;from?: string;to?: string;} | null;
 }
 
 const ago = (iso: string) => {
@@ -44,6 +46,7 @@ export function NotificationsPanel({ onClose, onRead }: {onClose: () => void;onR
   const [waAvailable, setWaAvailable] = useState(true);
   const [phone, setPhone] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState<number | null>(null);
 
   const load = async () => {
     const [feed, prefs] = await Promise.all([
@@ -61,6 +64,50 @@ export function NotificationsPanel({ onClose, onRead }: {onClose: () => void;onR
   };
 
   useEffect(() => { load(); }, []);
+
+  const pretty = (d?: string) =>
+  d ? new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : '';
+
+  /** Clear one. It has been read and dealt with; it does not need keeping. */
+  const dismiss = async (id: number) => {
+    setItems(items.filter((i) => i.id !== id));
+    await fetch(`/api/notifications/${id}`, { method: 'DELETE', credentials: 'same-origin' });
+    onRead();
+  };
+
+  const clearRead = async () => {
+    setItems(items.filter((i) => !i.read_at));
+    await fetch('/api/notifications/clear-read', { method: 'POST', credentials: 'same-origin' });
+  };
+
+  /**
+   * Do the thing the message is about, from the message.
+   *
+   * It already knows the property and the nights; making somebody carry
+   * those to another screen and retype them is how the wrong dates get
+   * blocked.
+   */
+  const blockFrom = async (n: Notification) => {
+    if (!n.meta || !n.meta.property_id || !n.meta.from) return;
+    setBusy(n.id);
+    setError('');
+    const res = await fetch(`/api/properties/${n.meta.property_id}/block`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        from: n.meta.from,
+        to: n.meta.to || n.meta.from,
+        reason: 'No cleaner available',
+      }),
+    });
+    setBusy(null);
+    if (!res.ok) {
+      setError((await res.json().catch(() => ({}))).error || 'Could not block those nights');
+      return;
+    }
+    dismiss(n.id);
+  };
 
   const markAllRead = async () => {
     await fetch('/api/notifications/read-all', { method: 'POST', credentials: 'same-origin' });
@@ -113,6 +160,13 @@ export function NotificationsPanel({ onClose, onRead }: {onClose: () => void;onR
               onClick={markAllRead}
               className="text-[12px] font-medium text-[#717171] px-2 py-1 rounded-full hover:bg-[#F7F7F7]">
               Mark all read
+            </button>
+            }
+            {items.some((i) => i.read_at) &&
+            <button
+              onClick={clearRead}
+              className="text-[12px] font-medium text-[#717171] px-2 py-1 rounded-full hover:bg-[#F7F7F7]">
+              Clear read
             </button>
             }
             <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-full hover:bg-[#F7F7F7]">
@@ -211,7 +265,39 @@ export function NotificationsPanel({ onClose, onRead }: {onClose: () => void;onR
                       Not delivered: {n.delivery_error}
                     </p>
                 }
+
+                  {/* The thing the message is telling you to do, done from
+                      here. It already knows which property and which
+                      nights. */}
+                  {n.meta && n.meta.action === 'block' &&
+                <div className="flex flex-wrap items-center gap-2 mt-2">
+                      <button
+                    disabled={busy === n.id}
+                    onClick={() => blockFrom(n)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] bg-[#222222] text-white text-[12px] font-semibold disabled:opacity-60">
+                        <CalendarX className="w-3.5 h-3.5" />
+                        {busy === n.id ? 'Blocking…' :
+                    n.meta.to && n.meta.to !== n.meta.from ?
+                    `Block ${pretty(n.meta.from)} – ${pretty(n.meta.to)}` :
+                    `Block ${pretty(n.meta.from)}`}
+                      </button>
+                      <button
+                    onClick={() => dismiss(n.id)}
+                    className="px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] text-[12px] font-semibold">
+                        Leave it on sale
+                      </button>
+                    </div>
+                }
                 </div>
+
+                {/* Clearing one it is done with. The feed used to only
+                    grow: everything ever recorded, greyer once read. */}
+                <button
+                onClick={() => dismiss(n.id)}
+                aria-label="Clear this message"
+                className="shrink-0 -mt-1 -mr-1 p-2 rounded-full text-[#B0B0B0] hover:bg-[#F0F0F0]">
+                  <X className="w-4 h-4" />
+                </button>
               </div>
             </div>
           )}

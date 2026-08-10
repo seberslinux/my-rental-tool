@@ -247,6 +247,34 @@ router.get('/notifications', scopeProperties, async (req, res) => {
   res.json({ notifications: rows, unread });
 });
 
+/**
+ * Clear one, once it has been dealt with.
+ *
+ * "Mark all read" left every message on screen, greyer. A feed that only
+ * grows is a feed people stop opening, and the one that mattered is then
+ * the tenth item down.
+ */
+router.delete('/notifications/:id', scopeProperties, async (req, res) => {
+  if (!req.user) return res.status(403).json({ error: 'Not available for cleaner sessions' });
+  await run(
+    `UPDATE notifications SET dismissed_at = NOW()
+      WHERE id = $1 AND audience = 'owner'`,
+    [req.params.id]
+  );
+  res.json({ ok: true });
+});
+
+/** Clear everything already read, in one go. */
+router.post('/notifications/clear-read', scopeProperties, async (req, res) => {
+  if (!req.user) return res.status(403).json({ error: 'Not available for cleaner sessions' });
+  const rows = await getAll(
+    `UPDATE notifications SET dismissed_at = NOW()
+      WHERE audience = 'owner' AND read_at IS NOT NULL AND dismissed_at IS NULL
+      RETURNING id`
+  );
+  res.json({ cleared: rows.length });
+});
+
 /** Mark one as read. */
 router.post('/notifications/:id/read', scopeProperties, async (req, res) => {
   await run('UPDATE notifications SET read_at = NOW() WHERE id = $1 AND read_at IS NULL', [req.params.id]);

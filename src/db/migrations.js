@@ -410,6 +410,19 @@ async function runMigrations() {
     -- 'owner', which is what every row written before this was.
     ALTER TABLE notifications ADD COLUMN IF NOT EXISTS audience TEXT NOT NULL DEFAULT 'owner';
 
+    -- The facts behind the sentence.
+    --
+    -- "Nobody can clean The loft on Fri, 14 Aug — the first day somebody
+    -- is free is Mon, 17 Aug" contains everything needed to block those
+    -- nights, and none of it in a form a button can use. A message that
+    -- tells you to do something and cannot do it is a worse message than
+    -- one that says nothing.
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS meta JSONB;
+
+    -- Cleared by the person who read it. A feed that only grows is a feed
+    -- people stop opening.
+    ALTER TABLE notifications ADD COLUMN IF NOT EXISTS dismissed_at TIMESTAMPTZ;
+
     -- One-time invitations that let a cleaner set their own PIN.
     --
     -- The owner decides who gets access; the cleaner decides how they get
