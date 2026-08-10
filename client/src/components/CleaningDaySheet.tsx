@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Check, AlertCircle, UserPlus } from 'lucide-react';
-import { CleaningDay, properties as allProperties } from '../data/properties';
+import { CleaningDay, properties as allProperties, getRate, formatRate, holidayOn } from '../data/properties';
 
 /**
  * One day at one property: what is happening, and who to send.
@@ -81,6 +81,14 @@ export function CleaningDaySheet({
   const everyoneOn = alreadyOn.size > 0 && free.length === 0 && busyFolk.length === 0;
   const chosenName = allProperties.find((p) => p.id === propId)?.name || propertyName;
 
+  // The same facts the cell draws as marks, for the property in view.
+  const asDate = new Date(date + 'T00:00:00');
+  const rate = getRate(propId, asDate);
+  const holiday = holidayOn(asDate);
+  const freeHere = day ?
+  day.available.filter((c) => c.property_ids.includes(propId)) :
+  [];
+
   // What actually happens at this property that day. "After checkout" on
   // a day nothing checks out of, or "before check-in" on a day nobody
   // arrives, are not choices — they are words that cannot mean anything,
@@ -154,6 +162,39 @@ export function CleaningDaySheet({
           <button onClick={onClose} aria-label="Close" className="p-1 -mr-1">
             <X className="w-5 h-5 text-[#717171]" />
           </button>
+        </div>
+
+        {/* Everything the cell was showing, in words.
+
+            The grid says all of this already, but in marks: a moon for
+            the minimum stay, a struck-through price for a closed night,
+            a grey number for how many cleaners are free, a dot for a
+            public holiday. Those are fine once you know them and opaque
+            until you do, and on a phone they are a few pixels wide.
+            Opening the day is the moment to say them plainly. */}
+        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-[13px]">
+          {rate &&
+          <span className={rate.available ? 'text-[#222222]' : 'text-[#8A8A8A]'}>
+              <span className="text-[#717171]">Rate </span>
+              {rate.available ? formatRate(rate.price) : `${formatRate(rate.price)} · not for sale`}
+            </span>
+          }
+          {rate && rate.minStay > 1 &&
+          <span>
+              <span className="text-[#717171]">Minimum stay </span>
+              {rate.minStay} nights
+            </span>
+          }
+          <span>
+            <span className="text-[#717171]">Cleaners free </span>
+            {freeHere.length === 0 ? 'nobody' : `${freeHere.length} · ${freeHere.map((c) => c.name).join(', ')}`}
+          </span>
+          {holiday &&
+          <span className="flex items-center gap-1.5">
+              <span className="w-[5px] h-[5px] rounded-full bg-[#C9A227] shrink-0" />
+              {holiday.name}
+            </span>
+          }
         </div>
 
         {/* Which property. Shown whenever the click did not already say —

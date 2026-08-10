@@ -373,16 +373,6 @@ export function MonthCalendar({
                   onDayClick && !isPast ? 'cursor-pointer active:bg-[#EBEBEB] ' : ''}${
                   isToday ? 'bg-[#F7F7F7]' : isClosed ? 'bg-[#F2F2F2]' : ''}`}>
 
-                    {/* One date, one small mark. This was a full-width
-                        band, which was fine for a public holiday and
-                        useless for a school term covering six weeks —
-                        it drew on every day on screen. Only public
-                        holidays reach here now. */}
-                    {holiday && !isPast &&
-                    <span
-                      aria-label={holiday.name}
-                      className="absolute top-[6px] left-[33px] w-[5px] h-[5px] rounded-full bg-[#C9A227]" />
-                    }
 
                     {/* Date on the left, price on the right, both on one
                         line at the top. Centring the date and stacking the
@@ -401,6 +391,17 @@ export function MonthCalendar({
                         `}>
                         {cell.date.getDate()}
                       </div>
+
+                      {/* One date, one small mark, placed in the flow
+                          rather than at fixed pixels. Positioned
+                          absolutely it sat on the date on a narrow
+                          screen, where the cell is a third of the width
+                          it was measured against. */}
+                      {holiday && !isPast &&
+                      <span
+                        aria-label={holiday.name}
+                        className="mt-[7px] ml-2 w-[5px] h-[5px] rounded-full bg-[#C9A227] shrink-0" />
+                      }
 
                       {/* Minimum stay, when it is more than one night.
                           It is often the reason a gap will not fill: a
