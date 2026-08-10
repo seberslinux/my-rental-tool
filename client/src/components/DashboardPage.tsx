@@ -1,4 +1,5 @@
 import React from 'react';
+import { PropertyStatusCard } from './PropertyStatusCard';
 import { X, Check, AlertTriangle, ArrowRight, LogIn, LogOut } from 'lucide-react';
 import {
   kpis,
@@ -14,7 +15,11 @@ import {
 export function DashboardPage({ onNavigate }: { onNavigate?: (tab: string) => void }) {
   return (
     <div className="p-4 lg:px-8 lg:py-6 bg-[#F7F7F7] min-h-full">
-      {/* Today — arrivals, departures and whether the property is ready.
+      {/* Whether each property is clean. The block below has claimed to
+          answer this since it was written and never did. */}
+      <PropertyStatusCard />
+
+      {/* Today — arrivals and departures.
           First because this is what makes someone open the app on a
           weekday morning. */}
       {todayBoard.length > 0 &&

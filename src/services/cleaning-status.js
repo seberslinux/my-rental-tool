@@ -43,6 +43,20 @@ function ymd(value) {
   return String(value).slice(0, 10);
 }
 
+/**
+ * A date as somebody would say it.
+ *
+ * `detail` is the one field here meant to be read by a person, so it
+ * carries a date they recognise. cleanSince and readyUntil stay ISO —
+ * those are for code.
+ */
+function pretty(key) {
+  if (!key) return '';
+  return new Date(`${key}T00:00:00`).toLocaleDateString('en-ZA', {
+    weekday: 'short', day: 'numeric', month: 'short',
+  });
+}
+
 /** Whole nights between two YYYY-MM-DD dates. */
 function nightsBetween(from, to) {
   return Math.round(
@@ -79,7 +93,7 @@ function propertyStatus({ property, stays = [], jobs = [], today }) {
       status: 'occupied',
       cleanSince: null,
       readyUntil: null,
-      detail: `Guests until ${ymd(occupying.check_out)}`,
+      detail: `Guests until ${pretty(ymd(occupying.check_out))}`,
     };
   }
 
@@ -128,7 +142,7 @@ function propertyStatus({ property, stays = [], jobs = [], today }) {
     };
   }
 
-  return { status: 'ready', cleanSince: cleanDay, readyUntil, detail: `Ready until ${readyUntil}` };
+  return { status: 'ready', cleanSince: cleanDay, readyUntil, detail: `Ready until ${pretty(readyUntil)}` };
 }
 
 /**

@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const { getAll, getOne, run, inParams } = require('../db/database');
+const { getAll, getOne, run, inParams, transaction } = require('../db/database');
+// One answer to "is it clean", shared with the planner.
+const { propertyStatus, ymd } = require('../services/cleaning-status');
 const { scopeProperties, denyIfOutOfScope, requireRole } = require('../middleware/auth');
 const smoobu = require('../services/smoobu');
 const { getApiKeyForProperty } = require('../services/api-key-resolver');
@@ -25,6 +27,62 @@ router.get('/', async (req, res) => {
 });
 
 // Get a single property
+/**
+ * How every property stands, cleaning-wise, right now.
+ *
+ * One question the home screen asks and the planner asks — computed from
+ * the same jobs and stays either of them would look at, so the number on
+ * the screen and the decision behind the scenes can never disagree.
+ */
+router.get('/cleaning-status', async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const since = new Date(Date.now() - 60 * 86400000).toISOString().slice(0, 10);
+  const horizon = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+
+  const properties = await getAll(
+    req.accessiblePropertyIds === null ?
+    'SELECT * FROM properties ORDER BY name' :
+    `SELECT * FROM properties WHERE id = ANY($1) ORDER BY name`,
+    req.accessiblePropertyIds === null ? [] : [req.accessiblePropertyIds]
+  );
+  if (properties.length === 0) return res.json([]);
+
+  const ids = properties.map((p) => p.id);
+  const stays = await getAll(
+    `SELECT * FROM bookings WHERE property_id = ANY($1) AND check_out >= $2 AND check_in <= $3`,
+    [ids, since, horizon]
+  );
+  const jobs = await getAll(
+    `SELECT * FROM cleaning_jobs WHERE property_id = ANY($1) AND cleaning_date >= $2 AND cleaning_date <= $3`,
+    [ids, since, horizon]
+  );
+  const blocks = await getAll(
+    `SELECT * FROM blocked_dates WHERE property_id = ANY($1) AND released_at IS NULL`,
+    [ids]
+  );
+
+  res.json(properties.map((property) => {
+    const mine = (rows) => rows.filter((r) => r.property_id === property.id);
+    const state = propertyStatus({
+      property, stays: mine(stays), jobs: mine(jobs), today,
+    });
+    const nextClean = mine(jobs).
+    filter((j) => !j.completed_at && ymd(j.cleaning_date) >= today).
+    map((j) => ymd(j.cleaning_date)).
+    sort()[0] || null;
+
+    return {
+      id: property.id, name: property.name,
+      ...state,
+      next_clean: nextClean,
+      blocks: mine(blocks).map((b) => ({
+        id: b.id, from: ymd(b.date), to: ymd(b.end_date), reason: b.reason,
+        can_release: Boolean(b.smoobu_reservation_id),
+      })),
+    };
+  }));
+});
+
 router.get('/:id', async (req, res) => {
   if (req.accessiblePropertyIds !== null && !req.accessiblePropertyIds.includes(parseInt(req.params.id))) {
     return res.status(403).json({ error: 'Access denied to this property' });
@@ -270,6 +328,47 @@ router.delete('/:id/share/:userId', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+/**
+ * A manager saying what the jobs cannot: it is clean, or it is not.
+ *
+ * The same kind of fact as a cleaner tapping Finished, so it feeds the
+ * same calculation rather than sitting beside it as a competing status.
+ */
+router.post('/:id/mark-clean', requireRole('admin', 'property_manager'), async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  const dirty = req.body && req.body.dirty;
+  await run(
+    dirty ?
+    'UPDATE properties SET marked_dirty_at = NOW(), marked_clean_by = $2 WHERE id = $1' :
+    'UPDATE properties SET marked_clean_at = NOW(), marked_dirty_at = NULL, marked_clean_by = $2 WHERE id = $1',
+    [req.params.id, req.user ? req.user.name : null]
+  );
+  const property = await getOne('SELECT * FROM properties WHERE id = $1', [req.params.id]);
+  res.json({ ok: true, marked_clean_at: property.marked_clean_at, marked_dirty_at: property.marked_dirty_at });
+});
+
+/**
+ * Who the manager would rather send here, in order.
+ *
+ * Assignment walks this list. Everybody sits at 0 until somebody says
+ * otherwise, which is the arbitrary order it had before.
+ */
+router.put('/:id/cleaner-order', requireRole('admin', 'property_manager'), async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  const order = Array.isArray(req.body.cleaner_ids) ? req.body.cleaner_ids : null;
+  if (!order) return res.status(400).json({ error: 'cleaner_ids must be an array' });
+
+  await transaction(async (client) => {
+    for (let i = 0; i < order.length; i++) {
+      await client.query(
+        'UPDATE cleaner_properties SET priority = $1 WHERE property_id = $2 AND cleaner_id = $3',
+        [i, req.params.id, order[i]]
+      );
+    }
+  });
+  res.json({ ok: true });
 });
 
 /**

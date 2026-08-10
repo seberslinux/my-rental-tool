@@ -6,6 +6,7 @@ const {
   seedUser, seedProperty, seedBooking, seedCleaner, linkCleanerToProperty, loginAs,
 } = require('../helpers/seed');
 const { pool } = require('../../src/db/database');
+const { assignCleanerForCheckout } = require('../../src/services/cleaner-assignment');
 
 /**
  * What a cleaner session may reach.
@@ -727,4 +728,106 @@ test('the cleaning calendar survives a range containing an arrival', async () =>
   const res = await agent.get('/api/cleaners/calendar?from=2026-08-01&to=2026-08-31').expect(200);
   assert.equal(res.body.days['2026-08-12'].checkins.length, 1);
   assert.equal(res.body.days['2026-08-15'].checkouts.length, 1);
+});
+
+// --- the manager's own eyes, and their order of preference ---------------
+
+test('the status endpoint answers for every property in scope', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.get('/api/properties/cleaning-status').expect(200);
+  const row = res.body.find((r) => r.id === property.id);
+  assert.equal(row.status, 'dirty', 'nothing on record means nothing is known');
+  assert.ok(Array.isArray(row.blocks));
+});
+
+test('a manager marking it clean changes the answer', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  await agent.post(`/api/properties/${property.id}/mark-clean`).send({}).expect(200);
+
+  const res = await agent.get('/api/properties/cleaning-status').expect(200);
+  assert.equal(res.body.find((r) => r.id === property.id).status, 'ready');
+});
+
+test('and marking it dirty overrules a clean that happened', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, cleaning_date, start_time, end_time, status, completed_at)
+     VALUES ($1, $2, $3, '10:00', '12:30', 'completed', NOW())`,
+    [property.id, cleaner.id, new Date().toISOString().slice(0, 10)]
+  );
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  await agent.post(`/api/properties/${property.id}/mark-clean`).send({ dirty: true }).expect(200);
+
+  const res = await agent.get('/api/properties/cleaning-status').expect(200);
+  assert.equal(res.body.find((r) => r.id === property.id).status, 'dirty');
+});
+
+test('the preferred cleaner is the one who gets the job', async () => {
+  // Assignment has always taken the first free person off a list. Until
+  // the order was the manager's, which of two available cleaners got the
+  // work was whatever the database returned.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const first = await seedCleaner({ name: 'Aaa' });
+  const second = await seedCleaner({ name: 'Zzz' });
+  await linkCleanerToProperty(first, property);
+  await linkCleanerToProperty(second, property);
+
+  const checkout = '2026-08-14'; // a Friday
+  for (const c of [first, second]) {
+    await pool.query(
+      `INSERT INTO cleaner_availability (cleaner_id, day_of_week, start_time, end_time)
+       VALUES ($1, 5, '08:00', '18:00')`, [c.id]
+    );
+  }
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  // Zzz preferred, despite sorting last by name.
+  await agent.put(`/api/properties/${property.id}/cleaner-order`)
+    .send({ cleaner_ids: [second.id, first.id] }).expect(200);
+
+  const booking = await seedBooking({
+    property, smoobu_id: 7301, check_in: '2026-08-10', check_out: checkout,
+  });
+  await assignCleanerForCheckout(booking, null);
+
+  const { rows } = await pool.query(
+    'SELECT cleaner_id FROM cleaning_jobs WHERE property_id = $1', [property.id]
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].cleaner_id, second.id, 'the manager\'s first choice');
+});
+
+test('a block cannot be lifted when nothing recorded what to cancel', async () => {
+  // Every block written before the reservation id was kept. Saying so
+  // beats a button that silently does nothing.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const { rows } = await pool.query(
+    `INSERT INTO blocked_dates (property_id, date, reason) VALUES ($1, '2026-09-01', 'old') RETURNING id`,
+    [property.id]
+  );
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.delete(`/api/properties/${property.id}/block/${rows[0].id}`).expect(409);
+  assert.match(res.body.error, /Smoobu/);
 });
