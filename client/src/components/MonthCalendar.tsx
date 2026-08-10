@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { CleaningMarks } from './CleaningMarks';
+import { holidayOn } from '../data/properties';
 import {
   Booking,
   TODAY,
@@ -349,6 +350,11 @@ export function MonthCalendar({
                 ['confirmed', 'in_progress', 'completed'].includes(j.status));
               // Asked, but nobody has answered yet.
               const askedHere = jobsHere.some((j) => j.cleaner_name && j.status === 'pending');
+              // Context for the date, not an announcement: a tinted
+              // corner you notice when pricing that week, and a title
+              // for what it is. It had a list on the home screen before,
+              // three weeks of school term beside this morning's dirty flat.
+              const holiday = holidayOn(cell.date);
               const edges = 'border-r border-b border-[#EBEBEB]';
 
               if (cell.isOtherMonth) {
@@ -359,12 +365,20 @@ export function MonthCalendar({
                 <div
                   key={idx}
                   onClick={onDayClick && !isPast ? () => onDayClick(cell.date) : undefined}
+                  title={holiday ? holiday.name : undefined}
                   className={`h-[84px] relative ${edges} ${
                   settledHere && !clashHere && !unmetHere ? 'bg-[#EAF4F0] ' :
                   dayState === 'booked' ? 'bg-[#EAF4F0] ' :
                   dayState === 'off' ? 'bg-[#FAFAFA] ' : ''}${
                   onDayClick && !isPast ? 'cursor-pointer active:bg-[#EBEBEB] ' : ''}${
                   isToday ? 'bg-[#F7F7F7]' : isClosed ? 'bg-[#F2F2F2]' : ''}`}>
+
+                    {/* A holiday is a property of the week, not an item
+                        on a list: a hairline that reads as a band across
+                        the days it covers, and names itself on hover. */}
+                    {holiday && !isPast &&
+                    <span className="absolute top-0 left-0 right-0 h-[3px] bg-[#C9A227]" />
+                    }
 
                     {/* Date on the left, price on the right, both on one
                         line at the top. Centring the date and stacking the

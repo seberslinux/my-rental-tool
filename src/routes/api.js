@@ -273,7 +273,7 @@ router.get('/dashboard/today', scopeProperties, async (req, res) => {
 
   const scoped = req.accessiblePropertyIds;
   const properties = await getAll(
-    scoped === null ? 'SELECT * FROM properties' : 'SELECT * FROM properties WHERE id = ANY($1)',
+    scoped === null ? 'SELECT * FROM properties ORDER BY name' : 'SELECT * FROM properties WHERE id = ANY($1) ORDER BY name',
     scoped === null ? [] : [scoped]
   );
   if (properties.length === 0) return res.json({ needs: [], board: [] });

@@ -1,41 +1,37 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Check, AlertCircle, Sparkles, User, Clock, CalendarX, RefreshCw } from 'lucide-react';
-import { apiGet, Unauthorized } from '../data/session';
 
 /**
- * Is each property clean, and if not, when will it be.
+ * One row per property: what state it is in, who is in it, and who is
+ * cleaning it next.
  *
- * The home screen's "Next 48 hours" block has carried a comment since it
- * was written saying it shows "arrivals, departures and whether the
- * property is ready". It showed the first two. The third — the thing you
- * actually want to know before answering an enquiry — was never built.
+ * Three sections used to answer a slice of this each. "Today and
+ * tomorrow" listed arrivals and departures, "Properties" said clean or
+ * dirty, and "Currently staying" gave the guest and the platform — so
+ * three readings, a page apart, that you had to hold together yourself
+ * to know the state of one flat. They are one fact, so they are one row.
  *
- * The status is computed from the same jobs and stays the planner reads,
- * so what is on the screen and what the assignment does can never
- * disagree. A manager can correct it, and that correction feeds the same
- * calculation rather than overriding it from the side.
+ * Presentational: the rows arrive already worked out, from the same call
+ * that builds the rest of the page. It used to fetch its own, which is
+ * how the page ended up with two ideas of what was clean.
  */
 
-interface Block {
-  id: number;
-  from: string;
-  to: string;
-  reason: string;
-  can_release: boolean;
+export interface Block {
+  id: number;from: string;to: string;reason: string;can_release: boolean;
 }
 
-interface Status {
+export interface PropertyRow {
   id: number;
   name: string;
   status: 'ready' | 'stale' | 'dirty' | 'occupied' | 'cleaning';
   detail: string;
-  cleanSince: string | null;
-  readyUntil: string | null;
-  next_clean: string | null;
+  guest: {name: string;until: string;leaving_today: boolean;} | null;
+  cleaner: {name: string | null;date: string;status: string;} | null;
+  next_arrival: {name: string;date: string;} | null;
   blocks: Block[];
 }
 
-const LOOK: Record<Status['status'], {label: string;tone: string;Icon: any;}> = {
+const LOOK: Record<PropertyRow['status'], {label: string;tone: string;Icon: any;}> = {
   ready: { label: 'Ready', tone: 'bg-[#EAF4F0] text-[#0F6E56]', Icon: Check },
   stale: { label: 'Needs a freshen', tone: 'bg-[#FAEEDA] text-[#854F0B]', Icon: Sparkles },
   dirty: { label: 'Needs cleaning', tone: 'bg-[#FCEBEB] text-[#A32D2D]', Icon: AlertCircle },
@@ -46,27 +42,39 @@ const LOOK: Record<Status['status'], {label: string;tone: string;Icon: any;}> = 
 const pretty = (d: string | null) =>
 d ? new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
 
-export function PropertyStatusCard() {
-  const [rows, setRows] = useState<Status[]>([]);
+/** The one line under the name, built from what is true rather than from a template. */
+function summarise(r: PropertyRow): string {
+  const parts: string[] = [LOOK[r.status]?.label || ''];
+
+  if (r.guest) {
+    parts.push(r.guest.leaving_today ?
+    `${r.guest.name} leaves today` :
+    `${r.guest.name} until ${pretty(r.guest.until)}`);
+  } else if (r.next_arrival) {
+    parts.push(`${r.next_arrival.name} arrives ${pretty(r.next_arrival.date)}`);
+  }
+
+  // Only worth saying when it is not already obvious from the state.
+  if (r.cleaner && r.status !== 'ready' && r.status !== 'cleaning') {
+    parts.push(r.cleaner.name ?
+    `${r.cleaner.name} cleans ${pretty(r.cleaner.date)}` :
+    `nobody cleaning yet`);
+  }
+
+  return parts.filter(Boolean).join(' · ');
+}
+
+export function PropertyRows({
+  rows, onChanged,
+}: {
+  rows: PropertyRow[];
+  /** Re-read the page after a change, so nothing here goes stale. */
+  onChanged: () => void;
+}) {
   const [busy, setBusy] = useState<number | null>(null);
-  const [failed, setFailed] = useState(false);
   const [error, setError] = useState('');
-  // Which property is having nights taken off sale, and which nights.
   const [blocking, setBlocking] = useState<number | null>(null);
   const [range, setRange] = useState<{from: string;to: string;}>({ from: '', to: '' });
-
-  const load = async () => {
-    try {
-      setRows(await apiGet<Status[]>('/api/properties/cleaning-status'));
-      setFailed(false);
-    } catch (e) {
-      // Same rule as the list above: a card that vanishes on a failed
-      // read is indistinguishable from a manager with no properties.
-      if (!(e instanceof Unauthorized)) setFailed(true);
-    }
-  };
-
-  useEffect(() => { load(); }, []);
 
   const mark = async (id: number, dirty: boolean) => {
     setBusy(id);
@@ -79,7 +87,7 @@ export function PropertyStatusCard() {
     });
     setBusy(null);
     if (!res.ok) return setError('Could not save that');
-    load();
+    onChanged();
   };
 
   const release = async (propertyId: number, block: Block) => {
@@ -93,16 +101,9 @@ export function PropertyStatusCard() {
       setError((await res.json().catch(() => ({}))).error || 'Could not put those nights back');
       return;
     }
-    load();
+    onChanged();
   };
 
-  /**
-   * Take nights off sale from here.
-   *
-   * The other way in is the message that told you nobody could clean,
-   * which knows the dates already. This one is for the rest of the time —
-   * a burst pipe, a week away — where nothing has told you anything.
-   */
   const block = async (propertyId: number) => {
     if (!range.from || !range.to) return;
     setBusy(propertyId);
@@ -120,34 +121,15 @@ export function PropertyStatusCard() {
     }
     setBlocking(null);
     setRange({ from: '', to: '' });
-    load();
+    onChanged();
   };
-
-  if (failed) {
-    return (
-      <div className="mb-6">
-        <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
-          Properties
-        </div>
-        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] px-4 py-3 flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 text-[#D93900] shrink-0" />
-          <span className="text-[14px] text-[#222222] flex-1">Could not load your properties.</span>
-          <button
-            onClick={() => load()}
-            className="shrink-0 flex items-center gap-1 text-[13px] font-semibold text-[#FF385C]">
-            <RefreshCw className="w-3.5 h-3.5" /> Try again
-          </button>
-        </div>
-      </div>);
-
-  }
 
   if (rows.length === 0) return null;
 
   return (
     <div className="mb-6">
       <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
-        Properties
+        Your properties
       </div>
       <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] overflow-hidden">
         {error && <p className="px-4 pt-3 text-[13px] text-[#991B1B]">{error}</p>}
@@ -162,19 +144,10 @@ export function PropertyStatusCard() {
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="text-[15px] font-medium text-[#222222] truncate">{r.name}</div>
-                  <div className="text-[13px] text-[#717171] truncate">
-                    {look.label} · {r.detail}
-                    {/* Only worth saying when somebody is actually coming
-                        and the property is not fine already. */}
-                    {r.next_clean && r.status !== 'ready' && r.status !== 'cleaning' &&
-                    <span> · cleaner {pretty(r.next_clean)}</span>
-                    }
-                  </div>
+                  <div className="text-[13px] text-[#717171] truncate">{summarise(r)}</div>
                 </div>
 
-                {/* The manager's own eyes. Offered where it changes the
-                    answer: saying a dirty property is clean, or a clean
-                    one is not. */}
+                {/* The manager's own eyes, where it changes the answer. */}
                 {r.status !== 'occupied' && r.status !== 'cleaning' &&
                 <button
                   disabled={busy === r.id}
@@ -218,7 +191,6 @@ export function PropertyStatusCard() {
                 </div>
               }
 
-              {/* Nights taken off sale, and the way back. */}
               {r.blocks.map((b) =>
               <div key={b.id} className="mt-2 ml-10 flex items-center gap-2 text-[13px] text-[#92400E] bg-[#FFFBEB] border border-[#F0C36D] rounded-[8px] px-3 py-2">
                   <span className="flex-1 min-w-0">
