@@ -28,8 +28,14 @@ export function CalendarHeader({
 }: CalendarHeaderProps) {
   return (
     <header className="sticky top-0 z-20 bg-white shadow-[0_1px_0_rgba(0,0,0,0.04)]">
-      <div className="flex justify-between items-center p-3 px-4">
-        <div className="flex-1 relative">
+      {/* Wraps rather than overflows.
+          A fourth control — the school-holidays toggle — was added to a
+          row that already fitted only just, and on a 390px phone it
+          pushed "Multi" off the right edge where it could not be tapped
+          at all. The property name takes the width it needs and the
+          controls drop to their own line when they cannot sit beside it. */}
+      <div className="flex flex-wrap justify-between items-center gap-y-2 p-3 px-4">
+        <div className="min-w-0 relative">
           {mode === 'single' &&
           <div className="relative inline-flex items-center">
               <select
@@ -51,11 +57,11 @@ export function CalendarHeader({
           }
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-2 min-w-0">
           <select
             value={channelFilter}
             onChange={(e) => setChannelFilter(e.target.value)}
-            className="appearance-none text-[11px] font-medium py-1.5 px-3 border border-[#DDDDDD] rounded-full bg-white text-[#222222] cursor-pointer outline-none focus:ring-2 focus:ring-black/5">
+            className="appearance-none text-[11px] font-medium py-1.5 px-3 border border-[#DDDDDD] rounded-full bg-white text-[#222222] cursor-pointer outline-none focus:ring-2 focus:ring-black/5 shrink-0">
             
             <option value="all">All channels</option>
             <option value="airbnb">Airbnb</option>
@@ -71,7 +77,7 @@ export function CalendarHeader({
             onClick={() => setShowSchoolHolidays(!showSchoolHolidays)}
             aria-pressed={showSchoolHolidays}
             title="School terms in the markets these guests come from"
-            className={`inline-flex items-center gap-1.5 text-[11px] font-medium py-1.5 px-3 rounded-full border transition-colors ${
+            className={`shrink-0 inline-flex items-center gap-1.5 text-[11px] font-medium py-1.5 px-3 rounded-full border transition-colors ${
             showSchoolHolidays ?
             'bg-[#F4EAD0] border-[#C9A227] text-[#6B5310]' :
             'bg-white border-[#DDDDDD] text-[#717171] hover:text-[#222222]'}`}>
@@ -79,7 +85,7 @@ export function CalendarHeader({
             School holidays
           </button>
 
-          <div className="inline-flex bg-[#F7F7F7] rounded-full p-0.5">
+          <div className="inline-flex bg-[#F7F7F7] rounded-full p-0.5 shrink-0">
             <button
               onClick={() => setMode('single')}
               className={`px-3.5 py-1.5 text-[11px] font-medium rounded-full transition-all ${mode === 'single' ? 'bg-white text-[#222222] shadow-[0_1px_3px_rgba(0,0,0,0.08)]' : 'text-[#717171] hover:text-[#222222]'}`}>
