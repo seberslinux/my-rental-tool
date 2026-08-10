@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { CleaningMarks } from './CleaningMarks';
-import { holidayOn } from '../data/properties';
+import { holidayOn, schoolHolidaysOn } from '../data/properties';
 import {
   Booking,
   TODAY,
@@ -56,6 +56,8 @@ interface MonthCalendarProps {
     jobs: {property_id: number;cleaner_available: boolean;status: string;cleaner_name: string | null;done: boolean;}[];
     unmet: {property_id: number;}[];
   }>;
+  /** Draw the school-term bands. Off unless asked for. */
+  showSchoolHolidays?: boolean;
   /** Days the person cannot work, drawn as such. */
   /**
    * What each day means, keyed YYYY-MM-DD: 'off' cannot work, 'free' can
@@ -85,7 +87,8 @@ export function MonthCalendar({
   onDayClick,
   cleaningDays,
   dayStates,
-  plainBars
+  plainBars,
+  showSchoolHolidays = false
 }: MonthCalendarProps) {
   // The months shown were hardcoded to March–May 2026, so the calendar
   // never moved: by August every day it drew was in the past, and the
@@ -350,11 +353,16 @@ export function MonthCalendar({
                 ['confirmed', 'in_progress', 'completed'].includes(j.status));
               // Asked, but nobody has answered yet.
               const askedHere = jobsHere.some((j) => j.cleaner_name && j.status === 'pending');
-              // Context for the date, not an announcement: a tinted
-              // corner you notice when pricing that week, and a title
-              // for what it is. It had a list on the home screen before,
-              // three weeks of school term beside this morning's dirty flat.
+              // A public holiday is a fact about this one date.
               const holiday = holidayOn(cell.date);
+              // School terms covering this day. A band, not a per-day
+              // mark: it runs the length of the term and names itself
+              // once, at the start of each week it appears in, so a
+              // six-week window reads as one thing rather than as forty
+              // identical lines.
+              const terms = showSchoolHolidays ? schoolHolidaysOn(cell.date) : [];
+              const termStartsRow = terms.length > 0 && (idx % 7 === 0 ||
+              schoolHolidaysOn(new Date(cell.date.getTime() - 86400000)).length === 0);
               const edges = 'border-r border-b border-[#EBEBEB]';
 
               if (cell.isOtherMonth) {
@@ -378,7 +386,7 @@ export function MonthCalendar({
                         line at the top. Centring the date and stacking the
                         price beneath it left the booking bars nowhere to
                         sit and wasted the bottom half of every cell. */}
-                    <div className="flex items-start justify-between pl-1.5 pr-1.5 pt-1.5">
+                    <div className={`flex items-start justify-between pl-1.5 pr-1.5 ${terms.length > 0 ? 'pt-[17px]' : 'pt-1.5'}`}>
                       {/* Today used to be a filled #FF385C disc — the same
                           pink the Airbnb bars use, so the marker read as a
                           booking on that date. A channel colour cannot also
@@ -391,6 +399,21 @@ export function MonthCalendar({
                         `}>
                         {cell.date.getDate()}
                       </div>
+
+                      {/* Rendered here rather than per-day so it reads
+                          as one band with a name, not as a line under
+                          every date it happens to cover. */}
+                      {terms.length > 0 &&
+                      <span
+                        title={terms.map((t) => `${t.name} · ${t.label}`).join('\n')}
+                        className="absolute top-0 left-0 right-0 h-[14px] bg-[#F4EAD0] border-b border-[#E4CF9A] flex items-center overflow-hidden">
+                          {termStartsRow &&
+                        <span className="pl-1 text-[9px] font-medium text-[#6B5310] whitespace-nowrap">
+                              {terms[0].name}{terms.length > 1 ? ` +${terms.length - 1}` : ''}
+                            </span>
+                        }
+                        </span>
+                      }
 
                       {/* One date, one small mark, placed in the flow
                           rather than at fixed pixels. Positioned

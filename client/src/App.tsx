@@ -32,6 +32,8 @@ export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [unread, setUnread] = useState(0);
+  // School-term bands: off until asked for.
+  const [showSchoolHolidays, setShowSchoolHolidays] = useState(false);
 
   /**
    * One answer to an expired session, registered once.
@@ -260,7 +262,9 @@ export function App() {
         propertyId={propertyId}
         setPropertyId={setPropertyId}
         channelFilter={channelFilter}
-        setChannelFilter={setChannelFilter} /> :
+        setChannelFilter={setChannelFilter}
+        showSchoolHolidays={showSchoolHolidays}
+        setShowSchoolHolidays={setShowSchoolHolidays} /> :
 
 
       <AppHeader
@@ -368,6 +372,7 @@ export function App() {
           bookings={singleModeBookings}
           onBookingClick={setSelectedBooking}
           cleaningDays={cleaningDays}
+          showSchoolHolidays={showSchoolHolidays}
           onDayClick={(d) => { setPickedFor(null); setPickedDay(dateKey(d)); }} />
         </> :
 

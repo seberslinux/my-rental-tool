@@ -248,6 +248,22 @@ export function holidayOn(date: Date): HolidayWindow | null {
   ) || null;
 }
 
+/**
+ * School terms covering a date, if any.
+ *
+ * Kept apart from holidayOn() on purpose. These run six weeks — the
+ * German terms that fill these properties span 42 and 43 days — so they
+ * are a season, and drawing one per day turns every cell into a line.
+ * They are drawn as a band across the days they actually cover, named
+ * once, and only when asked for.
+ */
+export function schoolHolidaysOn(date: Date): HolidayWindow[] {
+  const key = dateKey(date);
+  return holidays.filter(
+    (h) => h.kind === 'school' && h.start <= key && h.end >= key
+  );
+}
+
 export function holidaysDuring(b: Booking): HolidayWindow[] {
   const from = dateKey(b.checkIn);
   const to = dateKey(b.checkOut);
