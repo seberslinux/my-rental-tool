@@ -492,6 +492,23 @@ async function runMigrations() {
     CREATE INDEX IF NOT EXISTS holidays_country_year_idx ON holidays (country, year);
   `);
 
+  // One row per device, not per person: a cleaner with a phone and a
+  // tablet should be told on both. The endpoint is unique because that
+  // is what the push service issues, and re-subscribing the same device
+  // must update the row rather than accumulate dead ones.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+      cleaner_id INTEGER REFERENCES cleaners(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE,
+      p256dh TEXT NOT NULL,
+      auth TEXT NOT NULL,
+      user_agent TEXT DEFAULT '',
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+
   // Seed default settings
   await pool.query(`
     INSERT INTO app_settings (key, value) VALUES ('display_currency', 'ZAR')
