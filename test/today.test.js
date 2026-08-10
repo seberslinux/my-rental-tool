@@ -261,3 +261,82 @@ test('a checkout a week out is planning, not something that needs you', () => {
     'but not something to do today'
   );
 });
+
+// --- what is left to sell ------------------------------------------------
+
+test('the money band counts the nights nobody has bought yet', () => {
+  // The old home screen showed gross revenue and average nightly rate —
+  // report numbers, already on Analytics. What this page is for is what
+  // to do next, and that is the unsold nights.
+  const properties = [
+    { id: 1, name: 'The loft', check_out_time: '10:00' },
+    { id: 2, name: 'Hill Top Lodge', check_out_time: '10:00' },
+  ];
+  // One booking, 4 nights, in the next fortnight.
+  const stays = [{
+    smoobu_id: 'a', property_id: 1, status: 'confirmed', platform: 'Airbnb',
+    guest_name: 'G', check_in: '2026-08-12', check_out: '2026-08-16',
+    total_price: 4000,
+  }];
+
+  const { money } = buildToday({ properties, stays, today: '2026-08-10' });
+
+  assert.equal(money.capacity_30, 60, 'two properties, thirty nights each');
+  assert.equal(money.open_nights_30, 56, '60 less the 4 sold');
+  assert.equal(money.occupancy_30, 7, '4/60 rounded');
+  assert.equal(money.capacity_14, 28);
+  assert.equal(money.open_nights_14, 24);
+  assert.equal(money.booked_revenue_30, 4000, 'committed by an arrival in the window');
+});
+
+test('a block is not a sale', () => {
+  // Nights taken off sale are not revenue and must not read as occupancy.
+  const properties = [{ id: 1, name: 'The loft', check_out_time: '10:00' }];
+  const stays = [{
+    smoobu_id: 'b', property_id: 1, status: 'confirmed', platform: 'Blocked',
+    guest_name: 'Blocked', check_in: '2026-08-12', check_out: '2026-08-16',
+    total_price: 0,
+  }];
+  const { money } = buildToday({ properties, stays, today: '2026-08-10' });
+  assert.equal(money.open_nights_30, 30, 'still all to sell');
+  assert.equal(money.occupancy_30, 0);
+});
+
+test('no properties means no money band rather than a divide by zero', () => {
+  const { money } = buildToday({ properties: [], today: '2026-08-10' });
+  assert.equal(money, null);
+});
+
+test('a holiday inside the next 30 days is surfaced, one beyond it is not', () => {
+  // Why those nights might sell. A holiday that has already passed, or
+  // that falls outside the window the numbers describe, is not a reason
+  // to look at a price today.
+  const properties = [{ id: 1, name: 'The loft', check_out_time: '10:00' }];
+  const holidays = [
+    { start: '2026-08-24', end: '2026-08-24', name: 'Heritage Day', label: 'South Africa', kind: 'public' },
+    { start: '2026-08-03', end: '2026-09-14', name: 'Summer Holidays', label: 'Bavaria', kind: 'school' },
+    { start: '2026-12-25', end: '2026-12-25', name: 'Christmas', label: 'South Africa', kind: 'public' },
+    { start: '2026-07-01', end: '2026-07-20', name: 'Past Term', label: 'Hamburg', kind: 'school' },
+  ];
+
+  const { money } = buildToday({ properties, holidays, today: '2026-08-10' });
+
+  const names = money.holidays.map((h) => h.name);
+  assert.deepEqual(names, ['Summer Holidays', 'Heritage Day'], 'in the window, earliest first');
+  assert.ok(!names.includes('Christmas'), 'beyond thirty days');
+  assert.ok(!names.includes('Past Term'), 'already over');
+
+  const heritage = money.holidays.find((h) => h.name === 'Heritage Day');
+  assert.equal(heritage.label, 'South Africa', 'says whose');
+  assert.equal(heritage.days_away, 14);
+});
+
+test('a term already running counts as now, not as days away', () => {
+  const properties = [{ id: 1, name: 'The loft', check_out_time: '10:00' }];
+  const holidays = [
+    { start: '2026-08-03', end: '2026-09-14', name: 'Summer Holidays', label: 'Bavaria', kind: 'school' },
+  ];
+  const { money } = buildToday({ properties, holidays, today: '2026-08-10' });
+  assert.equal(money.holidays.length, 1, 'still running, so still relevant');
+  assert.ok(money.holidays[0].days_away < 0, 'it began a week ago');
+});
