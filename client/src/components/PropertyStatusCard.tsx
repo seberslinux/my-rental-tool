@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Check, AlertCircle, Sparkles, User, Clock, CalendarX } from 'lucide-react';
+import { Check, AlertCircle, Sparkles, User, Clock, CalendarX, RefreshCw } from 'lucide-react';
+import { apiGet, Unauthorized } from '../data/session';
 
 /**
  * Is each property clean, and if not, when will it be.
@@ -48,14 +49,21 @@ d ? new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'short', da
 export function PropertyStatusCard() {
   const [rows, setRows] = useState<Status[]>([]);
   const [busy, setBusy] = useState<number | null>(null);
+  const [failed, setFailed] = useState(false);
   const [error, setError] = useState('');
   // Which property is having nights taken off sale, and which nights.
   const [blocking, setBlocking] = useState<number | null>(null);
   const [range, setRange] = useState<{from: string;to: string;}>({ from: '', to: '' });
 
   const load = async () => {
-    const res = await fetch('/api/properties/cleaning-status', { credentials: 'same-origin' });
-    if (res.ok) setRows(await res.json());
+    try {
+      setRows(await apiGet<Status[]>('/api/properties/cleaning-status'));
+      setFailed(false);
+    } catch (e) {
+      // Same rule as the list above: a card that vanishes on a failed
+      // read is indistinguishable from a manager with no properties.
+      if (!(e instanceof Unauthorized)) setFailed(true);
+    }
   };
 
   useEffect(() => { load(); }, []);
@@ -114,6 +122,25 @@ export function PropertyStatusCard() {
     setRange({ from: '', to: '' });
     load();
   };
+
+  if (failed) {
+    return (
+      <div className="mb-6">
+        <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
+          Properties
+        </div>
+        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] px-4 py-3 flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-[#D93900] shrink-0" />
+          <span className="text-[14px] text-[#222222] flex-1">Could not load your properties.</span>
+          <button
+            onClick={() => load()}
+            className="shrink-0 flex items-center gap-1 text-[13px] font-semibold text-[#FF385C]">
+            <RefreshCw className="w-3.5 h-3.5" /> Try again
+          </button>
+        </div>
+      </div>);
+
+  }
 
   if (rows.length === 0) return null;
 
