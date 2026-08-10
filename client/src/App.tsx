@@ -357,6 +357,10 @@ export function App() {
             <UserCheck className="w-3.5 h-3.5 text-[#717171]" strokeWidth={2.25} />
             Asked, no answer yet
           </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-[5px] h-[5px] rounded-full bg-[#C9A227]" />
+            Public holiday
+          </span>
           <span>Tap a day to send someone</span>
         </div>
         <MonthCalendar
