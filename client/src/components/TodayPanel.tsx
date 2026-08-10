@@ -32,6 +32,11 @@ interface Need {
   action: {label: string;kind: string;property_id?: number;date?: string;block_id?: number;};
 }
 
+interface Money {
+  open_nights_30: number;capacity_30: number;occupancy_30: number;
+  open_nights_14: number;capacity_14: number;booked_revenue_30: number;
+}
+
 interface UpcomingRow {
   key: string;
   kind: 'in' | 'out';
@@ -71,6 +76,7 @@ export function TodayPanel({ onGoToDay, onNeedsChange }: {
   const [needs, setNeeds] = useState<Need[]>([]);
   const [properties, setProperties] = useState<PropertyRow[]>([]);
   const [upcoming, setUpcoming] = useState<UpcomingRow[]>([]);
+  const [money, setMoney] = useState<Money | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [failed, setFailed] = useState(false);
@@ -78,11 +84,12 @@ export function TodayPanel({ onGoToDay, onNeedsChange }: {
   const load = async () => {
     try {
       const data = await apiGet<{
-        needs: Need[];properties: PropertyRow[];upcoming: UpcomingRow[];
+        needs: Need[];properties: PropertyRow[];upcoming: UpcomingRow[];money: Money | null;
       }>('/api/dashboard/today');
       setNeeds(data.needs || []);
       setProperties(data.properties || []);
       setUpcoming(data.upcoming || []);
+      setMoney(data.money || null);
       setFailed(false);
     } catch (e) {
       // A 401 has already sent us back to the sign-in screen. Anything
@@ -171,7 +178,50 @@ export function TodayPanel({ onGoToDay, onNeedsChange }: {
         }
       </div>
 
-      {/* 2. The state of each property, one row each. */}
+      {/* 2. What is still to sell. Not the old KPI row — gross revenue
+             and average nightly rate say how last quarter went, which
+             Analytics already answers. These are the nights nobody has
+             bought yet, which is the thing you can still act on. */}
+      {!failed && money &&
+      <div className="mb-6">
+          <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
+            Still to sell
+          </div>
+          <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] px-4 py-3
+                          grid grid-cols-3 gap-3">
+            <div>
+              <div className="text-[20px] font-semibold text-[#222222] tabular-nums leading-tight">
+                {money.open_nights_30}
+              </div>
+              <div className="text-[12px] text-[#717171] leading-snug">
+                nights open<br />next 30 days
+              </div>
+            </div>
+            <div>
+              <div className={`text-[20px] font-semibold tabular-nums leading-tight ${
+              money.open_nights_14 > 0 ? 'text-[#D93900]' : 'text-[#0F6E56]'}`}>
+                {money.open_nights_14}
+              </div>
+              <div className="text-[12px] text-[#717171] leading-snug">
+                open in the<br />next 14 days
+              </div>
+            </div>
+            <div>
+              <div className="text-[20px] font-semibold text-[#222222] tabular-nums leading-tight">
+                {money.occupancy_30}%
+              </div>
+              <div className="text-[12px] text-[#717171] leading-snug">
+                booked<br />next 30 days
+              </div>
+            </div>
+          </div>
+          <p className="text-[12px] text-[#717171] mt-1.5">
+            R {money.booked_revenue_30.toLocaleString('en-ZA')} committed by guests arriving in the next 30 days.
+          </p>
+        </div>
+      }
+
+      {/* 3. The state of each property, one row each. */}
       {!failed && <PropertyRows rows={properties} onChanged={load} />}
 
       {/* 3. What is coming. Seven days, because two was not long enough

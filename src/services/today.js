@@ -22,6 +22,7 @@
  */
 
 const { isBlockedPlatform } = require('./analytics-calc');
+const { occupancyByProperty, addDays } = require('./dashboard-calc');
 const { needsCleanBefore, propertyStatus, ymd } = require('./cleaning-status');
 
 /** Whole days from today, for ordering and for saying "tomorrow". */
@@ -296,8 +297,50 @@ function buildToday({
     };
   });
 
+  /**
+   * What is still left to sell.
+   *
+   * The old home screen carried a row of report numbers — gross revenue,
+   * average nightly rate, average stay — which say how the last quarter
+   * went. Those belong on Analytics, and they are already there. The
+   * question this page is for is what to do next, and the answer to that
+   * is the nights nobody has bought yet.
+   *
+   * Occupancy is counted by the same function the analytics tab uses, so
+   * the two cannot disagree about a booked night.
+   */
+  const money = (() => {
+    if (properties.length === 0) return null;
+    const ids = properties.map((p) => p.id);
+    const sold = (days) =>
+    occupancyByProperty(guestStays, ids, day, days).
+    reduce((n, row) => n + row.booked_nights, 0);
+
+    const capacity30 = properties.length * 30;
+    const capacity14 = properties.length * 14;
+    const sold30 = sold(30);
+    const sold14 = sold(14);
+
+    // Money already promised by guests arriving in the window. Counted on
+    // arrival rather than spread per night, because that is the figure a
+    // booking actually commits.
+    const booked30 = guestStays.
+    filter((v) => ymd(v.check_in) >= day && ymd(v.check_in) < ymd(addDays(day, 30))).
+    reduce((sum, v) => sum + (Number(v.total_price) || 0), 0);
+
+    return {
+      open_nights_30: Math.max(0, capacity30 - sold30),
+      capacity_30: capacity30,
+      occupancy_30: capacity30 ? Math.round((sold30 / capacity30) * 100) : 0,
+      open_nights_14: Math.max(0, capacity14 - sold14),
+      capacity_14: capacity14,
+      booked_revenue_30: Math.round(booked30),
+    };
+  })();
+
   return {
     needs: needs.sort((a, b) => a.sortAt - b.sortAt),
+    money,
     properties: propertyRows,
     // Seven days rather than two: two is not long enough to plan a
     // cleaner around, which is the main thing this is read for.
