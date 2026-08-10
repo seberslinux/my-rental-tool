@@ -993,3 +993,90 @@ test('a deliberate visit with no booking is left alone', async () => {
   const { rows } = await pool.query('SELECT * FROM cleaning_jobs');
   assert.equal(rows.length, 1, 'a deep clean is not an orphan');
 });
+
+// --- free means actually free -------------------------------------------
+
+test('somebody already cleaning elsewhere that day is not free', async () => {
+  // The count on the calendar said "1 cleaner free" for a day the only
+  // cleaner was already booked at the other property. Assignment would
+  // have refused them — it checks for an existing job — so the grid was
+  // promising somebody the app would not send.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const a = await seedProperty({ owner, name: 'Hill Top Lodge' });
+  const b = await seedProperty({ owner, name: 'The loft' });
+  const cleaner = await seedCleaner({ name: 'Francesca' });
+  await linkCleanerToProperty(cleaner, a);
+  await linkCleanerToProperty(cleaner, b);
+  // Available every day.
+  for (let d = 0; d < 7; d++) {
+    await pool.query(
+      `INSERT INTO cleaner_availability (cleaner_id, day_of_week, start_time, end_time)
+       VALUES ($1, $2, '08:00', '18:00')`, [cleaner.id, d]
+    );
+  }
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, cleaning_date, start_time, end_time, status)
+     VALUES ($1, $2, '2026-08-10', '10:00', '12:30', 'confirmed')`,
+    [a.id, cleaner.id]
+  );
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.get('/api/cleaners/calendar?from=2026-08-10&to=2026-08-10').expect(200);
+
+  const day = res.body.days['2026-08-10'];
+  assert.deepEqual(day.available, [], 'she is at the other property');
+  assert.equal(day.unavailable.length, 1);
+  assert.match(day.unavailable[0].reason, /already at Hill Top Lodge/);
+});
+
+test('a declined job does not make somebody busy', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await linkCleanerToProperty(cleaner, property);
+  for (let d = 0; d < 7; d++) {
+    await pool.query(
+      `INSERT INTO cleaner_availability (cleaner_id, day_of_week, start_time, end_time)
+       VALUES ($1, $2, '08:00', '18:00')`, [cleaner.id, d]
+    );
+  }
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, cleaning_date, start_time, end_time, status)
+     VALUES ($1, $2, '2026-08-10', '10:00', '12:30', 'declined')`,
+    [property.id, cleaner.id]
+  );
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.get('/api/cleaners/calendar?from=2026-08-10&to=2026-08-10').expect(200);
+  assert.equal(res.body.days['2026-08-10'].available.length, 1, 'saying no frees the day');
+});
+
+test('one cleaner\'s calendar separates their pattern from their answer', async () => {
+  // The schedule says Mondays. The calendar says not this Monday. The old
+  // grid on the Cleaners page drew only the first and would have shown a
+  // green tick on a day already refused.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const cleaner = await seedCleaner();
+  await pool.query(
+    `INSERT INTO cleaner_availability (cleaner_id, day_of_week, start_time, end_time)
+     VALUES ($1, 1, '08:00', '18:00')`, [cleaner.id]
+  );
+  // 2026-08-17 is a Monday they have said no to.
+  await pool.query(
+    `INSERT INTO cleaner_availability_overrides (cleaner_id, date, available)
+     VALUES ($1, '2026-08-17', 0)`, [cleaner.id]
+  );
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.get(`/api/cleaners/${cleaner.id}/calendar?from=2026-08-10&to=2026-08-24`).expect(200);
+
+  assert.deepEqual(res.body.schedule.map((r) => r.day_of_week), [1], 'usually Mondays');
+  assert.equal(res.body.days['2026-08-10'].state, 'free', 'a Monday they kept');
+  assert.equal(res.body.days['2026-08-17'].state, 'off', 'a Monday they gave back');
+});
