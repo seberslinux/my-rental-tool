@@ -267,7 +267,10 @@ async function reconcileCleaningJobs() {
        LEFT JOIN properties p ON p.id = cj.property_id
       WHERE cj.started_at IS NULL
         AND cj.completed_at IS NULL
-        AND cj.booking_id IS NOT NULL
+        -- A job with nobody on it is worth looking at whether or not it
+        -- came from a booking: a deleted cleaner leaves those behind with
+        -- no booking at all, and they were invisible here.
+        AND (cj.booking_id IS NOT NULL OR cj.cleaner_id IS NULL)
         AND (cj.cleaning_date >= $1 OR b.check_out >= $1)`,
     [today]
   );
@@ -276,6 +279,26 @@ async function reconcileCleaningJobs() {
   const removed = [];
 
   for (const row of rows) {
+    // A row with nobody on it is not scheduled work — nobody is going —
+    // but it reads as scheduled everywhere. Clearing it lets the planner
+    // ask for the clean again and find somebody.
+    if (!row.cleaner_id) {
+      const gone = await getAll(
+        `DELETE FROM cleaning_jobs
+          WHERE id = $1 AND cleaner_id IS NULL
+            AND started_at IS NULL AND completed_at IS NULL
+          RETURNING id`,
+        [row.id]
+      );
+      if (gone.length) removed.push({ id: row.id, why: 'nobody on it' });
+      continue;
+    }
+
+    // A visit with no booking behind it is somebody being sent
+    // deliberately — a deep clean, a preparation. Nothing about a booking
+    // can condemn it.
+    if (!row.booking_id) continue;
+
     const orphaned = !row.smoobu_id;
     const cancelled = !orphaned && row.booking_status !== 'confirmed';
     const blocked = !orphaned && isBlockedPlatform(row.platform);

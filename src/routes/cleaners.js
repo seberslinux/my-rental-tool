@@ -673,10 +673,47 @@ router.put('/:id', async (req, res) => {
 });
 
 // Delete a cleaner
+/**
+ * Remove a cleaner, and do not leave their work behind.
+ *
+ * cleaning_jobs.cleaner_id is ON DELETE SET NULL, so deleting somebody
+ * turned every job of theirs into a row with nobody on it. Those are not
+ * scheduled work — nobody is going — but they look like it everywhere:
+ * the day sheet reported "a visit is scheduled with nobody on it", the
+ * home board read them as "no cleaner" for a checkout that had one, and
+ * they appeared again under needs-attention. One deleted cleaner, three
+ * contradictory symptoms.
+ *
+ * Work already started or finished keeps its row. Losing the record that
+ * a property was cleaned, because the person who cleaned it has since
+ * left, would be worse than a dangling name.
+ */
 router.delete('/:id', async (req, res) => {
-  const result = await run('DELETE FROM cleaners WHERE id = $1', [req.params.id]);
-  if (result.rowCount === 0) return res.status(404).json({ error: 'Cleaner not found' });
-  res.json({ deleted: true });
+  const cleaner = await getOne('SELECT name FROM cleaners WHERE id = $1', [req.params.id]);
+  if (!cleaner) return res.status(404).json({ error: 'Cleaner not found' });
+
+  const today = new Date().toISOString().slice(0, 10);
+  const orphaned = await getAll(
+    `DELETE FROM cleaning_jobs
+      WHERE cleaner_id = $1 AND cleaning_date >= $2
+        AND started_at IS NULL AND completed_at IS NULL
+      RETURNING id, property_id, cleaning_date`,
+    [req.params.id, today]
+  );
+
+  await run('DELETE FROM cleaners WHERE id = $1', [req.params.id]);
+
+  // The work still needs doing; somebody has to know it is now nobody's.
+  if (orphaned.length) {
+    await notify({
+      event: 'job_unstaffed',
+      title: `${cleaner.name} was removed — ${orphaned.length} clean${orphaned.length === 1 ? '' : 's'} need somebody else`,
+      body: 'Their upcoming jobs were cleared. The next sync will look for a replacement.',
+      link: '/cleaners',
+    });
+  }
+
+  res.json({ deleted: true, jobs_cleared: orphaned.length });
 });
 
 // Assign a cleaner to a property
