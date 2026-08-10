@@ -84,6 +84,9 @@ const EVENTS = {
   // them.
   job_unstaffed: { severity: 'attention' },
   property_blocked: { severity: 'info' },
+  // Half a sync is not a sync. Rates failed silently for months behind a
+  // "Synced 1d ago" that was telling the truth about bookings only.
+  sync_incomplete: { severity: 'attention' },
 
   // The cleaner's own. Each of these replaces a bare whatsapp.sendMessage
   // that reported nothing and was recorded nowhere — which is how every

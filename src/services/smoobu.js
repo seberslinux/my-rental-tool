@@ -48,8 +48,16 @@ async function getPropertyDetails(apartmentId, apiKey) {
 // Get rates for a property in a date range
 async function getRates(apartmentId, from, to, apiKey) {
   const client = getClient(apiKey);
+  // start_date / end_date, not from / to.
+  //
+  // Smoobu answers `from`/`to` with 422 "Request has wrong structure" —
+  // no hint as to which part is wrong. syncRates catches that per
+  // property, logs it to a console nobody reads, and reports success for
+  // the bookings half of the same run. So daily_rates has been empty in
+  // production since the day it was written: every calendar cell showed
+  // no price, and the ones that did were invented from base_price.
   const res = await client.get(`/rates`, {
-    params: { apartments: [apartmentId], from, to },
+    params: { apartments: [apartmentId], start_date: from, end_date: to },
   });
   return res.data;
 }
