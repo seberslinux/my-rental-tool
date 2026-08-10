@@ -21,6 +21,7 @@ import { CleaningDaySheet } from './components/CleaningDaySheet';
 import { UserX, UserCheck, TriangleAlert, Check } from 'lucide-react';
 import { properties, bookings, Booking, loadCalendarData, cleaningDays, loadCleaningDays, dateKey } from './data/properties';
 import { loadDashboardData, setPropertyFilter, setOnDataChanged, lastSyncedAt } from './data/dashboard';
+import { setUnauthorizedHandler } from './data/session';
 import { relativeTime } from './data/time';
 import { loadAnalyticsData } from './data/analytics';
 
@@ -31,7 +32,23 @@ export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [unread, setUnread] = useState(0);
-  const [needsCount, setNeedsCount] = useState(0);
+
+  /**
+   * One answer to an expired session, registered once.
+   *
+   * Panels used to each shrug at a 401 and keep their empty starting
+   * state, so signing out somewhere else left a home screen cheerfully
+   * reporting nothing to do and no bookings.
+   */
+  useEffect(() => {
+    setUnauthorizedHandler(() => {
+      setIsLoggedIn(false);
+      setDataLoaded(false);
+      setNeedsCount(0);
+    });
+    return () => setUnauthorizedHandler(null);
+  }, []);
+  const [needsCount, setNeedsCount] = useState<number | null>(0);
   // /invite/<token> — read once at mount, before anything else decides
   // what to render.
   const [inviteToken, setInviteToken] = useState<string | null>(() => {
@@ -173,7 +190,7 @@ export function App() {
   // renders it. This was `needsAttention.length` — a separate
   // client-side list that TodayPanel replaced but nothing unwired, so
   // the tab badge, the page and the bell each gave a different answer.
-  const attentionCount = needsCount;
+  const attentionCount = needsCount === null ? 0 : needsCount;
   const syncedLabel = lastSyncedAt ? `Synced ${relativeTime(lastSyncedAt)}` : 'Not synced yet';
 
   // Show loading spinner while checking auth or loading data

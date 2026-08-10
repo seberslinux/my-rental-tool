@@ -16,7 +16,7 @@ export function DashboardPage({ onNavigate, onGoToDay, onNeedsChange }: {
   /** Open the calendar on a specific day, with its sheet up. */
   onGoToDay?: (propertyId: number, date: string) => void;
   /** How many things need somebody — passed up for the tab badge. */
-  onNeedsChange?: (count: number) => void;
+  onNeedsChange?: (count: number | null) => void;
 }) {
   return (
     <div className="p-4 lg:px-8 lg:py-6 bg-[#F7F7F7] min-h-full">

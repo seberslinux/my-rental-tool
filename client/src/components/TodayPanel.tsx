@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { LogIn, LogOut, Check, AlertCircle, ArrowRight } from 'lucide-react';
+import { LogIn, LogOut, Check, AlertCircle, ArrowRight, RefreshCw } from 'lucide-react';
+import { apiGet, Unauthorized } from '../data/session';
 
 /**
  * What needs you, and what is happening.
@@ -50,23 +51,36 @@ export function TodayPanel({ onGoToDay, onNeedsChange }: {
    * and the bell lit up for the same stale list even with no messages
    * in it. One fetch, one number, everywhere.
    */
-  onNeedsChange?: (count: number) => void;
+  onNeedsChange?: (count: number | null) => void;
 }) {
   const [needs, setNeeds] = useState<Need[]>([]);
   const [board, setBoard] = useState<BoardRow[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [failed, setFailed] = useState(false);
 
   const load = async () => {
-    const res = await fetch('/api/dashboard/today', { credentials: 'same-origin' });
-    if (!res.ok) return;
-    const data = await res.json();
-    setNeeds(data.needs || []);
-    setBoard(data.board || []);
-    if (onNeedsChange) onNeedsChange((data.needs || []).length);
+    try {
+      const data = await apiGet<{needs: Need[];board: BoardRow[];}>('/api/dashboard/today');
+      setNeeds(data.needs || []);
+      setBoard(data.board || []);
+      setFailed(false);
+    } catch (e) {
+      // A 401 has already sent us back to the sign-in screen. Anything
+      // else means we do not know what needs doing — which is not the
+      // same as nothing needing doing, and must not be drawn as a tick.
+      if (!(e instanceof Unauthorized)) setFailed(true);
+    }
   };
 
   useEffect(() => { load(); }, []);
+
+  // The badge counts what is on the screen, because it is read from the
+  // same state the list renders. Reporting it from inside the fetch let
+  // the two drift apart the moment a fetch did not finish.
+  useEffect(() => {
+    if (onNeedsChange) onNeedsChange(failed ? null : needs.length);
+  }, [needs, failed, onNeedsChange]);
 
   const act = async (n: Need) => {
     if (n.action.kind === 'unblock' && n.action.property_id && n.action.block_id) {
@@ -99,7 +113,18 @@ export function TodayPanel({ onGoToDay, onNeedsChange }: {
 
         {error && <p className="mb-2 text-[13px] text-[#991B1B]">{error}</p>}
 
-        {needs.length === 0 ?
+        {failed ?
+        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] px-4 py-3 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 text-[#D93900] shrink-0" />
+            <span className="text-[14px] text-[#222222] flex-1">Could not load what needs you.</span>
+            <button
+            onClick={() => load()}
+            className="shrink-0 flex items-center gap-1 text-[13px] font-semibold text-[#FF385C]">
+              <RefreshCw className="w-3.5 h-3.5" /> Try again
+            </button>
+          </div> :
+
+        needs.length === 0 ?
         <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] px-4 py-3 flex items-center gap-2">
             <Check className="w-4 h-4 text-[#0F6E56]" />
             <span className="text-[14px] text-[#222222]">Nothing needs you.</span>
