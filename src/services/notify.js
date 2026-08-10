@@ -199,6 +199,14 @@ async function notify({
    * the screen where they can do something about it.
    */
   link = null,
+  /**
+   * The facts behind the sentence, for a message that can be acted on.
+   *
+   * The prose already contains them — which property, which nights — but
+   * not in a shape a button can use. Anything here is rendered as an
+   * action rather than read.
+   */
+  meta = null,
 }) {
   const spec = EVENTS[event];
   if (!spec) {
@@ -301,9 +309,10 @@ async function notify({
   try {
     await run(
       `INSERT INTO notifications
-         (event, property_id, cleaner_id, job_id, title, body, link, severity, audience, channel, delivery, delivery_error)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-      [event, propertyId, cleanerId, jobId, title, body, link, severity, audience, channel, delivery, deliveryError]
+         (event, property_id, cleaner_id, job_id, title, body, link, severity, audience, channel, delivery, delivery_error, meta)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      [event, propertyId, cleanerId, jobId, title, body, link, severity, audience, channel, delivery, deliveryError,
+       meta ? JSON.stringify(meta) : null]
     );
   } catch (err) {
     // The last resort. If even recording fails, say so loudly rather
@@ -328,7 +337,7 @@ async function recent({ limit = 50, propertyIds = null } = {}) {
        FROM notifications n
        LEFT JOIN properties p ON p.id = n.property_id
        LEFT JOIN cleaners c ON c.id = n.cleaner_id
-      WHERE n.audience = 'owner'${scope}
+      WHERE n.audience = 'owner' AND n.dismissed_at IS NULL${scope}
       ORDER BY n.created_at DESC
       LIMIT $1`,
     params
@@ -350,7 +359,7 @@ async function recentForCleaner(cleanerId, { limit = 50 } = {}) {
             n.delivery, n.created_at, n.read_at, p.name AS property_name
        FROM notifications n
        LEFT JOIN properties p ON p.id = n.property_id
-      WHERE n.audience = 'cleaner' AND n.cleaner_id = $1
+      WHERE n.audience = 'cleaner' AND n.cleaner_id = $1 AND n.dismissed_at IS NULL
       ORDER BY n.created_at DESC
       LIMIT $2`,
     [cleanerId, Math.min(Number(limit) || 50, 200)]
