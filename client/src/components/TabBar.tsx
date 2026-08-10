@@ -2,7 +2,7 @@ import React from 'react';
 import {
   Home,
   Calendar,
-  Sparkles,
+  BrushCleaning,
   BarChart2,
   MoreHorizontal } from
 'lucide-react';
@@ -27,7 +27,11 @@ export function TabBar({ activeTab, onTabChange, homeBadge = 0 }: TabBarProps) {
   {
     id: 'cleaners',
     label: 'Cleaners',
-    icon: Sparkles
+    // Was Sparkles, which has become the universal "AI" glyph — on a nav
+    // bar it reads as an assistant feature rather than as the people who
+    // clean the flats. It was also the only non-literal icon in a row of
+    // a house, a calendar and a bar chart.
+    icon: BrushCleaning
   },
   {
     id: 'analytics',
