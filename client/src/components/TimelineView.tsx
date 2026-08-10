@@ -3,23 +3,34 @@ import {
   Booking,
   Property,
   TODAY,
-  cleaners,
   getRate,
   formatRate,
   isDateCovered,
-  dateEqual } from
+  dateEqual,
+  dateKey,
+  CleaningDay } from
 '../data/properties';
 import { BookingBar } from './BookingBar';
+import { CleaningMarks, isSettled } from './CleaningMarks';
 import { Moon } from 'lucide-react';
 interface TimelineViewProps {
   properties: Property[];
   bookings: Booking[];
   onBookingClick: (booking: Booking) => void;
+  /**
+   * The same per-date cleaning picture the month grid gets. Without it
+   * this view fell back to a day-of-month map that could not tell August
+   * from September.
+   */
+  cleaningDays?: Record<string, CleaningDay>;
+  onDayClick?: (date: Date, propertyId: number) => void;
 }
 export function TimelineView({
   properties,
   bookings,
-  onBookingClick
+  onBookingClick,
+  cleaningDays,
+  onDayClick
 }: TimelineViewProps) {
   // Generate 28 days starting from TODAY
   const dates = useMemo(() => {
@@ -32,7 +43,7 @@ export function TimelineView({
     return arr;
   }, []);
   const dayNames = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
-  const CELL_WIDTH = 50;
+  const CELL_WIDTH = 72; // room for the cleaning marks beside the rate
   const ROW_HEIGHT = 90;
   return (
     <div className="flex flex-col h-full overflow-auto bg-white">
@@ -51,7 +62,7 @@ export function TimelineView({
               return (
                 <div
                   key={idx}
-                  className={`w-[50px] shrink-0 py-2 px-1 text-center ${isWeekend ? 'bg-[#FAFAFA]' : 'bg-white'}`}>
+                  className={`w-[72px] shrink-0 py-2 px-1 text-center ${isWeekend ? 'bg-[#FAFAFA]' : 'bg-white'}`}>
                   
                   {/* Weekends emphasised — they are the premium nights,
                       and the column tint already says so. */}
@@ -140,23 +151,38 @@ export function TimelineView({
                   const isWeekend = date.getDay() === 0 || date.getDay() === 6;
                   const isCovered = isDateCovered(date, prop.id);
                   const rate = getRate(prop.id, date);
-                  const hasCleaner = cleaners[prop.id]?.includes(date.getDate());
+                  const cleanDay = cleaningDays ? cleaningDays[dateKey(date)] : undefined;
+                  // Settled reads green here for the same reason it does
+                  // on the month grid and in the cleaner's own app: one
+                  // fact, one colour, wherever you happen to be looking.
+                  const settled = isSettled(cleanDay, prop.id);
                   return (
                     <div
                       key={idx}
-                      className={`w-[50px] shrink-0 relative ${
+                      onClick={onDayClick ? () => onDayClick(date, prop.id) : undefined}
+                      className={`w-[72px] shrink-0 relative ${onDayClick ? 'cursor-pointer' : ''} ${
                       rate && !rate.available ? 'bg-[#F2F2F2]' :
+                      settled ? 'bg-[#EAF4F0]' :
                       isWeekend ? 'bg-[#FAFAFA]' : 'bg-white'}`}>
 
-                      {/* The date row above is shared by every property, so
-                          a closed night is marked on the cell itself. */}
-                      {!isCovered && rate &&
-                      <div className={`absolute bottom-2 left-0 right-0 text-center text-[10px] whitespace-nowrap tabular-nums font-medium ${
-                        rate.available ? 'text-[#222222]' : 'text-[#8A8A8A] line-through decoration-[1.5px]'
-                      }`}>
-                          {formatRate(rate.price)}
-                        </div>
-                      }
+                      {/* The rate and the cleaning marks share one strip
+                          along the bottom. Stacked as two absolute layers
+                          they overlapped: at this cell width the marks sat
+                          on top of the last digit of the price. */}
+                      <div className="absolute bottom-1.5 left-0 right-0 flex items-center justify-center gap-1 px-0.5">
+                        {!isCovered && rate &&
+                        <span className={`text-[10px] whitespace-nowrap tabular-nums font-medium ${
+                          rate.available ? 'text-[#222222]' : 'text-[#8A8A8A] line-through decoration-[1.5px]'
+                        }`}>
+                            {formatRate(rate.price)}
+                          </span>
+                        }
+                        {/* The same marks the month grid draws, from the
+                            same data. This used to be a single teal dot
+                            fed by a day-of-month lookup, so a job on the
+                            11th of one month marked the 11th of the next. */}
+                        <CleaningMarks day={cleanDay} propertyId={prop.id} compact />
+                      </div>
                       {/* Minimum stay — see MonthCalendar for why. */}
                       {!isCovered && rate && rate.minStay > 1 &&
                       <div
@@ -165,9 +191,6 @@ export function TimelineView({
                           {rate.minStay}
                           <Moon className="w-[8px] h-[8px]" strokeWidth={2.5} />
                         </div>
-                      }
-                      {hasCleaner &&
-                      <div className="absolute w-[5px] h-[5px] bg-[#00A699] rounded-full bottom-2 left-1/2 -translate-x-1/2" />
                       }
                     </div>);
 
