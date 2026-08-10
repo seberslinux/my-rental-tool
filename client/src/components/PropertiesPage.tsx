@@ -22,6 +22,7 @@ import {
   Plus } from
 'lucide-react';
 import { ChecklistEditor } from './ChecklistEditor';
+import { CleanerOrderEditor } from './CleanerOrderEditor';
 
 interface Property {
   id: number;
@@ -162,6 +163,8 @@ export function PropertiesPage() {
   const [expandedProperty, setExpandedProperty] = useState<number | null>(null);
   // Which property's cleaning checklist is being edited.
   const [checklistFor, setChecklistFor] = useState<Property | null>(null);
+  // Which property's cleaner order is being set.
+  const [orderFor, setOrderFor] = useState<Property | null>(null);
   const [properties, setProperties] = useState<Property[]>([]);
   const [forms, setForms] = useState<Record<number, PropertyForm>>({});
   const [syncing, setSyncing] = useState(false);
@@ -324,6 +327,16 @@ export function PropertiesPage() {
 
                     <ClipboardList className="w-3.5 h-3.5" />
                     Checklist
+                  </button>
+                  {/* Assignment has always walked a list of cleaners and
+                      taken the first one free. Until now that list was in
+                      whatever order the database returned. */}
+                  <button
+                    className="flex items-center gap-1 text-[12px] font-semibold text-[#007AFF] hover:underline"
+                    onClick={(e) => { e.stopPropagation(); setOrderFor(prop); }}>
+
+                    <Users className="w-3.5 h-3.5" />
+                    Cleaner order
                   </button>
                   <button
                     className="flex items-center gap-1 px-3 py-1.5 text-[12px] font-semibold text-white bg-[#007AFF] rounded-[6px] hover:bg-[#0066CC]"
@@ -662,6 +675,13 @@ export function PropertiesPage() {
           Save Settings
         </button>
       </div>
+
+      {orderFor &&
+      <CleanerOrderEditor
+        propertyId={orderFor.id}
+        propertyName={orderFor.name}
+        onClose={() => setOrderFor(null)} />
+      }
 
       {checklistFor &&
       <ChecklistEditor
