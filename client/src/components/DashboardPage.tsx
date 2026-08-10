@@ -11,10 +11,12 @@ import {
   recentCancellations,
   dismissDashboardItem } from
 '../data/dashboard';
-export function DashboardPage({ onNavigate, onGoToDay }: {
+export function DashboardPage({ onNavigate, onGoToDay, onNeedsChange }: {
   onNavigate?: (tab: string) => void;
   /** Open the calendar on a specific day, with its sheet up. */
   onGoToDay?: (propertyId: number, date: string) => void;
+  /** How many things need somebody — passed up for the tab badge. */
+  onNeedsChange?: (count: number) => void;
 }) {
   return (
     <div className="p-4 lg:px-8 lg:py-6 bg-[#F7F7F7] min-h-full">
@@ -22,7 +24,7 @@ export function DashboardPage({ onNavigate, onGoToDay }: {
           call, so they cannot disagree. The board that used to sit here
           had its own idea of whether a checkout had a cleaner, and the
           attention list below had a third. */}
-      <TodayPanel onGoToDay={onGoToDay} />
+      <TodayPanel onGoToDay={onGoToDay} onNeedsChange={onNeedsChange} />
 
       <PropertyStatusCard />
 

@@ -20,7 +20,7 @@ import { SmoobuConnectionPage } from './components/SmoobuConnectionPage';
 import { CleaningDaySheet } from './components/CleaningDaySheet';
 import { UserX, UserCheck, TriangleAlert, Check } from 'lucide-react';
 import { properties, bookings, Booking, loadCalendarData, cleaningDays, loadCleaningDays, dateKey } from './data/properties';
-import { loadDashboardData, setPropertyFilter, setOnDataChanged, needsAttention, lastSyncedAt } from './data/dashboard';
+import { loadDashboardData, setPropertyFilter, setOnDataChanged, lastSyncedAt } from './data/dashboard';
 import { relativeTime } from './data/time';
 import { loadAnalyticsData } from './data/analytics';
 
@@ -31,6 +31,7 @@ export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
   const [unread, setUnread] = useState(0);
+  const [needsCount, setNeedsCount] = useState(0);
   // /invite/<token> — read once at mount, before anything else decides
   // what to render.
   const [inviteToken, setInviteToken] = useState<string | null>(() => {
@@ -168,7 +169,11 @@ export function App() {
   };
 
   // Count of dashboard items needing attention (re-read each render; dashboardVersion drives re-renders)
-  const attentionCount = needsAttention.length;
+  // What the home screen actually lists, reported up by the panel that
+  // renders it. This was `needsAttention.length` — a separate
+  // client-side list that TodayPanel replaced but nothing unwired, so
+  // the tab badge, the page and the bell each gave a different answer.
+  const attentionCount = needsCount;
   const syncedLabel = lastSyncedAt ? `Synced ${relativeTime(lastSyncedAt)}` : 'Not synced yet';
 
   // Show loading spinner while checking auth or loading data
@@ -219,7 +224,7 @@ export function App() {
       <TopNav
         activeTab={activeTab}
         onTabChange={setActiveTab}
-        hasNotifications={attentionCount > 0 || unread > 0}
+        hasNotifications={unread > 0}
         onOpenNotifications={() => setShowNotifications(true)}
         syncedLabel={syncedLabel}
         propertyFilter={SHOWS_PROPERTY_FILTER.has(activeTab) ? {
@@ -252,7 +257,7 @@ export function App() {
           await fetch('/api/sync/bookings', { method: 'POST', credentials: 'same-origin' });
           await loadData();
         }}
-        hasNotifications={attentionCount > 0 || unread > 0}
+        hasNotifications={unread > 0}
         onOpenNotifications={() => setShowNotifications(true)}
         syncedLabel={syncedLabel} />
       }
@@ -263,6 +268,7 @@ export function App() {
         <DashboardPage
           key={dashboardVersion}
           onNavigate={setActiveTab}
+          onNeedsChange={setNeedsCount}
           onGoToDay={(pid, date) => {
             // Straight to the day the item is about, with the sheet open.
             // "Assign" used to drop you on a tab and leave you to find it.

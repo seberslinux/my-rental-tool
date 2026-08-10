@@ -47,9 +47,26 @@ function whenLabel(n) {
  */
 function buildToday({
   properties = [], stays = [], jobs = [], issues = [], blocks = [],
-  isFree = () => true, today, horizonDays = 2,
+  isFree = () => true, today, now = null, horizonDays = 2,
 }) {
   const day = ymd(today) || new Date().toISOString().slice(0, 10);
+  const properties_ = properties;
+
+  /**
+   * Has the guest actually gone?
+   *
+   * "Checks out today" was still on the screen in the afternoon, hours
+   * after the guest had left — future tense for something already done,
+   * and it made the one urgent row on the page read like a plan. If the
+   * property's checkout time has passed, say so, because a dirty
+   * property now is a different problem from one that will be dirty by
+   * ten tomorrow.
+   */
+  const departed = (propertyId, date) => {
+    if (!now || ymd(date) !== day) return false;
+    const p = properties_.find((x) => x.id === propertyId);
+    return now >= ((p && p.check_out_time) || '10:00');
+  };
   const propertyName = (id) => (properties.find((p) => p.id === id) || {}).name || 'A property';
 
   const guestStays = stays.filter(
@@ -80,7 +97,9 @@ function buildToday({
         key: `out:${s.smoobu_id}`,
         kind: 'out',
         date: ymd(s.check_out),
-        when: whenLabel(outIn),
+        // Same reason as the row above it: by the afternoon "today" is
+        // the wrong tense for something that happened at ten.
+        when: departed(s.property_id, s.check_out) ? 'already left' : whenLabel(outIn),
         sortAt: outIn,
         guest: s.guest_name || 'Guest',
         property: propertyName(s.property_id),
@@ -108,11 +127,15 @@ function buildToday({
   // A departure with nobody going. The one thing on this page that costs
   // money if it is missed.
   board.filter((b) => b.kind === 'out' && !b.cleaner).forEach((b) => {
+    const gone = departed(b.property_id, b.date);
     add({
       key: `unstaffed:${b.property_id}:${b.date}`,
-      sortAt: b.sortAt,
-      title: 'Nobody is cleaning this',
-      subtitle: `${b.property} · checks out ${b.when}`,
+      // Already dirty beats about to be dirty.
+      sortAt: gone ? b.sortAt - 0.5 : b.sortAt,
+      title: `${b.property} has no cleaner`,
+      subtitle: gone ?
+      'Guests have left — it is dirty now' :
+      `Guests leave ${b.when}`,
       action: { label: 'Assign', kind: 'assign', property_id: b.property_id, date: b.date },
     });
   });
@@ -128,8 +151,8 @@ function buildToday({
     add({
       key: `unanswered:${j.id}`,
       sortAt: daysOut(j.cleaning_date, day),
-      title: `${j.cleaner_name} has not answered`,
-      subtitle: `${propertyName(j.property_id)} · ${whenLabel(daysOut(j.cleaning_date, day))}`,
+      title: `${j.cleaner_name} has not answered about ${propertyName(j.property_id)}`,
+      subtitle: `Cleaning ${whenLabel(daysOut(j.cleaning_date, day))}`,
       action: { label: 'Open', kind: 'assign', property_id: j.property_id, date: ymd(j.cleaning_date) },
     });
   });
@@ -146,8 +169,8 @@ function buildToday({
     add({
       key: `clash:${j.id}`,
       sortAt: daysOut(j.cleaning_date, day),
-      title: `${j.cleaner_name} is no longer available`,
-      subtitle: `${propertyName(j.property_id)} · ${whenLabel(daysOut(j.cleaning_date, day))}`,
+      title: `${j.cleaner_name} can no longer clean ${propertyName(j.property_id)}`,
+      subtitle: `Was booked for ${whenLabel(daysOut(j.cleaning_date, day))}`,
       action: { label: 'Reassign', kind: 'assign', property_id: j.property_id, date: ymd(j.cleaning_date) },
     });
   });
@@ -170,8 +193,8 @@ function buildToday({
     add({
       key: `notclean:${s.smoobu_id}`,
       sortAt: daysOut(s.check_in, day),
-      title: 'Guests arrive to a property that is not clean',
-      subtitle: `${propertyName(s.property_id)} · ${whenLabel(daysOut(s.check_in, day))} · ${verdict.why}`,
+      title: `${propertyName(s.property_id)} will not be clean in time`,
+      subtitle: `Guests arrive ${whenLabel(daysOut(s.check_in, day))} · ${verdict.why}`,
       action: { label: 'Assign', kind: 'assign', property_id: s.property_id, date: ymd(s.check_in) },
     });
   });
@@ -181,8 +204,8 @@ function buildToday({
     add({
       key: `issue:${i.id}`,
       sortAt: 0,
-      title: i.title,
-      subtitle: `${propertyName(i.property_id)} · reported`,
+      title: `${i.title} at ${propertyName(i.property_id)}`,
+      subtitle: 'Reported by the cleaner',
       action: { label: 'View', kind: 'issue', property_id: i.property_id },
     });
   });
@@ -195,8 +218,8 @@ function buildToday({
     add({
       key: `block:${b.id}`,
       sortAt: daysOut(b.date, day),
-      title: 'Nights are off sale',
-      subtitle: `${propertyName(b.property_id)} · from ${ymd(b.date)}${b.reason ? ` · ${b.reason}` : ''}`,
+      title: `${propertyName(b.property_id)} has nights off sale`,
+      subtitle: `From ${ymd(b.date)}${b.reason ? ` · ${b.reason}` : ''}`,
       action: { label: 'Put back on sale', kind: 'unblock', property_id: b.property_id, block_id: b.id },
     });
   });
