@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Check, AlertCircle, UserPlus } from 'lucide-react';
-import { CleaningDay, properties as allProperties, getRate, formatRate, holidayOn } from '../data/properties';
+import { CleaningDay, properties as allProperties, getRate, formatRate, holidayOn, schoolHolidaysOn } from '../data/properties';
 
 /**
  * One day at one property: what is happening, and who to send.
@@ -85,6 +85,10 @@ export function CleaningDaySheet({
   const asDate = new Date(date + 'T00:00:00');
   const rate = getRate(propId, asDate);
   const holiday = holidayOn(asDate);
+  // Shown whatever the calendar toggle says: opening a day is asking
+  // for everything about it, and which market a term belongs to is the
+  // whole reason it is worth knowing.
+  const terms = schoolHolidaysOn(asDate);
   const freeHere = day ?
   day.available.filter((c) => c.property_ids.includes(propId)) :
   [];
@@ -192,7 +196,16 @@ export function CleaningDaySheet({
           {holiday &&
           <span className="flex items-center gap-1.5">
               <span className="w-[5px] h-[5px] rounded-full bg-[#C9A227] shrink-0" />
-              {holiday.name}
+              {holiday.name} · {holiday.label}
+            </span>
+          }
+          {terms.length > 0 &&
+          <span className="flex items-center gap-1.5">
+              <span className="w-[8px] h-[3px] rounded-full bg-[#C9A227] shrink-0" />
+              <span>
+                <span className="text-[#717171]">School holidays </span>
+                {terms.map((t) => `${t.label} (${t.name})`).join(', ')}
+              </span>
             </span>
           }
         </div>

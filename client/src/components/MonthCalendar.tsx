@@ -409,7 +409,13 @@ export function MonthCalendar({
                         className="absolute top-0 left-0 right-0 h-[14px] bg-[#F4EAD0] border-b border-[#E4CF9A] flex items-center overflow-hidden">
                           {termStartsRow &&
                         <span className="pl-1 text-[9px] font-medium text-[#6B5310] whitespace-nowrap">
-                              {terms[0].name}{terms.length > 1 ? ` +${terms.length - 1}` : ''}
+                              {/* Regions only. The label is clipped to
+                                  one cell, and "Hamburg, Bavaria ·
+                                  Summer Hol…" spent that width on the
+                                  word every market uses and cut the one
+                                  that says whose. The name is on hover
+                                  and in the day sheet. */}
+                              {terms.map((t) => t.label).join(', ')}
                             </span>
                         }
                         </span>
@@ -422,7 +428,7 @@ export function MonthCalendar({
                           it was measured against. */}
                       {holiday && !isPast &&
                       <span
-                        aria-label={holiday.name}
+                        aria-label={`${holiday.name} · ${holiday.label}`}
                         className="mt-[7px] ml-2 w-[5px] h-[5px] rounded-full bg-[#C9A227] shrink-0" />
                       }
 
