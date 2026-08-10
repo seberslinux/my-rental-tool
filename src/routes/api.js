@@ -212,6 +212,22 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
     // more important half.
     const rates = await syncRates({ apiKeyForProperty: () => apiKey });
 
+    // A sync that half worked should say so.
+    //
+    // Rates failing per property returned in the response body and were
+    // logged to a console nobody reads, while the same call reported
+    // "Synced" for the bookings half. Smoobu answered every rate request
+    // with 422 for months and the only symptom was empty cells — which
+    // reads as "no price set", not as "this has never worked".
+    if (rates.failures.length) {
+      await notify({
+        event: 'sync_incomplete',
+        title: `Rates did not sync for ${rates.failures.length} propert${rates.failures.length === 1 ? 'y' : 'ies'}`,
+        body: rates.failures.map((f) => `${f.property}: ${f.error}`).join(' · '),
+        link: '/smoobu',
+      });
+    }
+
     // Record when this sync completed so the UI can show "Synced X ago"
     await run(
       `INSERT INTO app_settings (key, value, updated_at) VALUES ('last_synced_at', NOW()::text, NOW())
