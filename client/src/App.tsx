@@ -259,7 +259,19 @@ export function App() {
 
       <main className="flex-1 overflow-y-auto overflow-x-hidden pb-[64px] lg:pb-0">
         <div className="mx-auto w-full max-w-[1280px]">
-        {activeTab === 'home' && <DashboardPage key={dashboardVersion} onNavigate={setActiveTab} />}
+        {activeTab === 'home' &&
+        <DashboardPage
+          key={dashboardVersion}
+          onNavigate={setActiveTab}
+          onGoToDay={(pid, date) => {
+            // Straight to the day the item is about, with the sheet open.
+            // "Assign" used to drop you on a tab and leave you to find it.
+            setPropertyId(pid);
+            setPickedFor(null);
+            setPickedDay(date);
+            setActiveTab('calendar');
+          }} />
+        }
 
         {activeTab === 'calendar' && (
         mode === 'single' ?
