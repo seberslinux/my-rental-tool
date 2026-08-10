@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { CleaningMarks } from './CleaningMarks';
 import {
   Booking,
   TODAY,
@@ -453,68 +454,12 @@ export function MonthCalendar({
                     className="absolute w-[5px] h-[5px] bg-[#00A699] rounded-full bottom-2.5 right-1.5" />
                   }
 
-                    {/* The manager's version, once real per-date data is
-                        available. Three separate facts, deliberately not
-                        collapsed into one dot:
-
-                        a checkout nobody is attached to, which is the only
-                        thing here that needs doing something about;
-                        a cleaner who has since marked themselves off a day
-                        they were already given, which looks covered and is
-                        not; and how many people could take it, because
-                        "needs a cleaner" is a different problem when the
-                        answer is nobody. */}
+                    {/* The same marks the timeline draws, from the same
+                        data — see CleaningMarks for what each one means
+                        and why none of them is a dot. */}
                     {cleanDay && !isPast &&
-                  <div className="absolute bottom-1.5 right-1.5 flex items-center gap-1">
-                        {/* Icons, not dots.
-                            A dot has to be learnt before it says anything,
-                            and three colours of the same dot is a code
-                            nobody memorises. A crossed-out person reads as
-                            "no cleaner" without a legend, which is the one
-                            thing on this grid somebody has to act on.
-                            The cleaner's own calendar already works this
-                            way, and it is the easier of the two to read. */}
-                        {unmetHere &&
-                    <span
-                      title={freeHere > 0 ? 'Checks out — no cleaner yet' : 'Checks out — no cleaner, and nobody free'}
-                      className={`flex items-center rounded-[4px] px-1 py-0.5 ${
-                      freeHere > 0 ? 'bg-[#FAEEDA] text-[#854F0B]' : 'bg-[#FCEBEB] text-[#A32D2D]'}`}>
-                            <UserX className="w-3.5 h-3.5" strokeWidth={2.25} />
-                          </span>
-                    }
-
-                        {clashHere && !unmetHere &&
-                    <span
-                      title="Assigned, but that cleaner is no longer available"
-                      className="flex items-center rounded-[4px] px-1 py-0.5 bg-[#FAEEDA] text-[#854F0B]">
-                            <TriangleAlert className="w-3.5 h-3.5" strokeWidth={2.25} />
-                          </span>
-                    }
-
-                        {/* Confirmed and asked are not the same state and
-                            should not wear the same mark. A tick on a
-                            green day means it is settled; the person icon
-                            means somebody has been asked and has not
-                            answered. */}
-                        {settledHere && !unmetHere && !clashHere &&
-                    <span title="Confirmed" className="flex items-center text-[#0F6E56]">
-                            <Check className="w-4 h-4" strokeWidth={3} />
-                          </span>
-                    }
-                        {askedHere && !settledHere && !unmetHere && !clashHere &&
-                    <span title="Asked, waiting for an answer" className="flex items-center text-[#717171]">
-                            <UserCheck className="w-3.5 h-3.5" strokeWidth={2.25} />
-                          </span>
-                    }
-
-                        {/* How many could take it. Grey and quiet: it is
-                            context for the marks above, not an alarm. */}
-                        {freeHere > 0 && !settledHere && !askedHere && !unmetHere &&
-                    <span title={`${freeHere} cleaner${freeHere === 1 ? '' : 's'} free`}
-                      className="text-[10px] leading-none text-[#B0B0B0] tabular-nums">
-                            {freeHere}
-                          </span>
-                    }
+                  <div className="absolute bottom-1.5 right-1.5">
+                        <CleaningMarks day={cleanDay} propertyId={propertyId} />
                       </div>
                   }
                   </div>);

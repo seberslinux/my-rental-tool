@@ -348,7 +348,12 @@ export function App() {
         <TimelineView
           properties={properties}
           bookings={filteredBookings}
-          onBookingClick={setSelectedBooking} />)
+          onBookingClick={setSelectedBooking}
+          cleaningDays={cleaningDays}
+          onDayClick={(d, propId) => {
+            setPickedFor({ propertyId: propId, reason: 'checkout' });
+            setPickedDay(dateKey(d));
+          }} />)
 
         }
 
