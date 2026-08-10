@@ -8,6 +8,13 @@ interface CalendarHeaderProps {
   setPropertyId: (id: number) => void;
   channelFilter: string;
   setChannelFilter: (filter: string) => void;
+  /**
+   * Show the school-term bands. Off by default: they cover six weeks at
+   * a time, so on by default they are the loudest thing on a calendar
+   * about cleaning and checkouts. On when you are pricing a season.
+   */
+  showSchoolHolidays: boolean;
+  setShowSchoolHolidays: (on: boolean) => void;
 }
 export function CalendarHeader({
   mode,
@@ -15,7 +22,9 @@ export function CalendarHeader({
   propertyId,
   setPropertyId,
   channelFilter,
-  setChannelFilter
+  setChannelFilter,
+  showSchoolHolidays,
+  setShowSchoolHolidays
 }: CalendarHeaderProps) {
   return (
     <header className="sticky top-0 z-20 bg-white shadow-[0_1px_0_rgba(0,0,0,0.04)]">
@@ -54,6 +63,21 @@ export function CalendarHeader({
             <option value="direct">Direct</option>
             <option value="blocked">Blocked</option>
           </select>
+
+          {/* Off by default — a six-week band would otherwise be the
+              loudest thing on a calendar that is mostly about cleaning
+              and checkouts. Turned on when you are pricing a season. */}
+          <button
+            onClick={() => setShowSchoolHolidays(!showSchoolHolidays)}
+            aria-pressed={showSchoolHolidays}
+            title="School terms in the markets these guests come from"
+            className={`inline-flex items-center gap-1.5 text-[11px] font-medium py-1.5 px-3 rounded-full border transition-colors ${
+            showSchoolHolidays ?
+            'bg-[#F4EAD0] border-[#C9A227] text-[#6B5310]' :
+            'bg-white border-[#DDDDDD] text-[#717171] hover:text-[#222222]'}`}>
+            <span className={`w-[8px] h-[3px] rounded-full ${showSchoolHolidays ? 'bg-[#C9A227]' : 'bg-[#B0B0B0]'}`} />
+            School holidays
+          </button>
 
           <div className="inline-flex bg-[#F7F7F7] rounded-full p-0.5">
             <button
