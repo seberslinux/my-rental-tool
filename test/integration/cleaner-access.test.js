@@ -6,7 +6,7 @@ const {
   seedUser, seedProperty, seedBooking, seedCleaner, linkCleanerToProperty, loginAs,
 } = require('../helpers/seed');
 const { pool } = require('../../src/db/database');
-const { assignCleanerForCheckout } = require('../../src/services/cleaner-assignment');
+const { assignCleanerForCheckout, reconcileCleaningJobs } = require('../../src/services/cleaner-assignment');
 
 /**
  * What a cleaner session may reach.
@@ -899,4 +899,97 @@ test('a cleaner session cannot clear the owner\'s messages', async () => {
   await notify({ event: 'issue_reported', title: 'Theirs', propertyId: property.id });
   const { agent } = await cleanerSession('+27821117777');
   await agent.delete('/api/notifications/1').expect(403);
+});
+
+// --- rows with nobody on them -------------------------------------------
+
+/**
+ * One deleted cleaner, three contradictory symptoms.
+ *
+ * cleaning_jobs.cleaner_id is ON DELETE SET NULL, so removing somebody
+ * turned their jobs into rows nobody is doing. The day sheet called it "a
+ * visit scheduled with nobody on it", the home board read it as "No
+ * cleaner" for a checkout that *was* covered, and needs-attention listed
+ * it a third time. All from one row that should not have survived.
+ */
+
+test('removing a cleaner clears their upcoming work', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  const soon = new Date(Date.now() + 5 * 86400000).toISOString().slice(0, 10);
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, cleaning_date, start_time, end_time, status)
+     VALUES ($1, $2, $3, '10:00', '12:30', 'confirmed')`,
+    [property.id, cleaner.id, soon]
+  );
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.delete(`/api/cleaners/${cleaner.id}`).expect(200);
+  assert.equal(res.body.jobs_cleared, 1);
+
+  const { rows } = await pool.query('SELECT * FROM cleaning_jobs');
+  assert.equal(rows.length, 0, 'no row left pretending somebody is going');
+});
+
+test('but work they already did is kept', async () => {
+  // Losing the record that a property was cleaned, because the person who
+  // cleaned it has left, is worse than a dangling name.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, cleaning_date, start_time, end_time, status, completed_at)
+     VALUES ($1, $2, '2026-07-01', '10:00', '12:30', 'completed', NOW())`,
+    [property.id, cleaner.id]
+  );
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  await agent.delete(`/api/cleaners/${cleaner.id}`).expect(200);
+
+  const { rows } = await pool.query('SELECT * FROM cleaning_jobs');
+  assert.equal(rows.length, 1, 'the clean happened; that stays true');
+  assert.equal(rows[0].cleaner_id, null);
+});
+
+test('an orphaned row is cleared even with no booking behind it', async () => {
+  // These were invisible to the reconciler, which only looked at jobs
+  // with a booking_id — and a deleted cleaner leaves rows with none.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const soon = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, cleaning_date, start_time, end_time, status)
+     VALUES ($1, NULL, $2, '10:00', '12:30', 'pending')`,
+    [property.id, soon]
+  );
+
+  const out = await reconcileCleaningJobs();
+  assert.equal(out.removed.length, 1);
+  const { rows } = await pool.query('SELECT * FROM cleaning_jobs');
+  assert.equal(rows.length, 0);
+});
+
+test('a deliberate visit with no booking is left alone', async () => {
+  // Somebody sent for a deep clean has no booking either. The difference
+  // is that a person is going.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  const soon = new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10);
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, cleaning_date, start_time, end_time, status, reason)
+     VALUES ($1, $2, $3, '10:00', '12:30', 'confirmed', 'other')`,
+    [property.id, cleaner.id, soon]
+  );
+
+  await reconcileCleaningJobs();
+  const { rows } = await pool.query('SELECT * FROM cleaning_jobs');
+  assert.equal(rows.length, 1, 'a deep clean is not an orphan');
 });

@@ -265,10 +265,18 @@ export async function loadDashboardData(): Promise<void> {
     // turnover is covered. Missing cleaner is the failure that actually
     // hurts — a guest walking into an uncleaned property.
     const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
-    const jobsByPropDate = new Map<string, any>();
+    // All of them, not the last one seen.
+    //
+    // This was a Map of one job per property per day. Two jobs on the
+    // same day — one with a cleaner, one left empty by a deleted cleaner
+    // — meant the second silently overwrote the first, and whichever won
+    // decided what the home screen said. It reported "No cleaner" for a
+    // checkout Francesca had accepted.
+    const jobsByPropDate = new Map<string, any[]>();
     (stats.pending_cleaning_jobs || []).forEach((j: any) => {
       const d = String(j.cleaning_date).slice(0, 10);
-      jobsByPropDate.set(`${j.property_id}|${d}`, j);
+      const key = `${j.property_id}|${d}`;
+      jobsByPropDate.set(key, [...(jobsByPropDate.get(key) || []), j]);
     });
 
     const boardItems: typeof todayBoard = [];
@@ -289,8 +297,12 @@ export async function loadDashboardData(): Promise<void> {
           });
         }
         if (b.check_out === today || b.check_out === tomorrow) {
-          const job = jobsByPropDate.get(`${b.property_id}|${b.check_out}`);
-          const hasCleaner = !!(job && job.cleaner_name);
+          const dayJobs = jobsByPropDate.get(`${b.property_id}|${b.check_out}`) || [];
+          // Somebody real, not merely a row. A job whose cleaner was
+          // deleted is not cover.
+          const staffed = dayJobs.filter((j: any) => j.cleaner_name && j.status !== 'declined');
+          const job = staffed[0];
+          const hasCleaner = staffed.length > 0;
           boardItems.push({
             id: `out:${b.id}`,
             kind: 'out',
@@ -314,21 +326,35 @@ export async function loadDashboardData(): Promise<void> {
     const attentionItems: typeof needsAttention = [];
     let attId = 1;
 
-    // Unassigned cleaning jobs
-    const unassignedJobs = (stats.pending_cleaning_jobs || []).filter((j: any) => !j.cleaner_id);
-    unassignedJobs.forEach((j: any) => {
+    // A checkout with nobody on it, computed from the same board above
+    // rather than from a second look at the data.
+    //
+    // This used to list every cleaning_jobs row with a null cleaner_id.
+    // Those rows are what a deleted cleaner leaves behind, so one removed
+    // person produced a "no cleaner assigned" here *and* a "No cleaner"
+    // badge on the board *and* a "visit with nobody on it" in the day
+    // sheet — three rows for one fact, two of them contradicting a
+    // checkout that was covered.
+    boardItems.
+    filter((b) => b.kind === 'out' && !b.ready).
+    forEach((b) => {
       attentionItems.push({
         id: attId++,
-        key: `attn:nocleaner:${j.property_id}:${j.cleaning_date}`,
-        title: 'No cleaner assigned',
-        subtitle: `${j.property_name} · ${relativeDay(j.cleaning_date)}`,
+        key: `attn:nocleaner:${b.id}`,
+        title: 'Nobody is cleaning this',
+        subtitle: `${b.property} · ${b.when}`,
         dotColor: 'bg-[#D93900]',
-        action: { label: 'Assign', tab: 'cleaners' },
+        action: { label: 'Assign', tab: 'calendar' },
       });
     });
 
-    // Gaps
-    (stats.gaps || []).forEach((g: any) => {
+    // Gaps, but only ones close enough to do something about.
+    //
+    // A two-night gap in January sat beside "no cleaner for today" at the
+    // same weight, in August. Nothing you can act on today, ranked as
+    // though you could.
+    const gapHorizon = new Date(Date.now() + 45 * 86400000).toISOString().slice(0, 10);
+    (stats.gaps || []).filter((g: any) => g.gap_start <= gapHorizon).forEach((g: any) => {
       attentionItems.push({
         id: attId++,
         key: `attn:gap:${g.property_id}:${g.gap_start}`,
