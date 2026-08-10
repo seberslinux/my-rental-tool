@@ -34,6 +34,7 @@ const { syncRates } = require('../services/rate-sync');
 // another in a report.
 const { calcDeductions } = require('../services/analytics-calc');
 const { recent: recentNotifications } = require('../services/notify');
+const { STILL_ON_SQL } = require('../services/job-life');
 
 /**
  * calcDeductions' input contract, as SQL.
@@ -540,7 +541,7 @@ router.get('/dashboard/stats', scopeProperties, async (req, res) => {
      FROM cleaning_jobs cj
      JOIN properties p ON cj.property_id = p.id
      LEFT JOIN cleaners c ON cj.cleaner_id = c.id
-     WHERE cj.cleaning_date >= $1 AND cj.status != 'completed'`;
+     WHERE cj.cleaning_date >= $1 AND cj.${STILL_ON_SQL}`;
   const jobParams = [today];
   if (req.accessiblePropertyIds !== null) {
     if (req.accessiblePropertyIds.length === 0) {

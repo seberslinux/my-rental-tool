@@ -1,7 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { getApp, getAgent, resetDb, closePool } = require('../helpers/harness');
-const { seedUser, seedProperty, seedBooking, loginAs } = require('../helpers/seed');
+const { seedUser, seedProperty, seedBooking, seedCleaner, loginAs } = require('../helpers/seed');
+const { pool } = require('../../src/db/database');
 
 /**
  * GET /api/dashboard/stats — end-to-end accuracy tests.
@@ -202,4 +203,33 @@ test('scoping: user B\'s dashboard sees only user B\'s occupancy rows', async ()
   );
   const bobRow = body.occupancy[0];
   assert.equal(bobRow.booked_nights, 3);
+});
+
+test('a job the cleaner declined is not returned as cover', async () => {
+  // The calendar decides a booking has a cleaner by looking for a job on
+  // the day with a name on it. This endpoint used to hand back declined
+  // jobs alongside live ones, so a refusal read on screen as "Francesca
+  // is cleaning this" — while the day sheet, asking differently, showed
+  // nobody. One of the contradictions on the front page.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner({ name: 'Francesca' });
+  const date = todayPlus(1);
+
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, cleaning_date, start_time, end_time, status)
+     VALUES ($1, $2, $3, '10:00', '12:30', 'declined')`,
+    [property.id, cleaner.id, date]
+  );
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.get('/api/dashboard/stats').expect(200);
+
+  const jobs = res.body.pending_cleaning_jobs || [];
+  assert.equal(
+    jobs.filter((j) => j.cleaner_name === 'Francesca').length, 0,
+    'she said no, so she is not cover'
+  );
 });

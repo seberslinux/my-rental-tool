@@ -6,6 +6,7 @@ const { getAll, getOne, run } = require('../db/database');
 const { notify } = require('../services/notify');
 // Dates as somebody would say them, and one definition of YYYY-MM-DD.
 const { prettyDate, ymd } = require('../services/availability');
+const { STILL_TO_DO_SQL } = require('../services/job-life');
 
 // Daily at 6:00 AM SAST (UTC+2) = 4:00 AM UTC — run pricing engine
 cron.schedule('0 4 * * *', async () => {
@@ -68,7 +69,7 @@ cron.schedule('*/15 * * * *', async () => {
        FROM cleaning_jobs cj
        JOIN cleaners c ON cj.cleaner_id = c.id
        JOIN properties p ON cj.property_id = p.id
-       WHERE cj.cleaning_date = $1 AND cj.reminder_sent = 0 AND cj.status != 'completed'`,
+       WHERE cj.cleaning_date = $1 AND cj.reminder_sent = 0 AND cj.${STILL_TO_DO_SQL}`,
       [today]
     );
 
@@ -146,7 +147,7 @@ cron.schedule('0 6 * * *', async () => {
          JOIN cleaners c ON cj.cleaner_id = c.id
          JOIN properties p ON cj.property_id = p.id
          LEFT JOIN bookings b ON cj.booking_id = b.smoobu_id
-         WHERE cj.cleaning_date = $1 AND cj.status != 'completed'`,
+         WHERE cj.cleaning_date = $1 AND cj.${STILL_TO_DO_SQL}`,
         [targetDate]
       );
 
