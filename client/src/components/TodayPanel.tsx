@@ -40,7 +40,18 @@ const cleanerLabel = (c: BoardRow['cleaner']) => {
   return `${c.name} · accepted`;
 };
 
-export function TodayPanel({ onGoToDay }: {onGoToDay?: (propertyId: number, date: string) => void;}) {
+export function TodayPanel({ onGoToDay, onNeedsChange }: {
+  onGoToDay?: (propertyId: number, date: string) => void;
+  /**
+   * How many things need somebody, reported up for the tab badge.
+   *
+   * The badge used to count a separate client-side list that this panel
+   * replaced, so the tab said 1 while the page below it listed four —
+   * and the bell lit up for the same stale list even with no messages
+   * in it. One fetch, one number, everywhere.
+   */
+  onNeedsChange?: (count: number) => void;
+}) {
   const [needs, setNeeds] = useState<Need[]>([]);
   const [board, setBoard] = useState<BoardRow[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
@@ -52,6 +63,7 @@ export function TodayPanel({ onGoToDay }: {onGoToDay?: (propertyId: number, date
     const data = await res.json();
     setNeeds(data.needs || []);
     setBoard(data.board || []);
+    if (onNeedsChange) onNeedsChange((data.needs || []).length);
   };
 
   useEffect(() => { load(); }, []);

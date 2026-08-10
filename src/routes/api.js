@@ -306,7 +306,10 @@ router.get('/dashboard/today', scopeProperties, async (req, res) => {
   const av = await loadAvailability(cleanerIds);
   const isFree = (cleanerId, date) => cleanerDayStatus(av, cleanerId, date).available;
 
-  res.json(buildToday({ properties, stays, jobs, issues, blocks, isFree, today }));
+  // The clock, so a checkout that has already happened does not keep
+  // announcing itself in the future tense.
+  const now = new Date().toTimeString().slice(0, 5);
+  res.json(buildToday({ properties, stays, jobs, issues, blocks, isFree, today, now }));
 });
 
 router.get('/notifications', scopeProperties, async (req, res) => {
