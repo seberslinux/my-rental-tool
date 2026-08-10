@@ -406,10 +406,20 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
 
   // --- job card ----------------------------------------------------------
 
-  const JobCard = ({ job }: {job: Job;}) => {
+  const JobCard = ({ job, echo = false }: {job: Job;echo?: boolean;}) => {
     const working = !!job.started_at && !job.completed_at;
     const done = !!job.completed_at;
-    const undecided = job.status === 'pending';
+    // `echo` is the same job seen again lower down, in the schedule. It
+    // shows what the day holds; the copy at the top is where it gets
+    // answered. Two sets of Accept buttons for one job is how somebody
+    // ends up wondering which one counted.
+    const undecided = job.status === 'pending' && !echo;
+
+    // Booked on a day they have said they cannot work. The manager sees
+    // this in amber on their grid; the cleaner saw nothing at all, which
+    // left the one person who can resolve it as the only one unaware.
+    const notTheirDay =
+    !working && !done && !canWorkOn(new Date(job.cleaning_date + 'T00:00:00'));
 
     return (
       <div className="bg-white rounded-[12px] border border-[#EBEBEB] p-4 mb-3">
@@ -470,6 +480,19 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
         {job.special_requirements &&
         <p className="mt-2 text-[13px] bg-[#F7F7F7] rounded-[8px] px-3 py-2">
             {job.special_requirements}
+          </p>
+        }
+
+        {notTheirDay &&
+        <p className="mt-2 text-[13px] text-[#92400E]">
+            You have this day marked as not available.
+            {job.status === 'pending' ? ' Accept only if you can.' : ' Decline it if you cannot come.'}
+          </p>
+        }
+
+        {echo && job.status === 'pending' &&
+        <p className="mt-2 text-[13px] text-[#717171]">
+            Waiting for your answer — it is at the top of this list.
           </p>
         }
 
@@ -1221,7 +1244,7 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
                     {dayLabel(j.cleaning_date)}
                   </p>
             }
-                <JobCard job={j} />
+                <JobCard job={j} echo={needsAnswer.some((n) => n.id === j.id)} />
               </div>
           )}
           </>

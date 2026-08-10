@@ -264,6 +264,39 @@ export function App() {
         {activeTab === 'calendar' && (
         mode === 'single' ?
         <>
+        {/* Gaps at the properties you are not looking at.
+            The grid is one property at a time, so a checkout with nobody
+            on it at the other one is invisible — I only found the 10 Aug
+            one by switching. The data covers every property already; this
+            is the only thing that was missing. */}
+        {(() => {
+          const elsewhere = Object.entries(cleaningDays).
+          filter(([date]) => date >= dateKey(new Date())).
+          flatMap(([date, day]) =>
+          (day.unmet || []).
+          filter((u) => u.property_id !== propertyId).
+          map((u) => ({ date, ...u }))).
+          sort((a, b) => a.date.localeCompare(b.date));
+          if (elsewhere.length === 0) return null;
+
+          const first = elsewhere[0];
+          return (
+            <button
+              onClick={() => setPropertyId(first.property_id)}
+              className="w-full mb-2 flex items-center gap-2 text-left px-3 py-2 rounded-[8px] border border-[#F0C36D] bg-[#FFFBEB] text-[13px] text-[#92400E]">
+              <UserX className="w-4 h-4 shrink-0" strokeWidth={2.25} />
+              <span className="flex-1 min-w-0">
+                {elsewhere.length === 1 ?
+                `${first.property_name} checks out on ${new Date(first.date + 'T00:00:00').toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })} with no cleaner` :
+                `${elsewhere.length} checkouts at other properties have no cleaner`}
+              </span>
+              <span className="shrink-0 font-semibold underline underline-offset-2">
+                Show {first.property_name}
+              </span>
+            </button>);
+
+        })()}
+
         {/* A key, for the same reason the cleaner's calendar has one: a
             mark you have to decode is a mark you ignore. */}
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 pb-2 text-[12px] text-[#717171]">
