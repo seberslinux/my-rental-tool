@@ -79,6 +79,11 @@ const EVENTS = {
   // Nobody has answered a request that is nearly due. The owner has to
   // know while there is still time to ask somebody else.
   job_unanswered: { severity: 'attention' },
+  // Nobody can clean it, so nobody has been sent. The manager decides
+  // whether to take the nights off sale; this app no longer decides for
+  // them.
+  job_unstaffed: { severity: 'attention' },
+  property_blocked: { severity: 'info' },
 
   // The cleaner's own. Each of these replaces a bare whatsapp.sendMessage
   // that reported nothing and was recorded nowhere — which is how every

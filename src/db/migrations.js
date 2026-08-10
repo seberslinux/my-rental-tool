@@ -316,6 +316,32 @@ async function runMigrations() {
     -- survives the delete-and-reinsert that syncing does.
     ALTER TABLE inventory_checklists ADD COLUMN IF NOT EXISTS booking_id INTEGER;
 
+    -- A manager saying "it is clean" — or "it is not".
+    --
+    -- The same kind of fact as a cleaner tapping Finished: the property
+    -- was clean at a moment in time. Kept beside the jobs rather than as
+    -- a status column, so there is one answer to "is it clean" rather
+    -- than a stored one drifting from the jobs that produced it.
+    ALTER TABLE properties ADD COLUMN IF NOT EXISTS marked_clean_at TIMESTAMPTZ;
+    ALTER TABLE properties ADD COLUMN IF NOT EXISTS marked_dirty_at TIMESTAMPTZ;
+    ALTER TABLE properties ADD COLUMN IF NOT EXISTS marked_clean_by TEXT;
+
+    -- How long a clean lasts here before the next arrival wants a
+    -- freshen. Null falls back to the app-wide default.
+    ALTER TABLE properties ADD COLUMN IF NOT EXISTS clean_fresh_nights INTEGER;
+
+    -- Who the manager would rather send, per property. Lower comes first;
+    -- everybody defaults to 0, which is the arbitrary order this had
+    -- before — whoever the database happened to return.
+    ALTER TABLE cleaner_properties ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0;
+
+    -- The Smoobu reservation a block created, so it can be lifted again.
+    -- unblockDates() has existed since the beginning and could never be
+    -- called: nothing recorded what to cancel.
+    ALTER TABLE blocked_dates ADD COLUMN IF NOT EXISTS smoobu_reservation_id INTEGER;
+    ALTER TABLE blocked_dates ADD COLUMN IF NOT EXISTS end_date TEXT;
+    ALTER TABLE blocked_dates ADD COLUMN IF NOT EXISTS released_at TIMESTAMPTZ;
+
     ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS answer_chased_at TIMESTAMPTZ;
     ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS reason TEXT;
     ALTER TABLE cleaning_jobs ADD COLUMN IF NOT EXISTS note TEXT;

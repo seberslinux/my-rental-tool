@@ -1,7 +1,11 @@
 const express = require('express');
 const router = express.Router();
 const { getAll, getOne, run, inParams } = require('../db/database');
-const { scopeProperties, denyIfOutOfScope } = require('../middleware/auth');
+const { scopeProperties, denyIfOutOfScope, requireRole } = require('../middleware/auth');
+const smoobu = require('../services/smoobu');
+const { getApiKeyForProperty } = require('../services/api-key-resolver');
+// One place decides who gets told what.
+const { notify } = require('../services/notify');
 
 // Apply property scoping to all routes
 router.use(scopeProperties);
@@ -266,6 +270,87 @@ router.delete('/:id/share/:userId', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+/**
+ * Take nights off sale, and put them back.
+ *
+ * Assignment used to do the first of these by itself when nobody could
+ * clean — silently, and with no way to undo it: unblockDates() has
+ * existed since the beginning and nothing ever recorded which reservation
+ * to cancel. It now tells the manager instead, and this is what they
+ * press.
+ *
+ * The Smoobu reservation id is kept, which is the whole difference
+ * between a block you can lift and one you cannot.
+ */
+router.post('/:id/block', requireRole('admin', 'property_manager'), async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  const { from, to, reason } = req.body;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(from || '')) || !/^\d{4}-\d{2}-\d{2}$/.test(String(to || ''))) {
+    return res.status(400).json({ error: 'from and to must be YYYY-MM-DD' });
+  }
+  if (to < from) return res.status(400).json({ error: 'to is before from' });
+
+  const property = await getOne('SELECT id, smoobu_id, name FROM properties WHERE id = $1', [req.params.id]);
+  if (!property) return res.status(404).json({ error: 'Property not found' });
+
+  let reservation = null;
+  try {
+    const apiKey = await getApiKeyForProperty(property.id);
+    reservation = await smoobu.blockDates(
+      property.smoobu_id, from, to, reason || 'No cleaner available', apiKey
+    );
+  } catch (err) {
+    // Said plainly rather than half-done. A row written here without a
+    // reservation behind it is a block that exists in this app and
+    // nowhere a guest can see.
+    return res.status(502).json({ error: `Smoobu refused the block: ${err.message}` });
+  }
+
+  const row = await getOne(
+    `INSERT INTO blocked_dates (property_id, date, end_date, reason, smoobu_reservation_id)
+     VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+    [property.id, from, to, reason || 'No cleaner available',
+     reservation && (reservation.id || (reservation.data && reservation.data.id)) || null]
+  );
+
+  await notify({
+    event: 'property_blocked',
+    title: `${property.name} is off sale from ${from} to ${to}`,
+    body: reason || 'No cleaner available.',
+    propertyId: property.id,
+    link: '/calendar',
+  });
+
+  res.status(201).json(row);
+});
+
+router.delete('/:id/block/:blockId', requireRole('admin', 'property_manager'), async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  const block = await getOne(
+    'SELECT * FROM blocked_dates WHERE id = $1 AND property_id = $2',
+    [req.params.blockId, req.params.id]
+  );
+  if (!block) return res.status(404).json({ error: 'Block not found' });
+
+  // Blocks written before this feature have no reservation id — they
+  // cannot be lifted from here, and saying so beats pretending.
+  if (!block.smoobu_reservation_id) {
+    return res.status(409).json({
+      error: 'This block was made before the app recorded what to cancel. Remove it in Smoobu.',
+    });
+  }
+
+  try {
+    const apiKey = await getApiKeyForProperty(block.property_id);
+    await smoobu.unblockDates(block.smoobu_reservation_id, apiKey);
+  } catch (err) {
+    return res.status(502).json({ error: `Smoobu refused: ${err.message}` });
+  }
+
+  await run('UPDATE blocked_dates SET released_at = NOW() WHERE id = $1', [block.id]);
+  res.json({ released: true });
 });
 
 module.exports = router;

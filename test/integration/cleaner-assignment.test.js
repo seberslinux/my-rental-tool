@@ -17,15 +17,17 @@ const {
   assignCleanerForCheckout,
   runAssignmentForAllCheckouts,
 } = require('../../src/services/cleaner-assignment');
+const { recent } = require('../../src/services/notify');
 
 /**
  * Cleaner-assignment cron correctness.
  *
  * assignCleanerForCheckout() picks an eligible cleaner for a booking's
- * checkout day, creates a cleaning_jobs row + sends WhatsApp, or blocks
- * the dates in Smoobu when nobody is available. It runs unattended on a
- * schedule (see src/cron/jobs.js) and touches production data — a bug
- * here silently mis-assigns cleaners or wrongly blocks dates.
+ * checkout day, in the manager's preferred order, and creates a job. When
+ * nobody can go it tells the manager and leaves the nights on sale — it
+ * used to block them in Smoobu unasked, with no way to undo it. It runs
+ * unattended on a schedule (see src/cron/jobs.js) and touches production
+ * data.
  */
 
 test.before(() => getApp());
@@ -189,25 +191,21 @@ test('cleaner already booked that day is skipped', async () => {
 
 // --- property constraint --------------------------------------------------
 
-test('property requiring more cleaning hours than the window → nobody assigned, dates blocked', async () => {
+test('a window too short for the property leaves nobody assigned', async () => {
+  // Same as above: no cleaner ends in a message, not a block.
   const admin = await seedUser({ role: 'admin' });
   const property = await seedProperty({ owner: admin });
-  await pool.query(
-    `UPDATE properties SET cleaning_hours_required = 10 WHERE id = $1`,
-    [property.id]
-  );
-  const booking = await seedBooking({ property, smoobu_id: 9, check_in: '2025-06-10', check_out: CHECKOUT });
+  // seedProperty has no such field — the hours are a column, set directly.
+  await pool.query('UPDATE properties SET cleaning_hours_required = 10 WHERE id = $1', [property.id]);
+  const booking = await seedBooking({ property, smoobu_id: 12, check_in: '2025-06-10', check_out: CHECKOUT });
   const cleaner = await seedCleaner();
   await linkCleanerToProperty(cleaner, property);
-  await seedAvailability(cleaner, dayOfWeek(CHECKOUT), '00:00', '23:59');
+  await seedAvailability(cleaner, dayOfWeek(CHECKOUT), '08:00', '20:00');
 
   const jobId = await assignCleanerForCheckout(booking, { check_in: NEXT_CHECKIN });
-  assert.equal(jobId, null);
-  assert.equal((await loadJobs(property.id)).length, 0);
-  assert.equal((await loadBlockedDates(property.id)).length, 1);
+  assert.equal(jobId, null, 'ten hours does not fit a five hour window');
+  assert.equal((await loadBlockedDates(property.id)).length, 0);
 });
-
-// --- multi-cleaner order --------------------------------------------------
 
 test('first eligible cleaner is picked; when first is unavailable, second is used', async () => {
   const admin = await seedUser({ role: 'admin' });
@@ -228,28 +226,36 @@ test('first eligible cleaner is picked; when first is unavailable, second is use
 
 // --- no cleaner available → block dates ---------------------------------
 
-test('nobody available → smoobu.blockDates called + blocked_dates row inserted + NO WhatsApp', async () => {
+test('nobody available → the manager is told, and nothing is blocked', async () => {
+  // This used to take the nights off sale in Smoobu on the manager's
+  // behalf: no message, no record of what to cancel, and unblockDates()
+  // sitting unreachable since the beginning. It never actually fired in
+  // production — one cleaner covering two properties was almost always
+  // free — so the first week she took off would have been the first time
+  // anybody discovered that revenue quietly disappears.
+  //
+  // Blocking is a decision about selling nights. It belongs to whoever
+  // owns the revenue.
   const admin = await seedUser({ role: 'admin' });
-  const property = await seedProperty({ owner: admin, smoobu_id: 5000 });
+  const property = await seedProperty({ owner: admin, smoobu_id: 5000, name: 'Sea View' });
   const booking = await seedBooking({ property, smoobu_id: 11, check_in: '2025-06-10', check_out: CHECKOUT });
   // No cleaners linked at all.
 
   const blockCalls = [];
   const smoobu = require('../../src/services/smoobu');
   const originalBlock = smoobu.blockDates;
-  smoobu.blockDates = async (aptId, from, to, note) => {
-    blockCalls.push({ aptId, from, to, note });
-    return { id: 99 };
-  };
+  smoobu.blockDates = async (...args) => { blockCalls.push(args); return { id: 99 }; };
 
   try {
     const jobId = await assignCleanerForCheckout(booking, { check_in: NEXT_CHECKIN });
     assert.equal(jobId, null);
-    assert.equal(mockWhatsapp.sent.length, 0, 'no cleaner → no WhatsApp');
-    assert.equal(blockCalls.length, 1, 'smoobu.blockDates must be called');
-    assert.equal(blockCalls[0].aptId, 5000);
-    assert.equal(blockCalls[0].from, CHECKOUT);
-    assert.equal((await loadBlockedDates(property.id)).length, 1);
+    assert.equal(blockCalls.length, 0, 'nothing is taken off sale without being asked');
+    assert.equal((await loadBlockedDates(property.id)).length, 0);
+
+    const feed = await recent({});
+    const told = feed.find((n) => n.event === 'job_unstaffed');
+    assert.ok(told, 'the manager hears about it');
+    assert.match(told.title, /Sea View/);
   } finally {
     smoobu.blockDates = originalBlock;
   }
@@ -327,8 +333,16 @@ test('runAssignmentForAllCheckouts: only bookings checking out inside the 30-day
   await runAssignmentForAllCheckouts();
 
   const jobs = await loadJobs(property.id);
-  assert.equal(jobs.length, 1, 'only the in-window booking should get a job');
-  assert.equal(Number(jobs[0].booking_id), 30);
+  const dates = jobs.map((j) => new Date(j.cleaning_date).toISOString().slice(0, 10));
+
+  assert.ok(dates.includes(daysFromNow(5)), 'the in-window checkout is covered');
+  assert.ok(!dates.includes(daysFromNow(45)), 'the one 45 days out is not');
+  assert.ok(!dates.includes(daysFromNow(42)), 'nor its arrival');
+
+  // The arrival in two days also earns a clean, because nothing on record
+  // says this property has ever been cleaned. That is the planner working,
+  // not the window leaking: both of these sit inside it.
+  assert.ok(dates.includes(daysFromNow(2)));
 });
 
 // --- helpers --------------------------------------------------------------

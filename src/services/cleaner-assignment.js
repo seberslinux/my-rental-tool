@@ -1,6 +1,4 @@
 const { getAll, getOne, run } = require('../db/database');
-const smoobu = require('./smoobu');
-const { getApiKeyForProperty } = require('./api-key-resolver');
 // One definition of "blocked" for the whole app — the revenue and
 // analytics paths call the same function.
 const { isBlockedPlatform } = require('./analytics-calc');
@@ -9,18 +7,43 @@ const { isBlockedPlatform } = require('./analytics-calc');
 const { notify } = require('./notify');
 // Who can work when — one definition, shared with the calendar.
 const { loadAvailability, cleanerDayStatus, prettyDate } = require('./availability');
+// What cleaning a property needs, decided apart from who does it.
+const { planCleans, missingFrom } = require('./cleaning-plan');
 
 // Run cleaner assignment for a specific property and checkout date
 // booking: { id, smoobu_id, property_id, check_out, check_in_next, num_guests_next, guest_name_next }
+/**
+ * Send somebody to a property on a day, whatever the reason.
+ *
+ * assignCleanerForCheckout used to be the only way a job was created, and
+ * it took a booking — so a clean could only ever be attached to a
+ * departure. An arrival that needed the property freshened had nowhere to
+ * express itself. This takes a date and a reason instead; the booking is
+ * a detail, and often there isn't one.
+ */
+async function assignCleanForDate({ property, date, reason = 'checkout', bookingId = null, nextBooking = null }) {
+  return assignInternal(property, date, reason, bookingId, nextBooking);
+}
+
+/** The original entry point, kept: a checkout is one kind of clean. */
 async function assignCleanerForCheckout(booking, nextBooking = null) {
   const property = await getOne('SELECT * FROM properties WHERE id = $1', [booking.property_id]);
   if (!property) {
     console.error(`Property ${booking.property_id} not found`);
     return null;
   }
+  return assignInternal(property, ymd(booking.check_out), 'checkout', booking.smoobu_id, nextBooking);
+}
 
-  const checkoutDate = booking.check_out; // YYYY-MM-DD
-  const checkoutTime = '10:00'; // Default checkout time
+async function assignInternal(property, cleaningDate, reason, bookingId, nextBooking = null) {
+  const checkoutDate = cleaningDate;
+
+  // When the cleaner starts depends on why they are going. A turnover
+  // begins when the guests are out; a freshen before an arrival has to be
+  // finished before the next lot walk in.
+  const checkoutTime = reason === 'checkin' ?
+  formatTime(Math.max(0, parseTime(property.check_in_time || '15:00') - (Number(property.cleaning_hours_required) || 2.5) * 60)) :
+  (property.check_out_time || '10:00');
 
   // Determine cleaning window end
   let cleaningEndTime;
@@ -43,10 +66,14 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
   }
 
   // Find eligible cleaners: assigned to this property
+  // In the manager's order, not the database's. Whoever they would
+  // rather send comes first; everybody sits at 0 until somebody says
+  // otherwise, which is the arbitrary order this had before.
   const assignedCleaners = await getAll(
     `SELECT c.* FROM cleaners c
      JOIN cleaner_properties cp ON c.id = cp.cleaner_id
-     WHERE cp.property_id = $1`,
+     WHERE cp.property_id = $1
+     ORDER BY cp.priority ASC, c.name ASC`,
     [property.id]
   );
 
@@ -84,15 +111,16 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
 
     // Assign this cleaner (link via smoobu_id so delete+reinsert sync doesn't break the link)
     const result = await run(
-      `INSERT INTO cleaning_jobs (property_id, cleaner_id, booking_id, cleaning_date, start_time, end_time, status)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending') RETURNING id`,
+      `INSERT INTO cleaning_jobs (property_id, cleaner_id, booking_id, cleaning_date, start_time, end_time, status, reason)
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7) RETURNING id`,
       [
         property.id,
         cleaner.id,
-        booking.smoobu_id,
+        bookingId,
         checkoutDate,
         checkoutTime,
         actualEndTime,
+        reason,
       ]
     );
 
@@ -111,7 +139,9 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
 
     const sent = await notify({
       event: 'job_assigned',
-      title: `Clean ${property.name} — ${prettyDate(checkoutDate)}`,
+      title: reason === 'checkin' ?
+      `Get ${property.name} ready for guests — ${prettyDate(checkoutDate)}` :
+      `Clean ${property.name} — ${prettyDate(checkoutDate)}`,
       body: `From ${checkoutTime}, about ${property.cleaning_hours_required} hours. ` +
       `${property.address ? property.address + '. ' : ''}${nextGuestInfo}`,
       propertyId: property.id, cleanerId: cleaner.id, jobId,
@@ -126,30 +156,56 @@ async function assignCleanerForCheckout(booking, nextBooking = null) {
     return jobId;
   }
 
-  // No cleaner available — block dates in Smoobu
-  console.log(
-    `No cleaner available for ${property.name} on ${checkoutDate}. Blocking dates.`
+  // Nobody can go. Say so; do not act.
+  //
+  // This used to take the nights off sale in Smoobu on the manager's
+  // behalf, silently, with no message and no way to put them back —
+  // unblockDates() has existed since the beginning and nothing recorded
+  // what to cancel. It never actually fired in production, which is the
+  // only reason it was not a problem: one cleaner covering two properties
+  // was almost always free. The first week she took off, revenue would
+  // have quietly disappeared.
+  //
+  // Blocking is a decision about selling nights. That belongs to whoever
+  // owns the revenue, not to a cron.
+  const freeFrom = await nextDaySomebodyIsFree(property.id, checkoutDate);
+  await notify({
+    event: 'job_unstaffed',
+    title: `Nobody can clean ${property.name} on ${prettyDate(checkoutDate)}`,
+    body: freeFrom ?
+    `The first day somebody is free is ${prettyDate(freeFrom)}. Block the nights until then, or ask somebody who is not available.` :
+    'Nobody assigned to this property is free in the next month. Block the nights, or add a cleaner.',
+    propertyId: property.id,
+    link: '/calendar',
+  });
+
+  console.log(`No cleaner available for ${property.name} on ${checkoutDate}. Manager notified.`);
+  return null;
+}
+
+/**
+ * The next day anybody who cleans this property could actually come.
+ *
+ * What the manager needs to decide how far to block. Without it the
+ * message is a problem with no shape — "nobody is free" leaves them
+ * opening the calendar and counting days by hand.
+ */
+async function nextDaySomebodyIsFree(propertyId, fromDate, withinDays = 30) {
+  const cleaners = await getAll(
+    `SELECT c.id FROM cleaners c
+      JOIN cleaner_properties cp ON c.id = cp.cleaner_id
+      WHERE cp.property_id = $1`,
+    [propertyId]
   );
+  if (cleaners.length === 0) return null;
 
-  try {
-    const blockEnd = nextBooking ? nextBooking.check_in : checkoutDate;
-    const apiKey = await getApiKeyForProperty(property.id);
-    await smoobu.blockDates(
-      property.smoobu_id,
-      checkoutDate,
-      blockEnd,
-      'No cleaner available',
-      apiKey
-    );
-
-    await run(
-      'INSERT INTO blocked_dates (property_id, date, reason) VALUES ($1, $2, $3)',
-      [property.id, checkoutDate, 'No cleaner available']
-    );
-  } catch (err) {
-    console.error(`Failed to block dates in Smoobu:`, err.message);
+  const av = await loadAvailability(cleaners.map((c) => c.id));
+  const start = new Date(`${ymd(fromDate)}T00:00:00`);
+  for (let i = 1; i <= withinDays; i++) {
+    const d = new Date(start.getTime() + i * 86400000);
+    const key = ymd(d);
+    if (cleaners.some((c) => cleanerDayStatus(av, c.id, key).available)) return key;
   }
-
   return null;
 }
 
@@ -281,59 +337,62 @@ async function reconcileCleaningJobs() {
 }
 
 // Run assignment for all upcoming checkouts
+/**
+ * Bring every property's cleaning in line with what it needs.
+ *
+ * This used to walk checkouts: any confirmed booking leaving in the next
+ * month without a job got one. That is half the question. It never asked
+ * whether a property would be clean when guests *arrived* — so a flat
+ * standing empty for three weeks got a guest and no cleaner, and one
+ * turned over yesterday could earn a second clean it did not need.
+ *
+ * The plan says what should exist; this makes it so. A property nobody
+ * can clean is reported, not quietly taken off sale.
+ */
 async function runAssignmentForAllCheckouts() {
   const today = new Date().toISOString().split('T')[0];
-  const futureDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
-    .toISOString()
-    .split('T')[0];
+  const horizon = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  // Wider on the near side, because "was it cleaned recently" is a
+  // question about the past.
+  const since = new Date(Date.now() - 60 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-  // Existing jobs are brought back in line first, because the query below
-  // treats "this booking already has a job" as "nothing to do" — see
-  // reconcileCleaningJobs for why that is not the same thing.
+  // Existing jobs first: a booking that moved takes its clean with it,
+  // and a plan drawn over stale jobs would ask for duplicates.
   await reconcileCleaningJobs();
 
-  // Get all bookings with upcoming checkouts that don't have a cleaning job yet
-  const rows = await getAll(
-    `SELECT b.* FROM bookings b
-     WHERE b.check_out >= $1 AND b.check_out <= $2 AND b.status = 'confirmed'
-     AND NOT EXISTS (
-       SELECT 1 FROM cleaning_jobs cj WHERE cj.booking_id = b.smoobu_id
-     )
-     ORDER BY b.check_out ASC`,
-    [today, futureDate]
-  );
+  const properties = await getAll('SELECT * FROM properties');
 
-  // Blocks are not stays, so their end is not a check-out.
-  //
-  // Smoobu writes "Blocked channel auto" rows for nights taken off sale —
-  // maintenance, renovation, or its own turnaround padding — and those were
-  // being scheduled like departures. Five of fourteen jobs in production
-  // were cleans for nights nobody slept in. Worse, they double up: a guest
-  // leaves on the 10th and Smoobu blocks the 10th to the 11th, so the
-  // property earns a correct job on the 10th and a phantom one on the 11th,
-  // and the cleaner is sent twice for one turnover.
-  //
-  // Filtered in JS through isBlockedPlatform rather than with a LIKE in the
-  // SQL, so this shares the single definition of what "blocked" means with
-  // the revenue and analytics paths instead of growing a second one.
-  const bookings = rows.filter((b) => !isBlockedPlatform(b.platform));
-
-  for (const booking of bookings) {
-    // The next arrival at the same property — what decides how much time
-    // the cleaner has. Blocks are skipped here too: a blocked night is not
-    // a guest, and counting one told the cleaner someone was arriving when
-    // the property was simply off sale.
-    const following = await getAll(
+  for (const property of properties) {
+    const stays = await getAll(
       `SELECT * FROM bookings
-       WHERE property_id = $1 AND check_in >= $2 AND status = 'confirmed'
-       ORDER BY check_in ASC LIMIT 5`,
-      [booking.property_id, booking.check_out]
+        WHERE property_id = $1 AND check_out >= $2 AND check_in <= $3`,
+      [property.id, since, horizon]
     );
-    const nextBooking = following.find((b) => !isBlockedPlatform(b.platform)) || null;
+    const jobs = await getAll(
+      `SELECT * FROM cleaning_jobs
+        WHERE property_id = $1 AND cleaning_date >= $2 AND cleaning_date <= $3`,
+      [property.id, since, horizon]
+    );
 
-    await assignCleanerForCheckout(booking, nextBooking);
+    const planned = planCleans({ property, stays, jobs, from: today, to: horizon });
+
+    for (const need of missingFrom(planned, jobs)) {
+      // Who arrives next decides how long the cleaner has. Blocks are not
+      // guests: counting one told a cleaner somebody was arriving when the
+      // property was simply off sale.
+      const nextBooking = stays.
+      filter((b) => b.status === 'confirmed' && !isBlockedPlatform(b.platform)).
+      filter((b) => ymd(b.check_in) >= need.date).
+      sort((a, b) => ymd(a.check_in).localeCompare(ymd(b.check_in)))[0] || null;
+
+      await assignCleanForDate({
+        property, date: need.date, reason: need.reason,
+        bookingId: need.booking_id, nextBooking,
+      });
+    }
   }
 }
+
 
 // Unassign a cleaner from a job and notify them
 // smoobuId: the Smoobu booking ID (cleaning_jobs.booking_id stores smoobu_id)
@@ -391,6 +450,7 @@ function formatTime(minutes) {
 
 module.exports = {
   reconcileCleaningJobs,
+  assignCleanForDate,
   assignCleanerForCheckout,
   runAssignmentForAllCheckouts,
   unassignCleanerFromBooking,
