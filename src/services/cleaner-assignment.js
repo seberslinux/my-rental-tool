@@ -205,11 +205,22 @@ async function nextDaySomebodyIsFree(propertyId, fromDate, withinDays = 30) {
   if (cleaners.length === 0) return null;
 
   const av = await loadAvailability(cleaners.map((c) => c.id));
+  // Days they are already working somewhere else are not days they are
+  // free, so a "first free day" that names one would send the manager to
+  // block the wrong nights.
+  const busy = await getAll(
+    `SELECT cleaner_id, cleaning_date FROM cleaning_jobs
+      WHERE cleaner_id = ANY($1) AND status NOT IN ('declined','cancelled')`,
+    [cleaners.map((c) => c.id)]
+  );
+  const taken = new Set(busy.map((b) => `${b.cleaner_id}|${ymd(b.cleaning_date)}`));
+
   const start = new Date(`${ymd(fromDate)}T00:00:00`);
   for (let i = 1; i <= withinDays; i++) {
     const d = new Date(start.getTime() + i * 86400000);
     const key = ymd(d);
-    if (cleaners.some((c) => cleanerDayStatus(av, c.id, key).available)) return key;
+    if (cleaners.some((c) =>
+    cleanerDayStatus(av, c.id, key).available && !taken.has(`${c.id}|${key}`))) return key;
   }
   return null;
 }

@@ -114,10 +114,20 @@ router.get('/calendar', async (req, res) => {
     const day = dayOf(key);
     cleaners.forEach((c) => {
       const status = cleanerDayStatus(av, c.id, key);
+      // Somebody already cleaning somewhere that day is not free, whatever
+      // their availability says. This counted them as free while
+      // assignment would refuse them — the calendar promised a cleaner
+      // who was already booked at the other property.
+      const committed = jobs.find(
+        (j) => j.cleaner_id === c.id && ymd(j.cleaning_date) === key &&
+        !['declined', 'cancelled'].includes(j.status)
+      );
       const entry = {
-        id: c.id, name: c.name, reason: status.reason,
+        id: c.id, name: c.name,
+        reason: committed ? `already at ${committed.property_name}` : status.reason,
         property_ids: links.filter((l) => l.cleaner_id === c.id).map((l) => l.property_id),
       };
+      if (committed) { day.unavailable.push(entry); return; }
       // Both lists, not just the free one. Somebody who is not available
       // can still be asked — the job is created pending and they answer
       // it — and a manager short of a cleaner needs to see who there is
@@ -173,6 +183,65 @@ router.get('/calendar', async (req, res) => {
   });
 
   res.json({ from, to, days });
+});
+
+/**
+ * One cleaner's actual availability, day by day.
+ *
+ * The weekly schedule is what they usually do. It is not what they are
+ * doing: a person who works Mondays can still have said no to the 24th,
+ * and the old grid on the Cleaners page drew the pattern alone — green
+ * ticks on days somebody had booked off. Anybody trusting it would have
+ * assigned work to a cleaner who had already declined the day.
+ *
+ * Same answer the assignment service and the manager's calendar use, so
+ * a day that reads free here is a day somebody can actually be sent.
+ */
+router.get('/:id/calendar', async (req, res) => {
+  const from = String(req.query.from || '').slice(0, 10);
+  const to = String(req.query.to || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+    return res.status(400).json({ error: 'from and to must be YYYY-MM-DD' });
+  }
+
+  const cleaner = await getOne('SELECT id, name FROM cleaners WHERE id = $1', [req.params.id]);
+  if (!cleaner) return res.status(404).json({ error: 'Cleaner not found' });
+
+  const av = await loadAvailability([cleaner.id]);
+  const jobs = await getAll(
+    `SELECT cj.id, cj.cleaning_date, cj.start_time, cj.end_time, cj.status, cj.reason,
+            p.name AS property_name, p.id AS property_id
+       FROM cleaning_jobs cj JOIN properties p ON p.id = cj.property_id
+      WHERE cj.cleaner_id = $1 AND cj.cleaning_date >= $2 AND cj.cleaning_date <= $3
+        AND cj.status NOT IN ('declined', 'cancelled')
+      ORDER BY cj.cleaning_date`,
+    [cleaner.id, from, to]
+  );
+
+  const bookedOn = new Set(jobs.map((j) => ymd(j.cleaning_date)));
+  const days = {};
+  for (let d = new Date(`${from}T00:00:00`); ymd(d) <= to; d.setDate(d.getDate() + 1)) {
+    const key = ymd(d);
+    const status = cleanerDayStatus(av, cleaner.id, key);
+    days[key] = {
+      // Booked wins: a day they are working is a day they are working,
+      // whatever the pattern says about it.
+      state: bookedOn.has(key) ? 'booked' : status.available ? 'free' : 'off',
+      why: status.reason,
+    };
+  }
+
+  const schedule = await getAll(
+    'SELECT day_of_week, start_time, end_time FROM cleaner_availability WHERE cleaner_id = $1 ORDER BY day_of_week',
+    [cleaner.id]
+  );
+
+  res.json({
+    cleaner,
+    days,
+    schedule,
+    jobs: jobs.map((j) => ({ ...j, cleaning_date: ymd(j.cleaning_date) })),
+  });
 });
 
 // Pay summary for a month

@@ -11,6 +11,7 @@ import {
   ChevronDown } from
 'lucide-react';
 import { RequestCleanerDialog } from './RequestCleanerDialog';
+import { CleanerDetailSheet } from './CleanerDetailSheet';
 
 interface CleanerAvailability {
   day_of_week: number; // 0=Sun, 1=Mon, ..., 6=Sat
@@ -109,6 +110,8 @@ export function CleanersPage() {
   const [editingId, setEditingId] = useState<number | null>(null);
   // Asking somebody to come, starting from the person rather than the day.
   const [askingCleaner, setAskingCleaner] = useState<any | null>(null);
+  // Whose actual availability is being looked at.
+  const [viewingCleaner, setViewingCleaner] = useState<any | null>(null);
   const [askedNote, setAskedNote] = useState('');
   // The cards are tall; the pay summary lives underneath them.
   const [cleanersOpen, setCleanersOpen] = useState(false);
@@ -423,7 +426,7 @@ export function CleanersPage() {
             {cleaners.map((cleaner, ci) =>
           <button
             key={cleaner.id}
-            onClick={() => setCleanersOpen(true)}
+            onClick={() => setViewingCleaner(cleaner)}
             className="w-full flex items-center gap-3 px-4 py-3 border-b border-[#F0F0F0] last:border-0 text-left hover:bg-[#FAFAFA]">
                 <div
               className="w-7 h-7 rounded-full flex items-center justify-center text-white font-semibold text-[13px] shrink-0"
@@ -559,6 +562,13 @@ export function CleanersPage() {
                     disabled={invitingId === cleaner.id}
                     className="px-3 py-1.5 text-[12px] md:text-[13px] font-medium bg-white border border-[#EBEBEB] rounded-[6px] hover:bg-[#F0F0F0] text-[#222222] disabled:opacity-60">
                     {invitingId === cleaner.id ? 'Creating…' : 'Invite'}
+                  </button>
+                  {/* The schedule is what they usually do; this is what
+                      they are actually doing. */}
+                  <button
+                    onClick={() => setViewingCleaner(cleaner)}
+                    className="px-3 py-1.5 text-[12px] md:text-[13px] font-medium bg-white border border-[#EBEBEB] rounded-[6px] hover:bg-[#F0F0F0] text-[#222222]">
+                    Availability
                   </button>
                   <button
                     onClick={() => setAskingCleaner(cleaner)}
@@ -939,6 +949,13 @@ export function CleanersPage() {
 
       {askedNote &&
       <p className="mt-3 text-[13px] text-[#0F6E56]">{askedNote}</p>
+      }
+
+      {viewingCleaner &&
+      <CleanerDetailSheet
+        cleanerId={viewingCleaner.id}
+        cleanerName={viewingCleaner.name}
+        onClose={() => setViewingCleaner(null)} />
       }
 
       {askingCleaner &&
