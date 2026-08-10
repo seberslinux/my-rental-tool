@@ -564,3 +564,45 @@ test('a job she accepted does still take up her day', async () => {
   );
   assert.equal(job.rows.length, 0, 'she is already somewhere else');
 });
+
+// --- a moved booking must not kill the sync ------------------------------
+
+test('a clean moving onto a day the cleaner already has does not throw', async () => {
+  // A booking moved, its clean followed, and the new date was one the
+  // same cleaner already had at that property. There is a unique index
+  // on (property, date, cleaner) for live jobs, so Postgres refused the
+  // move and the exception went out through runAssignmentForAllCheckouts
+  // and killed the entire Smoobu sync. Every sync in production died on
+  // this, and the timestamp never moved, so nothing said so.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const cleaner = await seedCleaner();
+  await linkCleanerToProperty(cleaner, property);
+  for (let d = 0; d < 7; d++) await seedAvailability(cleaner, d, '07:00', '20:00');
+
+  // The booking that will move: checkout slides from the 12th to the 13th.
+  const booking = await seedBooking({
+    property, check_in: '2026-08-09', check_out: '2026-08-13', status: 'confirmed',
+  });
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, booking_id, cleaning_date, start_time, end_time, status)
+     VALUES ($1, $2, $3, '2026-08-12', '10:00', '12:30', 'confirmed')`,
+    [property.id, cleaner.id, booking.smoobu_id]
+  );
+  // And a job already sitting on the 13th for the same cleaner.
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, cleaning_date, start_time, end_time, status)
+     VALUES ($1, $2, '2026-08-13', '10:00', '12:30', 'confirmed')`,
+    [property.id, cleaner.id]
+  );
+
+  await reconcileCleaningJobs();
+
+  const live = await pool.query(
+    `SELECT * FROM cleaning_jobs WHERE property_id = $1 AND cleaning_date = '2026-08-13'
+       AND status IN ('pending','confirmed')`,
+    [property.id]
+  );
+  assert.equal(live.rows.length, 1, 'one clean on the day, not two and not a crash');
+});

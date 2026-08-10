@@ -115,8 +115,12 @@ async function assignInternal(property, cleaningDate, reason, bookingId, nextBoo
 
     // Assign this cleaner (link via smoobu_id so delete+reinsert sync doesn't break the link)
     const result = await run(
+      // Idempotent on purpose. The guard above should make a collision
+      // impossible, and it did not — so the sync must survive one rather
+      // than abort with everything after it unprocessed.
       `INSERT INTO cleaning_jobs (property_id, cleaner_id, booking_id, cleaning_date, start_time, end_time, status, reason)
-       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7) RETURNING id`,
+       VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)
+       ON CONFLICT DO NOTHING RETURNING id`,
       [
         property.id,
         cleaner.id,
@@ -128,6 +132,10 @@ async function assignInternal(property, cleaningDate, reason, bookingId, nextBoo
       ]
     );
 
+    // Nothing came back means the row was already there. Somebody is
+    // cleaning it, which is the outcome we wanted; carry on to the next
+    // property rather than crash on an absent row.
+    if (!result.rows || result.rows.length === 0) continue;
     const jobId = result.rows[0].id;
 
     // Through notify(), not a bare send.
@@ -347,6 +355,36 @@ async function reconcileCleaningJobs() {
     const was = ymd(row.cleaning_date);
     const should = ymd(row.check_out);
     if (was !== should) {
+      /**
+       * Moving a clean onto a day that cleaner already has.
+       *
+       * A booking moves, its clean follows, and the new date can be one
+       * the same cleaner is already booked for at the same property.
+       * There is a unique index on (property, date, cleaner) for live
+       * jobs, so the database refused the move — and the exception went
+       * all the way out through runAssignmentForAllCheckouts and killed
+       * the whole Smoobu sync. Every sync in production was dying on it,
+       * and because the timestamp never moved either, nothing said so.
+       *
+       * The duplicate is the point: the other job is already the clean
+       * this booking needs. So drop the one that would have moved, and
+       * leave the one already sitting on the right day.
+       */
+      const clash = await getOne(
+        `SELECT id FROM cleaning_jobs
+          WHERE property_id = $1 AND cleaning_date = $2 AND cleaner_id = $3
+            AND id != $4 AND status IN ('pending', 'confirmed')`,
+        [row.property_id, should, row.cleaner_id, row.id]
+      );
+      if (clash) {
+        await run(
+          `DELETE FROM cleaning_jobs
+            WHERE id = $1 AND started_at IS NULL AND completed_at IS NULL`,
+          [row.id]
+        );
+        continue;
+      }
+
       const changed = await getAll(
         `UPDATE cleaning_jobs SET cleaning_date = $1
           WHERE id = $2 AND started_at IS NULL AND completed_at IS NULL
