@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { getAll, getOne, run, transaction, inParams } = require('../db/database');
 const smoobu = require('../services/smoobu');
+// The front page, answered once — see that module for what earns a place.
+const { buildToday } = require('../services/today');
+const { loadAvailability, cleanerDayStatus } = require('../services/availability');
 // Whether the channel is switched on at all — see that module for why
 // "off" and "broken" must not look the same.
 const whatsapp = require('../services/whatsapp');
@@ -254,6 +257,57 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
  * Scoped to the properties the caller can see, so a manager with one
  * property does not read about another.
  */
+/**
+ * The front page, answered once.
+ *
+ * What needs somebody, and what is happening, from one pass over the
+ * same rows. The screen used to compute both from four separate places —
+ * a board, an attention list, a property card and a badge — which is how
+ * a cleaner who had accepted a job showed as "No cleaner".
+ */
+router.get('/dashboard/today', scopeProperties, async (req, res) => {
+  const today = new Date().toISOString().slice(0, 10);
+  const since = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+  const horizon = new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10);
+
+  const scoped = req.accessiblePropertyIds;
+  const properties = await getAll(
+    scoped === null ? 'SELECT * FROM properties' : 'SELECT * FROM properties WHERE id = ANY($1)',
+    scoped === null ? [] : [scoped]
+  );
+  if (properties.length === 0) return res.json({ needs: [], board: [] });
+  const ids = properties.map((p) => p.id);
+
+  const [stays, jobs, issues, blocks] = await Promise.all([
+    getAll(
+      `SELECT * FROM bookings WHERE property_id = ANY($1) AND check_out >= $2 AND check_in <= $3`,
+      [ids, since, horizon]
+    ),
+    getAll(
+      `SELECT cj.*, c.name AS cleaner_name FROM cleaning_jobs cj
+         LEFT JOIN cleaners c ON c.id = cj.cleaner_id
+        WHERE cj.property_id = ANY($1) AND cj.cleaning_date >= $2 AND cj.cleaning_date <= $3`,
+      [ids, since, horizon]
+    ),
+    getAll(
+      `SELECT id, property_id, title FROM maintenance_issues
+        WHERE property_id = ANY($1) AND status = 'open' ORDER BY reported_date DESC LIMIT 5`,
+      [ids]
+    ),
+    getAll(
+      `SELECT * FROM blocked_dates WHERE property_id = ANY($1) AND released_at IS NULL`,
+      [ids]
+    ),
+  ]);
+
+  // The same answer assignment uses, rather than a second opinion.
+  const cleanerIds = [...new Set(jobs.map((j) => j.cleaner_id).filter(Boolean))];
+  const av = await loadAvailability(cleanerIds);
+  const isFree = (cleanerId, date) => cleanerDayStatus(av, cleanerId, date).available;
+
+  res.json(buildToday({ properties, stays, jobs, issues, blocks, isFree, today }));
+});
+
 router.get('/notifications', scopeProperties, async (req, res) => {
   const rows = await recentNotifications({
     limit: req.query.limit,

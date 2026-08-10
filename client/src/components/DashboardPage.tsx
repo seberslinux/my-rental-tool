@@ -1,122 +1,42 @@
 import React from 'react';
 import { PropertyStatusCard } from './PropertyStatusCard';
+import { TodayPanel } from './TodayPanel';
 import { X, Check, AlertTriangle, ArrowRight, LogIn, LogOut } from 'lucide-react';
 import {
   kpis,
-  needsAttention,
   currentlyStaying,
   agenda,
   upcomingHolidays,
   forwardOccupancy,
-  todayBoard,
   recentCancellations,
   dismissDashboardItem } from
 '../data/dashboard';
-export function DashboardPage({ onNavigate }: { onNavigate?: (tab: string) => void }) {
+export function DashboardPage({ onNavigate, onGoToDay }: {
+  onNavigate?: (tab: string) => void;
+  /** Open the calendar on a specific day, with its sheet up. */
+  onGoToDay?: (propertyId: number, date: string) => void;
+}) {
   return (
     <div className="p-4 lg:px-8 lg:py-6 bg-[#F7F7F7] min-h-full">
-      {/* Whether each property is clean. The block below has claimed to
-          answer this since it was written and never did. */}
-      <PropertyStatusCard />
+      {/* What needs somebody, and what is happening — both from one
+          call, so they cannot disagree. The board that used to sit here
+          had its own idea of whether a checkout had a cleaner, and the
+          attention list below had a third. */}
+      <TodayPanel onGoToDay={onGoToDay} />
 
-      {/* Today — arrivals and departures.
-          First because this is what makes someone open the app on a
-          weekday morning. */}
-      {todayBoard.length > 0 &&
-      <div className="mb-6">
-        <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
-          Next 48 Hours
-        </div>
-        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] overflow-hidden">
-          {todayBoard.map((item, idx) =>
-          <div
-            key={item.id}
-            className={`flex items-center gap-3 px-4 py-3 ${idx > 0 ? 'border-t border-[#F0F0F0]' : ''}`}>
-            <div className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${item.kind === 'in' ? 'bg-[#00A6991A] text-[#00A699]' : 'bg-[#E8913A1A] text-[#E8913A]'}`}>
-              {item.kind === 'in'
-                ? <LogIn className="w-[14px] h-[14px]" strokeWidth={2.5} />
-                : <LogOut className="w-[14px] h-[14px]" strokeWidth={2.5} />}
-            </div>
-            <div className="flex-1 min-w-0">
-              <div className="text-[15px] font-medium text-[#222222] tracking-[-0.2px] truncate">
-                {item.guest}
-              </div>
-              <div className="text-[13px] text-[#717171] mt-[1px] truncate">
-                {item.kind === 'in' ? 'Check-in' : 'Check-out'} · {item.when} · {item.property} · {item.detail}
-              </div>
-            </div>
-            {/* Only departures carry a readiness state — an unassigned
-                turnover is the failure that actually reaches a guest. */}
-            {item.ready === false &&
-            <span className="flex items-center gap-1 text-[11px] font-semibold text-[#D93900] bg-[#FEF2F2] px-2 py-[3px] rounded-[6px] shrink-0">
-              <AlertTriangle className="w-3 h-3" strokeWidth={2.5} />
-              No cleaner
-            </span>
-            }
-            {item.ready === true &&
-            <span className="text-[11px] font-medium text-[#717171] shrink-0 hidden sm:block">
-              {item.readyLabel}
-            </span>
-            }
-          </div>
-          )}
-        </div>
-      </div>
-      }
+      <PropertyStatusCard />
 
       {/* Desktop: 2-column layout (left: attention + staying, right: the rest). Mobile: single column. */}
       <div className="lg:grid lg:grid-cols-3 lg:gap-6 lg:items-start">
       <div className="lg:col-span-2">
 
-      {/* Needs Attention */}
-      <div className="mb-6">
-        <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
-          Needs Attention
-        </div>
-        {needsAttention.length > 0 ?
-        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] overflow-hidden">
-          {needsAttention.map((item, idx) =>
-          <div
-            key={item.id}
-            className={`flex items-center gap-3 p-3 px-4 min-h-[52px] active:bg-[#F7F7F7] cursor-pointer ${idx > 0 ? 'border-t border-[#F0F0F0]' : ''}`}>
-            
-              <div
-              className={`w-2 h-2 rounded-full shrink-0 ${item.dotColor}`}>
-            </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-[15px] font-medium text-[#222222] tracking-[-0.2px]">
-                  {item.title}
-                </div>
-                <div className="text-[13px] text-[#717171] mt-[1px]">
-                  {item.subtitle}
-                </div>
-              </div>
-              {/* An attention item you can't act on is just a notification.
-                  Each carries the tab where the fix lives. */}
-              {item.action && onNavigate &&
-              <button
-              onClick={() => onNavigate(item.action!.tab)}
-              className="flex items-center gap-1 text-[13px] font-medium text-[#FF385C] hover:underline shrink-0">
-                {item.action.label}
-                <ArrowRight className="w-3.5 h-3.5" strokeWidth={2.5} />
-              </button>
-              }
-              <button
-              onClick={() => dismissDashboardItem(item.key, 'day')}
-              aria-label="Dismiss"
-              className="w-7 h-7 rounded-full flex items-center justify-center text-[#B0B0B0] hover:text-[#222222] hover:bg-[#F7F7F7] shrink-0 transition-colors">
-                <X className="w-4 h-4" strokeWidth={2} />
-              </button>
+      {/* "Needs Attention" stood here — a second opinion on the same
+          question the list at the top answers, built from every job row
+          with no cleaner on it. Those rows are what a deleted cleaner
+          leaves behind, so one removed person produced an item here, a
+          "No cleaner" badge on the board, and a warning in the day
+          sheet: three contradictory lines for one fact. */}
 
-            </div>
-          )}
-        </div> :
-        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] px-4 py-3 flex items-center gap-2 text-[14px] text-[#717171]">
-          <Check className="w-4 h-4 text-[#00A699] shrink-0" strokeWidth={2.5} />
-          You're all caught up — nothing needs attention.
-        </div>
-        }
-      </div>
 
       {/* Currently Staying */}
       <div className="mb-6">
