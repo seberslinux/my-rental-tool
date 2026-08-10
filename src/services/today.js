@@ -22,7 +22,7 @@
  */
 
 const { isBlockedPlatform } = require('./analytics-calc');
-const { needsCleanBefore, ymd } = require('./cleaning-status');
+const { needsCleanBefore, propertyStatus, ymd } = require('./cleaning-status');
 
 /** Whole days from today, for ordering and for saying "tomorrow". */
 function daysOut(date, today) {
@@ -47,7 +47,14 @@ function whenLabel(n) {
  */
 function buildToday({
   properties = [], stays = [], jobs = [], issues = [], blocks = [],
-  isFree = () => true, today, now = null, horizonDays = 2,
+  isFree = () => true, today, now = null,
+  // How far the forward list looks. Seven days is a planning window.
+  horizonDays = 7,
+  // How far "needs you" looks. Two, because that list is about what is
+  // about to go wrong, and a checkout a week out is not that. Widening
+  // the forward list to seven quietly widened this one too, and put
+  // "guests leave in 7 days" beside a property that was dirty already.
+  needsHorizonDays = 2,
 }) {
   const day = ymd(today) || new Date().toISOString().slice(0, 10);
   const properties_ = properties;
@@ -126,7 +133,9 @@ function buildToday({
 
   // A departure with nobody going. The one thing on this page that costs
   // money if it is missed.
-  board.filter((b) => b.kind === 'out' && !b.cleaner).forEach((b) => {
+  board.
+  filter((b) => b.kind === 'out' && !b.cleaner && b.sortAt <= needsHorizonDays).
+  forEach((b) => {
     const gone = departed(b.property_id, b.date);
     add({
       key: `unstaffed:${b.property_id}:${b.date}`,
@@ -145,7 +154,7 @@ function buildToday({
   filter((j) => j.status === 'pending' && j.cleaner_name).
   filter((j) => {
     const n = daysOut(j.cleaning_date, day);
-    return n >= 0 && n <= horizonDays;
+    return n >= 0 && n <= needsHorizonDays;
   }).
   forEach((j) => {
     add({
@@ -224,9 +233,75 @@ function buildToday({
     });
   });
 
+  /**
+   * One row per property, replacing three sections that each answered
+   * a slice of the same question.
+   *
+   * "Today and tomorrow" gave arrivals and departures, "Properties" gave
+   * clean or dirty, and "Currently staying" gave the guest and the
+   * platform — so who is in a property, whether it is clean and who is
+   * cleaning it were three separate readings a page apart, and you had
+   * to hold them together yourself. They are one fact about one
+   * property, so they are one row.
+   */
+  const propertyRows = properties.map((property) => {
+    const mine = (rows) => rows.filter((r) => r.property_id === property.id);
+    const myStays = mine(guestStays);
+    const state = propertyStatus({
+      property, stays: mine(stays), jobs: mine(jobs), today: day,
+    });
+
+    // Who is in it now, and until when.
+    const inHouse = myStays.find(
+      (v) => ymd(v.check_in) <= day && day < ymd(v.check_out)
+    ) || null;
+    // Leaving today counts as still theirs until they have gone.
+    const leavingToday = myStays.find(
+      (v) => ymd(v.check_out) === day && !departed(property.id, v.check_out)
+    ) || null;
+    const guest = inHouse || leavingToday;
+
+    const nextArrival = myStays.
+    filter((v) => ymd(v.check_in) > day).
+    sort((a, b) => ymd(a.check_in).localeCompare(ymd(b.check_in)))[0] || null;
+
+    // The next real clean, and who is on it.
+    const nextJob = mine(jobs).
+    filter((j) => !j.completed_at && ymd(j.cleaning_date) >= day).
+    filter((j) => !['declined', 'cancelled'].includes(j.status)).
+    sort((a, b) => ymd(a.cleaning_date).localeCompare(ymd(b.cleaning_date)))[0] || null;
+
+    return {
+      id: property.id,
+      name: property.name,
+      status: state.status,
+      detail: state.detail,
+      guest: guest ?
+      { name: guest.guest_name || 'Guest', until: ymd(guest.check_out),
+        leaving_today: ymd(guest.check_out) === day } :
+      null,
+      cleaner: nextJob ?
+      { name: nextJob.cleaner_name || null, date: ymd(nextJob.cleaning_date),
+        status: nextJob.status } :
+      null,
+      next_arrival: nextArrival ?
+      { name: nextArrival.guest_name || 'Guest', date: ymd(nextArrival.check_in) } :
+      null,
+      blocks: blocks.
+      filter((b) => b.property_id === property.id && !b.released_at).
+      map((b) => ({
+        id: b.id, from: ymd(b.date), to: ymd(b.end_date), reason: b.reason,
+        can_release: Boolean(b.smoobu_reservation_id),
+      })),
+    };
+  });
+
   return {
     needs: needs.sort((a, b) => a.sortAt - b.sortAt),
-    board: board.sort((a, b) => a.sortAt - b.sortAt || (a.kind === 'out' ? -1 : 1)),
+    properties: propertyRows,
+    // Seven days rather than two: two is not long enough to plan a
+    // cleaner around, which is the main thing this is read for.
+    upcoming: board.sort((a, b) => a.sortAt - b.sortAt || (a.kind === 'out' ? -1 : 1)),
   };
 }
 

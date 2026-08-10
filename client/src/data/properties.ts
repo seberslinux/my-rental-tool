@@ -227,6 +227,20 @@ export async function loadCalendarData(): Promise<void> {
  * rather than showing "none" — absence here means "not known", not
  * "no holiday".
  */
+/**
+ * Any holiday covering a single date.
+ *
+ * Holidays used to get their own list on the home screen, which put a
+ * school term three weeks out beside a property that needed cleaning
+ * this morning. They are context for a date — worth noticing when you
+ * are looking at that week and deciding a price — so they live on the
+ * calendar instead, quietly.
+ */
+export function holidayOn(date: Date): HolidayWindow | null {
+  const key = dateKey(date);
+  return holidays.find((h) => h.start <= key && h.end >= key) || null;
+}
+
 export function holidaysDuring(b: Booking): HolidayWindow[] {
   const from = dateKey(b.checkIn);
   const to = dateKey(b.checkOut);
