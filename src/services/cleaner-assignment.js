@@ -9,6 +9,7 @@ const { notify } = require('./notify');
 const { loadAvailability, cleanerDayStatus, prettyDate } = require('./availability');
 // What cleaning a property needs, decided apart from who does it.
 const { planCleans, missingFrom } = require('./cleaning-plan');
+const { STILL_ON_SQL } = require('./job-life');
 
 // Run cleaner assignment for a specific property and checkout date
 // booking: { id, smoobu_id, property_id, check_out, check_in_next, num_guests_next, guest_name_next }
@@ -89,10 +90,13 @@ async function assignInternal(property, cleaningDate, reason, bookingId, nextBoo
     });
     if (!status.available) continue;
 
-    // Check if cleaner already has a job at the same time
+    // Somebody already committed elsewhere that day cannot take this.
+    // This used to read `status != 'completed'`, which counts a job they
+    // turned down — so declining one morning's work took them out of
+    // every other property for the rest of the day.
     const existingJob = await getOne(
       `SELECT * FROM cleaning_jobs
-       WHERE cleaner_id = $1 AND cleaning_date = $2 AND status != 'completed'`,
+       WHERE cleaner_id = $1 AND cleaning_date = $2 AND ${STILL_ON_SQL}`,
       [cleaner.id, checkoutDate]
     );
 
@@ -441,7 +445,7 @@ async function unassignCleanerFromBooking(smoobuId) {
      FROM cleaning_jobs cj
      JOIN cleaners c ON cj.cleaner_id = c.id
      JOIN properties p ON cj.property_id = p.id
-     WHERE cj.booking_id = $1 AND cj.status != 'completed'`,
+     WHERE cj.booking_id = $1 AND cj.${STILL_ON_SQL}`,
     [smoobuId]
   );
 

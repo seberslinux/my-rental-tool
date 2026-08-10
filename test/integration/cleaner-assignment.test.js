@@ -497,3 +497,70 @@ test('a job already on the right day is not churned', async () => {
   assert.equal(out.moved.length, 0, 'a Date object compared with === would move everything');
   assert.equal(out.removed.length, 0);
 });
+
+// --- a refusal is not a booking -----------------------------------------
+
+test('declining one job does not take the cleaner out of the whole day', async () => {
+  // The guard read `status != 'completed'`, which is true of a declined
+  // job, so saying no to the morning removed them from every other
+  // property that day — and the calendar, which knows better, went on
+  // showing them as free.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const a = await seedProperty({ owner, name: 'Hill Top Lodge' });
+  const b = await seedProperty({ owner, name: 'The loft' });
+  const cleaner = await seedCleaner({ name: 'Francesca' });
+  await linkCleanerToProperty(cleaner, a);
+  await linkCleanerToProperty(cleaner, b);
+  for (let d = 0; d < 7; d++) await seedAvailability(cleaner, d, '07:00', '20:00');
+
+  // She was asked to clean Hill Top on the 12th and said no.
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, cleaning_date, start_time, end_time, status)
+     VALUES ($1, $2, '2026-08-12', '10:00', '12:30', 'declined')`,
+    [a.id, cleaner.id]
+  );
+
+  const booking = await seedBooking({
+    property: b, check_in: '2026-08-09', check_out: '2026-08-12', status: 'confirmed',
+  });
+  await assignCleanerForCheckout(booking);
+
+  const job = await pool.query(
+    `SELECT * FROM cleaning_jobs WHERE property_id = $1 AND cleaning_date = '2026-08-12'`,
+    [b.id]
+  );
+  assert.equal(job.rows.length, 1, 'the other property still gets her');
+  assert.equal(job.rows[0].cleaner_id, cleaner.id);
+});
+
+test('a job she accepted does still take up her day', async () => {
+  // The other half of the same rule: this is the one that must keep
+  // holding, or she gets sent to two properties at once.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const a = await seedProperty({ owner, name: 'Hill Top Lodge' });
+  const b = await seedProperty({ owner, name: 'The loft' });
+  const cleaner = await seedCleaner();
+  await linkCleanerToProperty(cleaner, a);
+  await linkCleanerToProperty(cleaner, b);
+  for (let d = 0; d < 7; d++) await seedAvailability(cleaner, d, '07:00', '20:00');
+
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, cleaning_date, start_time, end_time, status)
+     VALUES ($1, $2, '2026-08-12', '10:00', '12:30', 'confirmed')`,
+    [a.id, cleaner.id]
+  );
+
+  const booking = await seedBooking({
+    property: b, check_in: '2026-08-09', check_out: '2026-08-12', status: 'confirmed',
+  });
+  await assignCleanerForCheckout(booking);
+
+  const job = await pool.query(
+    `SELECT * FROM cleaning_jobs WHERE property_id = $1 AND cleaning_date = '2026-08-12'
+       AND cleaner_id IS NOT NULL`,
+    [b.id]
+  );
+  assert.equal(job.rows.length, 0, 'she is already somewhere else');
+});
