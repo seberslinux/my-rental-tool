@@ -51,6 +51,8 @@ export function App() {
     return () => setUnauthorizedHandler(null);
   }, []);
   const [needsCount, setNeedsCount] = useState<number | null>(0);
+  const [syncedAt, setSyncedAt] = useState<string | null>(null);
+  const [syncFailed, setSyncFailed] = useState(false);
   // /invite/<token> — read once at mount, before anything else decides
   // what to render.
   const [inviteToken, setInviteToken] = useState<string | null>(() => {
@@ -112,6 +114,7 @@ export function App() {
       setPropertyId(properties[0].id);
     }
     setDataLoaded(true);
+    setSyncedAt(lastSyncedAt);
   }, []);
 
   // The unread count on the bell. Polled rather than pushed — a manager
@@ -193,7 +196,18 @@ export function App() {
   // client-side list that TodayPanel replaced but nothing unwired, so
   // the tab badge, the page and the bell each gave a different answer.
   const attentionCount = needsCount === null ? 0 : needsCount;
-  const syncedLabel = lastSyncedAt ? `Synced ${relativeTime(lastSyncedAt)}` : 'Not synced yet';
+  /**
+   * When the last full sync finished, held in state.
+   *
+   * It used to be read straight off the module variable at render time.
+   * Nothing re-rendered after a sync — loadData() ends with
+   * setDataLoaded(true), and it was already true, so React had no reason
+   * to run again — and the header kept the timestamp it drew on load.
+   * Pressing Sync appeared to do nothing at all.
+   */
+  const syncedLabel = syncFailed ?
+  'Sync failed — tap to retry' :
+  syncedAt ? `Synced ${relativeTime(syncedAt)}` : 'Not synced yet';
 
   // Show loading spinner while checking auth or loading data
   if (!authChecked || (isLoggedIn && !dataLoaded)) {
@@ -252,7 +266,12 @@ export function App() {
           onChange: (id) => { setGlobalPropertyFilter(id); setPropertyFilter(id); },
         } : undefined}
         onRefresh={async () => {
-          await fetch('/api/sync/bookings', { method: 'POST', credentials: 'same-origin' });
+          // The result was thrown away, so a sync that failed — no API
+          // key, Smoobu down — was indistinguishable from one that
+          // worked: same unchanged label either way.
+          setSyncFailed(false);
+          const res = await fetch('/api/sync/bookings', { method: 'POST', credentials: 'same-origin' });
+          if (!res.ok) return setSyncFailed(true);
           await loadData();
         }} />
       {activeTab === 'calendar' ?
@@ -275,7 +294,9 @@ export function App() {
           onChange: (id) => { setGlobalPropertyFilter(id); setPropertyFilter(id); },
         } : undefined}
         onRefresh={async () => {
-          await fetch('/api/sync/bookings', { method: 'POST', credentials: 'same-origin' });
+          setSyncFailed(false);
+          const res = await fetch('/api/sync/bookings', { method: 'POST', credentials: 'same-origin' });
+          if (!res.ok) return setSyncFailed(true);
           await loadData();
         }}
         hasNotifications={unread > 0}
