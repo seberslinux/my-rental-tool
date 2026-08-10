@@ -373,11 +373,15 @@ export function MonthCalendar({
                   onDayClick && !isPast ? 'cursor-pointer active:bg-[#EBEBEB] ' : ''}${
                   isToday ? 'bg-[#F7F7F7]' : isClosed ? 'bg-[#F2F2F2]' : ''}`}>
 
-                    {/* A holiday is a property of the week, not an item
-                        on a list: a hairline that reads as a band across
-                        the days it covers, and names itself on hover. */}
+                    {/* One date, one small mark. This was a full-width
+                        band, which was fine for a public holiday and
+                        useless for a school term covering six weeks —
+                        it drew on every day on screen. Only public
+                        holidays reach here now. */}
                     {holiday && !isPast &&
-                    <span className="absolute top-0 left-0 right-0 h-[3px] bg-[#C9A227]" />
+                    <span
+                      aria-label={holiday.name}
+                      className="absolute top-[6px] left-[33px] w-[5px] h-[5px] rounded-full bg-[#C9A227]" />
                     }
 
                     {/* Date on the left, price on the right, both on one

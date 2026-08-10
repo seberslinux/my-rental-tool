@@ -228,17 +228,24 @@ export async function loadCalendarData(): Promise<void> {
  * "no holiday".
  */
 /**
- * Any holiday covering a single date.
+ * A public holiday falling on this date, if any.
  *
- * Holidays used to get their own list on the home screen, which put a
- * school term three weeks out beside a property that needed cleaning
- * this morning. They are context for a date — worth noticing when you
- * are looking at that week and deciding a price — so they live on the
- * calendar instead, quietly.
+ * Deliberately not school holidays. Those are six-week windows — the
+ * German school terms that drive demand here run 42 and 43 days — so a
+ * mark per day inside one lands on every day on screen and stops being
+ * a mark at all. The first version of this drew a band across every row
+ * of August and read as a set of dividers; the giveaway was being asked
+ * what the new lines were.
+ *
+ * A school term is a property of a season, not of a Tuesday, and it has
+ * no business on a day cell. A public holiday genuinely is a fact about
+ * one date, so that is what this returns.
  */
 export function holidayOn(date: Date): HolidayWindow | null {
   const key = dateKey(date);
-  return holidays.find((h) => h.start <= key && h.end >= key) || null;
+  return holidays.find(
+    (h) => h.kind === 'public' && h.start <= key && h.end >= key
+  ) || null;
 }
 
 export function holidaysDuring(b: Booking): HolidayWindow[] {
