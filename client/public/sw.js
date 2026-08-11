@@ -39,3 +39,55 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 });
+
+
+/**
+ * A push arrived.
+ *
+ * On iOS this only ever fires for an app on the Home Screen, which is
+ * why installation had to come first. `tag` collapses repeats: two
+ * messages about the same job should replace one another rather than
+ * stack up on a lock screen.
+ */
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (e) {
+    data = { title: 'My Rentals', body: event.data ? event.data.text() : '' };
+  }
+
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'My Rentals', {
+      body: data.body || '',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      tag: data.tag || undefined,
+      data: { link: data.link || '/' },
+    })
+  );
+});
+
+/**
+ * Tapping it.
+ *
+ * The point of a notification over a message is that it lands you where
+ * you can act on it. If a window is already open, reuse it rather than
+ * pile up another copy of the app.
+ */
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const link = (event.notification.data && event.notification.data.link) || '/';
+
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const client of list) {
+        if ('focus' in client) {
+          client.navigate(link);
+          return client.focus();
+        }
+      }
+      return self.clients.openWindow(link);
+    })
+  );
+});

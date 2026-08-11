@@ -42,6 +42,7 @@
 
 const { getAll, getOne, run } = require('../db/database');
 const whatsapp = require('./whatsapp');
+const push = require('./push');
 const { normalizePhone } = require('./phone');
 
 /**
@@ -148,6 +149,30 @@ async function cleanerRecipients(cleanerId) {
  * phone number on file, so ADMIN_WHATSAPP remains the backstop — without
  * it an "attention" event would be recorded and delivered to nobody.
  */
+/**
+ * Who to push to, as user ids.
+ *
+ * Deliberately not gated on notify_whatsapp. That flag is consent to be
+ * messaged on WhatsApp, and reusing it here would mean somebody who
+ * turned WhatsApp off could never be told anything. Subscribing a device
+ * is the consent for push, and it is revocable from the same switch that
+ * granted it.
+ */
+async function pushRecipientsFor(propertyId) {
+  const rows = propertyId ?
+  await getAll(
+    `SELECT DISTINCT u.id FROM users u
+       LEFT JOIN user_properties up ON up.user_id = u.id
+      WHERE COALESCE(u.active, 1) <> 0
+        AND (u.role = 'admin' OR up.property_id = $1)`,
+    [propertyId]
+  ) :
+  await getAll(
+    `SELECT id FROM users WHERE COALESCE(active, 1) <> 0 AND role = 'admin'`
+  );
+  return rows.map((r) => r.id);
+}
+
 async function recipientsFor(propertyId) {
   const numbers = new Set();
 
@@ -231,6 +256,41 @@ async function notify({
   let delivery = 'skipped';
   let deliveryError = null;
   let channel = 'in_app';
+
+  /**
+   * Push, to whoever this is for.
+   *
+   * Independent of the WhatsApp decision below on purpose. WhatsApp is
+   * opt-in per person and gated by an allowed list we do not control —
+   * production has been refusing job assignments with "Recipient phone
+   * number not in allowed list" while the cleaner heard nothing. A
+   * device that has asked to be told is told, whatever WhatsApp is doing.
+   *
+   * Never allowed to throw: a notification that cannot be delivered must
+   * still be recorded, because the feed is the record.
+   */
+  let pushed = 0;
+  if (push.isConfigured()) {
+    try {
+      const base = (process.env.APP_URL || '').replace(/\/$/, '');
+      const targets = audience === 'cleaner' ?
+      [{ cleanerId }] :
+      (await pushRecipientsFor(propertyId)).map((id) => ({ userId: id }));
+
+      for (const who of targets) {
+        if (!who.cleanerId && !who.userId) continue;
+        const result = await push.sendTo(who, {
+          title,
+          body,
+          link: base && link ? `${base}${link}` : link || '/',
+          tag: jobId ? `job-${jobId}` : event,
+        });
+        pushed += result.sent;
+      }
+    } catch (err) {
+      console.error('Push delivery failed:', err.message);
+    }
+  }
 
   // Switched off is not the same as broken.
   //
@@ -369,4 +429,4 @@ async function recentForCleaner(cleanerId, { limit = 50 } = {}) {
   );
 }
 
-module.exports = { notify, recent, recentForCleaner, recipientsFor, EVENTS };
+module.exports = { notify, recent, recentForCleaner, recipientsFor, pushRecipientsFor, EVENTS };
