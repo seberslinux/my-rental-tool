@@ -1,4 +1,5 @@
 import React from 'react';
+import { NotificationSetting } from './NotificationSetting';
 import {
   ChevronRight,
   Home,
@@ -24,6 +25,15 @@ export function MorePage({ onNavigate, onLogout }: MorePageProps) {
   };
   return (
     <div className="p-4 bg-[#F7F7F7] min-h-full">
+      {/* Being told, before anything else here. It is the one setting
+          that changes whether the app reaches you when it is shut. */}
+      <div className="mb-6">
+        <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
+          Alerts
+        </div>
+        <NotificationSetting />
+      </div>
+
       {/* Manage Section */}
       <div className="mb-6">
         <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { MonthCalendar } from './MonthCalendar';
 import { Booking, bookings as sharedBookings, properties as sharedProperties, loadCleanerCalendarData } from '../data/properties';
+import { NotificationSetting } from './NotificationSetting';
 import {
   Home, LogOut, MapPin, Clock, Users, Check, X, Play, Square,
   ClipboardList, CalendarDays, CalendarRange, Wrench, ShoppingCart, MessageSquare,
@@ -661,7 +662,15 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
   };
 
   const Availability = () =>
-  <div className="bg-white rounded-[12px] border border-[#EBEBEB] p-4">
+  <>
+    {/* The cleaner's half of this. Being told about a job is the point
+        of the portal; the availability they set is worth nothing if the
+        offer never reaches them. */}
+    <div className="mb-3">
+      <NotificationSetting />
+    </div>
+
+    <div className="bg-white rounded-[12px] border border-[#EBEBEB] p-4">
       <p className="text-[15px] font-semibold mb-1">The days you can work</p>
       <p className="text-[13px] text-[#717171] mb-4">
         Jobs are only offered to you on these days.
@@ -764,7 +773,8 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
       {resetNote &&
     <p className="mt-3 text-[13px] text-[#0F6E56]">{resetNote}</p>
     }
-    </div>;
+    </div>
+  </>;
 
   // --- checklist ---------------------------------------------------------
 
