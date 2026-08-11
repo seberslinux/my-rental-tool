@@ -22,6 +22,7 @@ import { UserX, UserCheck, TriangleAlert, Check } from 'lucide-react';
 import { properties, bookings, Booking, loadCalendarData, cleaningDays, loadCleaningDays, dateKey } from './data/properties';
 import { loadDashboardData, setPropertyFilter, setOnDataChanged, lastSyncedAt } from './data/dashboard';
 import { setUnauthorizedHandler } from './data/session';
+import { AddToHomeScreen } from './components/AddToHomeScreen';
 import { relativeTime } from './data/time';
 import { loadAnalyticsData } from './data/analytics';
 
@@ -420,6 +421,7 @@ export function App() {
       </main>
 
       <TabBar activeTab={activeTab} onTabChange={setActiveTab} homeBadge={attentionCount} />
+      <AddToHomeScreen />
 
       {activeTab === 'calendar' && pickedDay &&
       <CleaningDaySheet
