@@ -102,6 +102,7 @@ function buildApp({
   app.use('/api', restrictCleanerSessions);
 
   app.use('/api', require('./routes/api'));
+  app.use('/api/push', require('./routes/push'));
   app.use('/api/properties', require('./routes/properties'));
   app.use('/api/cleaners', require('./routes/cleaners'));
   app.use('/api/pricing', require('./routes/pricing'));
