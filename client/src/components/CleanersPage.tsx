@@ -424,10 +424,11 @@ export function CleanersPage() {
         {!cleanersOpen &&
         <div className="bg-white rounded-[12px] border border-[#EBEBEB] overflow-hidden mb-2">
             {cleaners.map((cleaner, ci) =>
-          <button
-            key={cleaner.id}
-            onClick={() => setViewingCleaner(cleaner)}
-            className="w-full flex items-center gap-3 px-4 py-3 border-b border-[#F0F0F0] last:border-0 text-left hover:bg-[#FAFAFA]">
+          <div key={cleaner.id} className="border-b border-[#F0F0F0] last:border-0">
+              <div className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#FAFAFA]">
+                <button
+              onClick={() => setViewingCleaner(cleaner)}
+              className="flex-1 min-w-0 flex items-center gap-3 text-left">
                 <div
               className="w-7 h-7 rounded-full flex items-center justify-center text-white font-semibold text-[13px] shrink-0"
               style={{ backgroundColor: COLORS[ci % COLORS.length] }}>
@@ -439,7 +440,54 @@ export function CleanersPage() {
               'No properties' :
               cleaner.properties.map((p) => p.name).join(', ')}
                 </span>
-              </button>
+                </button>
+
+                {/* Inviting somebody is the one thing you do to a cleaner
+                    who is not set up yet, and it used to be a tap away.
+                    Making this row open their calendar left it behind a
+                    section chevron that looks nothing like an invitation,
+                    where it could be looked for twice and not found. */}
+                <button
+              onClick={() => handleInvite(cleaner.id)}
+              disabled={invitingId === cleaner.id}
+              className="shrink-0 px-2.5 py-1.5 text-[12px] font-medium bg-white border border-[#EBEBEB] rounded-[6px] hover:bg-[#F0F0F0] text-[#222222] disabled:opacity-60">
+                  {invitingId === cleaner.id ? 'Creating…' : 'Invite'}
+                </button>
+              </div>
+
+              {/* The link, under the row that issued it. Rendered here as
+                  well as on the card, because a button whose result is
+                  only visible somewhere else is a button that looks
+                  broken. */}
+              {invite && invite.cleanerId === cleaner.id &&
+            <div className={`mx-4 mb-3 p-3 rounded-[8px] border ${
+            invite.sent ? 'bg-[#F0FDF4] border-[#86EFAC]' : 'bg-[#FFFBEB] border-[#FCD34D]'}`}>
+                  {invite.sent ?
+              <p className="text-[12px] font-medium text-[#166534]">
+                      Sent to {cleaner.name} on WhatsApp. The link works once, for {invite.days} days.
+                    </p> :
+
+              <>
+                      <p className="text-[12px] text-[#92400E] mb-1.5">
+                        Send this to {cleaner.name} yourself. It works once, for {invite.days} days.
+                      </p>
+                      <div className="flex gap-2">
+                        <input
+                    readOnly
+                    value={invite.url}
+                    onFocus={(e) => e.currentTarget.select()}
+                    className="flex-1 min-w-0 px-2 py-1.5 text-[12px] bg-white border border-[#FCD34D] rounded-[6px] text-[#222222]" />
+                        <button
+                    onClick={() => navigator.clipboard?.writeText(invite.url)}
+                    className="shrink-0 px-2.5 py-1.5 text-[12px] font-medium bg-white border border-[#FCD34D] rounded-[6px] text-[#92400E]">
+                          Copy
+                        </button>
+                      </div>
+                    </>
+              }
+                </div>
+            }
+            </div>
           )}
             {cleaners.length === 0 &&
           <p className="px-4 py-3 text-[13px] text-[#717171]">Nobody yet.</p>
