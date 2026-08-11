@@ -351,6 +351,19 @@ test('a cleaner session cannot read the cleaning calendar', async () => {
  */
 
 const { recentForCleaner, recent, notify } = require('../../src/services/notify');
+/**
+ * A day that is still ahead, whenever this runs.
+ *
+ * These tests used to post 2026-08-10, which was today when they were
+ * written. The assign route refuses a date in the past — "That day has
+ * already passed" — so at midnight four of them started failing with a
+ * 400 and nothing about the code had changed. A test that only passes on
+ * the day it was written is a test with an expiry date on it.
+ */
+const soon = (days = 1) =>
+new Date(Date.now() + days * 86400000).toISOString().slice(0, 10);
+
+
 
 test('a cleaner can be sent on a day with no booking at all', async () => {
   await resetDb();
@@ -508,7 +521,7 @@ test('asking the same person for the same day twice is refused', async () => {
   const agent = await getAgent();
   await loginAs(agent, owner);
   const body = {
-    cleaner_id: cleaner.id, property_id: property.id, cleaning_date: '2026-08-10',
+    cleaner_id: cleaner.id, property_id: property.id, cleaning_date: soon(),
   };
   await agent.post('/api/cleaners/jobs/assign').send(body).expect(201);
   const second = await agent.post('/api/cleaners/jobs/assign').send(body).expect(409);
@@ -516,7 +529,7 @@ test('asking the same person for the same day twice is refused', async () => {
 
   const { rows } = await pool.query(
     'SELECT count(*)::int n FROM cleaning_jobs WHERE property_id = $1 AND cleaning_date = $2',
-    [property.id, '2026-08-10']
+    [property.id, soon()]
   );
   assert.equal(rows[0].n, 1);
 });
@@ -531,19 +544,19 @@ test('a job with nobody on it is filled rather than duplicated', async () => {
   const cleaner = await seedCleaner();
   await pool.query(
     `INSERT INTO cleaning_jobs (property_id, cleaner_id, cleaning_date, start_time, end_time, status)
-     VALUES ($1, NULL, '2026-08-10', '10:00', '12:30', 'pending')`,
-    [property.id]
+     VALUES ($1, NULL, $2, '10:00', '12:30', 'pending')`,
+    [property.id, soon()]
   );
 
   const agent = await getAgent();
   await loginAs(agent, owner);
   await agent.post('/api/cleaners/jobs/assign').send({
-    cleaner_id: cleaner.id, property_id: property.id, cleaning_date: '2026-08-10',
+    cleaner_id: cleaner.id, property_id: property.id, cleaning_date: soon(),
   }).expect(201);
 
   const { rows } = await pool.query(
     'SELECT cleaner_id FROM cleaning_jobs WHERE property_id = $1 AND cleaning_date = $2',
-    [property.id, '2026-08-10']
+    [property.id, soon()]
   );
   assert.equal(rows.length, 1, 'the hole was filled, not doubled');
   assert.equal(rows[0].cleaner_id, cleaner.id);
@@ -561,15 +574,15 @@ test('a second, different cleaner on the same day is still allowed', async () =>
   const agent = await getAgent();
   await loginAs(agent, owner);
   await agent.post('/api/cleaners/jobs/assign').send({
-    cleaner_id: one.id, property_id: property.id, cleaning_date: '2026-08-10',
+    cleaner_id: one.id, property_id: property.id, cleaning_date: soon(),
   }).expect(201);
   await agent.post('/api/cleaners/jobs/assign').send({
-    cleaner_id: two.id, property_id: property.id, cleaning_date: '2026-08-10', reason: 'checkin',
+    cleaner_id: two.id, property_id: property.id, cleaning_date: soon(), reason: 'checkin',
   }).expect(201);
 
   const { rows } = await pool.query(
     'SELECT count(*)::int n FROM cleaning_jobs WHERE property_id = $1 AND cleaning_date = $2',
-    [property.id, '2026-08-10']
+    [property.id, soon()]
   );
   assert.equal(rows[0].n, 2);
 });
@@ -588,7 +601,7 @@ test('a declined job does not block asking somebody again', async () => {
   const agent = await getAgent();
   await loginAs(agent, owner);
   await agent.post('/api/cleaners/jobs/assign').send({
-    cleaner_id: cleaner.id, property_id: property.id, cleaning_date: '2026-08-10',
+    cleaner_id: cleaner.id, property_id: property.id, cleaning_date: soon(),
   }).expect(201);
 });
 
