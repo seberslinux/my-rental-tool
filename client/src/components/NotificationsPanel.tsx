@@ -38,7 +38,20 @@ const ago = (iso: string) => {
   return days === 1 ? 'yesterday' : `${days}d ago`;
 };
 
-export function NotificationsPanel({ onClose, onRead }: {onClose: () => void;onRead: () => void;}) {
+export function NotificationsPanel({ onClose, onRead, onOpenLink }: {
+  onClose: () => void;
+  onRead: () => void;
+  /**
+   * Take me to the thing this is about.
+   *
+   * Every row has carried a `link` since the feed was written and
+   * nothing here ever read it, so the panel was somewhere to be told
+   * things and not somewhere to act on them — the one message that
+   * mattered ended with you closing the panel and going to find the
+   * screen yourself.
+   */
+  onOpenLink?: (link: string) => void;
+}) {
   const [items, setItems] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(true);
   const [whatsapp, setWhatsapp] = useState(false);
@@ -250,7 +263,9 @@ export function NotificationsPanel({ onClose, onRead }: {onClose: () => void;onR
               <AlertCircle className="w-4 h-4 text-[#C13515] shrink-0 mt-0.5" /> :
               <Check className="w-4 h-4 text-[#0F6E56] shrink-0 mt-0.5" />
               }
-                <div className="min-w-0 flex-1">
+                <div
+                className={`min-w-0 flex-1 ${n.link && onOpenLink ? 'cursor-pointer' : ''}`}
+                onClick={n.link && onOpenLink ? () => { onOpenLink(n.link as string); onClose(); } : undefined}>
                   <p className="text-[13px] font-medium">{n.title}</p>
                   {n.body && <p className="text-[13px] text-[#717171] mt-0.5">{n.body}</p>}
                   <p className="text-[11px] text-[#B0B0B0] mt-1 tabular-nums">

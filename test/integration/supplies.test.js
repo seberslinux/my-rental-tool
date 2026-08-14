@@ -43,13 +43,17 @@ test('a cleaner asking for supplies tells the owner', async () => {
     .expect(201);
 
   const { rows } = await pool.query(
-    `SELECT event, severity, audience, title, body FROM notifications WHERE property_id = $1`,
+    `SELECT event, severity, audience, title, body, link FROM notifications WHERE property_id = $1`,
     [property.id]
   );
   assert.equal(rows.length, 1, 'exactly one, and it exists at all');
   assert.equal(rows[0].event, 'supplies_needed');
   assert.equal(rows[0].severity, 'attention', 'it is meant to reach a phone, not just the feed');
   assert.equal(rows[0].audience, 'owner');
+  // A link that points at a screen. It pointed at '/' before, which is
+  // the URL the app is most likely already on — and navigating to where
+  // you already are looks exactly like a dead link.
+  assert.equal(rows[0].link, '/reported');
   assert.match(rows[0].title, new RegExp(cleaner.name));
   assert.match(rows[0].title, /Laundry liquid/);
   assert.match(rows[0].body, /The big one/);

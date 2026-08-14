@@ -608,7 +608,9 @@ router.post('/maintenance', requireCleaner, async (req, res) => {
     title: `${req.cleaner.name} reported: ${title}`,
     body: [property && property.name, description].filter(Boolean).join(' · '),
     propertyId: property_id, cleanerId: req.cleaner.id,
-    link: '/more',
+    // Was /more, which is the menu the page sits behind rather than the
+    // page — and before there was a router it made no difference anyway.
+    link: '/reported',
   });
 
   res.status(201).json({ id: result.rows[0].id });
@@ -740,7 +742,11 @@ router.post('/shopping-list', async (req, res) => {
       title: `${cleaner.name} needs ${item_name}${property ? ` at ${property.name}` : ''}`,
       body: [amount, notes].filter(Boolean).join(' · '),
       propertyId: property_id || null, cleanerId: cleaner.id,
-      link: '/',
+      // The page that lists it, rather than the front page. Home carries
+      // outstanding supplies too, but a link there is the URL the app is
+      // most likely already sitting on — and navigating to where you
+      // already are is indistinguishable from a dead link.
+      link: '/reported',
     });
   }
 
