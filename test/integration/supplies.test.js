@@ -167,6 +167,58 @@ test('you cannot tick off an item at a property you cannot see', async () => {
   assert.equal(rows[0].status, 'needed', 'untouched');
 });
 
+// --- the whole list, bought ones included --------------------------------
+
+test('the full list keeps what has been bought', async () => {
+  // The front page carries what is outstanding. This is the other
+  // question — did anybody actually get it — and the card cannot answer
+  // it, because a bought item leaves the card entirely.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner, name: 'Hill Top Lodge' });
+  const { cleaner, agent: cleanerAgent } = await signedInCleaner();
+  await linkCleanerToProperty(cleaner, property);
+  await cleanerAgent.post('/api/cleaner-portal/shopping-list')
+    .send({ property_id: property.id, item_name: 'Laundry liquid' }).expect(201);
+  await cleanerAgent.post('/api/cleaner-portal/shopping-list')
+    .send({ property_id: property.id, item_name: 'Bin liners' }).expect(201);
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+
+  const liquid = (await agent.get('/api/supplies').expect(200)).body
+    .find((s) => s.item_name === 'Laundry liquid');
+  await agent.patch(`/api/supplies/${liquid.id}/purchased`).expect(200);
+
+  const all = (await agent.get('/api/supplies').expect(200)).body;
+  assert.equal(all.length, 2, 'both still listed');
+  const byName = Object.fromEntries(all.map((s) => [s.item_name, s]));
+  assert.equal(byName['Laundry liquid'].status, 'purchased');
+  assert.equal(byName['Bin liners'].status, 'needed');
+  assert.equal(byName['Bin liners'].property, 'Hill Top Lodge', 'named, for a list across properties');
+  assert.equal(byName['Bin liners'].added_by_name, cleaner.name);
+
+  // …while the front page carries only what is left to do.
+  const today = await agent.get('/api/dashboard/today').expect(200);
+  assert.deepEqual(today.body.supplies.map((s) => s.item), ['Bin liners']);
+});
+
+test('the full list is scoped to your own properties', async () => {
+  await resetDb();
+  const mine = await seedUser({ role: 'property_manager' });
+  const theirs = await seedUser({ role: 'property_manager' });
+  await seedProperty({ owner: mine });
+  const theirProperty = await seedProperty({ owner: theirs });
+  const { cleaner, agent: cleanerAgent } = await signedInCleaner();
+  await linkCleanerToProperty(cleaner, theirProperty);
+  await cleanerAgent.post('/api/cleaner-portal/shopping-list')
+    .send({ property_id: theirProperty.id, item_name: 'Not yours' }).expect(201);
+
+  const agent = await getAgent();
+  await loginAs(agent, mine);
+  assert.deepEqual((await agent.get('/api/supplies').expect(200)).body, []);
+});
+
 test('an item that is not on the list at all is a 404', async () => {
   await resetDb();
   const owner = await seedUser({ role: 'admin' });

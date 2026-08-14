@@ -353,6 +353,37 @@ router.get('/dashboard/today', scopeProperties, async (req, res) => {
 });
 
 /**
+ * The whole list, bought ones included.
+ *
+ * The front page carries what is outstanding, because that is what you
+ * can still act on. This is the other question — "what has been asked
+ * for, and did anybody get it" — and it needs the history the card
+ * deliberately leaves out.
+ *
+ * The join on properties is inner, which drops rows with no property.
+ * That is the same call the front page makes: scoping cannot prove such
+ * a row is yours, so it fails closed rather than showing it to everyone.
+ */
+router.get('/supplies', scopeProperties, async (req, res) => {
+  const scoped = req.accessiblePropertyIds;
+  if (scoped !== null && scoped.length === 0) return res.json([]);
+
+  const rows = await getAll(
+    `SELECT s.id, s.property_id, p.name AS property, s.item_name, s.quantity, s.unit,
+            s.notes, s.status, s.created_at, s.purchased_at,
+            COALESCE(u.name, c.name) AS added_by_name
+       FROM shopping_list s
+       JOIN properties p ON p.id = s.property_id
+       LEFT JOIN users u ON u.id = s.added_by
+       LEFT JOIN cleaners c ON c.id = s.added_by_cleaner_id
+      ${scoped === null ? '' : 'WHERE s.property_id = ANY($1)'}
+      ORDER BY s.created_at DESC`,
+    scoped === null ? [] : [scoped]
+  );
+  res.json(rows);
+});
+
+/**
  * Bought it.
  *
  * The cleaner portal has had a route for this since the list existed, but

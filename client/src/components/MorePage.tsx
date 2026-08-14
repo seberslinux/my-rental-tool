@@ -69,12 +69,18 @@ export function MorePage({ onNavigate, onLogout }: MorePageProps) {
             
           </div>
 
-          <div className="flex items-center gap-3 p-3 px-4 min-h-[48px] active:bg-[#F7F7F7] cursor-pointer border-t border-[#F0F0F0]">
+          {/* Was "Maintenance", and did nothing when tapped. The page it
+              now opens covers faults, notes and supplies — everything a
+              cleaner has said — so it is named for that rather than for
+              the one table it started as. */}
+          <div
+            className="flex items-center gap-3 p-3 px-4 min-h-[48px] active:bg-[#F7F7F7] cursor-pointer border-t border-[#F0F0F0]"
+            onClick={() => onNavigate && onNavigate('reported')}>
             <div className="w-[30px] h-[30px] rounded-[7px] bg-[#E8913A] flex items-center justify-center shrink-0 text-white">
               <Wrench className="w-4 h-4" strokeWidth={2} />
             </div>
             <div className="flex-1 text-[16px] font-normal text-[#222222]">
-              Maintenance
+              Reported
             </div>
             <ChevronRight
               className="w-3.5 h-3.5 text-[#B0B0B0] shrink-0"

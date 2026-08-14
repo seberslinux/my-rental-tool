@@ -85,10 +85,12 @@ const cleanerLabel = (c: UpcomingRow['cleaner']) => {
   return `${c.name} · accepted`;
 };
 
-export function TodayPanel({ onGoToDay, onNeedsChange }: {
+export function TodayPanel({ onGoToDay, onNeedsChange, onNavigate }: {
   onGoToDay?: (propertyId: number, date: string) => void;
   /** How many things need somebody, for the tab badge. */
   onNeedsChange?: (count: number | null) => void;
+  /** Somewhere to send a row that is not about a particular day. */
+  onNavigate?: (tab: string) => void;
 }) {
   const [needs, setNeeds] = useState<Need[]>([]);
   const [supplies, setSupplies] = useState<Supply[]>([]);
@@ -141,6 +143,13 @@ export function TodayPanel({ onGoToDay, onNeedsChange }: {
         return;
       }
       load();
+      return;
+    }
+    // A reported fault is not about a day, so it has no date and fell
+    // through both branches below — the View button on every issue row
+    // did nothing at all. It goes to the page that lists them.
+    if (n.action.kind === 'issue') {
+      if (onNavigate) onNavigate('reported');
       return;
     }
     if (n.action.property_id && n.action.date && onGoToDay) {

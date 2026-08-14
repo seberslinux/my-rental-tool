@@ -33,7 +33,7 @@ export function DashboardPage({ onNavigate, onGoToDay, onNeedsChange }: {
   return (
     <div className="p-4 lg:px-8 lg:py-6 bg-[#F7F7F7] min-h-full">
       <div className="lg:max-w-[860px]">
-        <TodayPanel onGoToDay={onGoToDay} onNeedsChange={onNeedsChange} />
+        <TodayPanel onGoToDay={onGoToDay} onNeedsChange={onNeedsChange} onNavigate={onNavigate} />
       </div>
     </div>);
 

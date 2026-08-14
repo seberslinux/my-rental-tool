@@ -16,6 +16,7 @@ import { NotificationsPanel } from './components/NotificationsPanel';
 import { CleanersPage } from './components/CleanersPage';
 import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
+import { ReportedPage } from './components/ReportedPage';
 import { SmoobuConnectionPage } from './components/SmoobuConnectionPage';
 import { CleaningDaySheet } from './components/CleaningDaySheet';
 import { UserX, UserCheck, TriangleAlert, Check } from 'lucide-react';
@@ -184,6 +185,8 @@ export function App() {
         return 'Users';
       case 'smoobu':
         return 'Smoobu';
+      case 'reported':
+        return 'Reported';
       case 'more':
         return 'More';
       default:
@@ -415,6 +418,7 @@ export function App() {
         {activeTab === 'analytics' && <AnalyticsPage propertyId={globalPropertyFilter} />}
         {activeTab === 'properties' && <PropertiesPage />}
         {activeTab === 'users' && <UsersPage />}
+        {activeTab === 'reported' && <ReportedPage />}
         {activeTab === 'smoobu' && <SmoobuConnectionPage isAdmin={userRole === 'admin'} />}
         {activeTab === 'more' && <MorePage onNavigate={setActiveTab} onLogout={() => { setIsLoggedIn(false); setDataLoaded(false); }} />}
         </div>
