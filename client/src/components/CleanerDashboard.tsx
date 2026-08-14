@@ -603,7 +603,9 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
             disabled={busy === job.id}
             onClick={() => act(job.id, () => post(`/api/cleaner-portal/jobs/${job.id}/finish`))}
             className="flex items-center gap-1.5 px-3 py-2 rounded-[8px] bg-[#0F6E56] text-white text-[13px] font-semibold disabled:opacity-60">
-              <Square className="w-4 h-4" /> Finished
+              {/* Paired with "Start cleaning" above it. On its own,
+                  "Finished" reads as a label saying the job already is. */}
+              <Square className="w-4 h-4" /> Finish cleaning
             </button>
           }
 
@@ -1341,7 +1343,10 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
                       'border-[#EBEBEB] text-[#717171]' :
                       'border-[#222222] text-[#222222]'}`
                       }>
-                          {done ? 'Done' : markingProp === p.id ? 'Saving…' : 'Mark cleaned'}
+                          {/* The disabled one may state a fact, because
+                              a greyed button is plainly not a thing to
+                              press. The live one is an instruction. */}
+                          {done ? 'Cleaned' : markingProp === p.id ? 'Saving…' : 'Mark as cleaned'}
                         </button>
                       </div>);
 

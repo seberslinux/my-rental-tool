@@ -147,13 +147,17 @@ export function PropertyRows({
                   <div className="text-[13px] text-[#717171] truncate">{summarise(r)}</div>
                 </div>
 
-                {/* The manager's own eyes, where it changes the answer. */}
+                {/* The manager's own eyes, where it changes the answer.
+                    Said as an instruction — "It is clean" beside a row
+                    already labelled with its state reads as a second
+                    opinion on that state rather than as the button that
+                    changes it. */}
                 {r.status !== 'occupied' && r.status !== 'cleaning' &&
                 <button
                   disabled={busy === r.id}
                   onClick={() => mark(r.id, r.status === 'ready' || r.status === 'stale')}
                   className="shrink-0 px-2.5 py-1.5 text-[12px] font-semibold rounded-[6px] border border-[#DDDDDD] hover:bg-[#F7F7F7] disabled:opacity-50">
-                    {r.status === 'ready' || r.status === 'stale' ? 'Not clean' : 'It is clean'}
+                    {r.status === 'ready' || r.status === 'stale' ? 'Mark as dirty' : 'Mark as clean'}
                   </button>
                 }
 

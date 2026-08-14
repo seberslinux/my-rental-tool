@@ -257,7 +257,9 @@ export function TodayPanel({ onGoToDay, onNeedsChange, onNavigate }: {
               disabled={busy === `supply:${s.id}`}
               onClick={() => bought(s)}
               className="shrink-0 text-[13px] font-semibold text-[#FF385C] disabled:opacity-50">
-                  {busy === `supply:${s.id}` ? 'Saving…' : 'Bought'}
+                  {/* An instruction, not a state. "Bought" beside an
+                      item reads as a label saying it already has been. */}
+                  {busy === `supply:${s.id}` ? 'Saving…' : 'Mark as bought'}
                 </button>
               </div>
           )}

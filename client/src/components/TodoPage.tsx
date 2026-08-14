@@ -77,6 +77,24 @@ const pretty = (d: string) => {
   return parsed.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
 };
 
+/**
+ * What closing one is called, said as an instruction.
+ *
+ * "Bought" sitting beside an item reads as a label saying it already has
+ * been — the row states a fact and the button appears to state another,
+ * so the one thing on the row you can actually press looks like the one
+ * thing you cannot. Every one of these is now something to do rather
+ * than something that is already true.
+ *
+ * Worded per kind because "mark as done" fits none of them well: an item
+ * is bought, a fault is fixed, and a note is only ever read.
+ */
+const SETTLE: Record<Kind, string> = {
+  broken: 'Mark as fixed',
+  note: 'Mark as read',
+  supply: 'Mark as bought',
+};
+
 const LOOK: Record<Kind, {Icon: any;label: string;tint: string}> = {
   broken: { Icon: Wrench, label: 'Broken', tint: 'bg-[#E8913A1A] text-[#E8913A]' },
   note: { Icon: MessageSquare, label: 'Note', tint: 'bg-[#6B7B8D1A] text-[#6B7B8D]' },
@@ -469,7 +487,7 @@ export function TodoPage({ propertyId = 0 }: {
                   disabled={busy === r.key}
                   onClick={() => settle(r)}
                   className="shrink-0 text-[13px] font-semibold text-[#FF385C] disabled:opacity-50">
-                    {busy === r.key ? 'Saving…' : r.kind === 'supply' ? 'Bought' : 'Resolve'}
+                    {busy === r.key ? 'Saving…' : SETTLE[r.kind]}
                   </button>
                 }
                 </div>);
