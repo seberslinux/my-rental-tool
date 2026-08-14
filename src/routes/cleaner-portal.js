@@ -717,6 +717,33 @@ router.post('/shopping-list', async (req, res) => {
       notes || '',
     ]
   );
+
+  /**
+   * Say so. This route used to record the request and tell nobody.
+   *
+   * `supplies_needed` has been in the events table since it was written
+   * and was fired from nowhere, so the one form in the cleaner's app that
+   * reached the owner was the maintenance one — and cleaners used it for
+   * supplies, because it was the one that visibly worked. Laundry liquid
+   * arrived as a reported fault while the shopping list sat silent.
+   *
+   * Only when a cleaner asks. An owner adding to their own list does not
+   * need a message telling them they did.
+   */
+  if (!req.user && cleaner) {
+    const property = property_id ?
+    await getOne('SELECT name FROM properties WHERE id = $1', [property_id]) :
+    null;
+    const amount = Number(quantity) > 1 ? `${Number(quantity)} ${unit || ''}`.trim() : '';
+    await notify({
+      event: 'supplies_needed',
+      title: `${cleaner.name} needs ${item_name}${property ? ` at ${property.name}` : ''}`,
+      body: [amount, notes].filter(Boolean).join(' · '),
+      propertyId: property_id || null, cleanerId: cleaner.id,
+      link: '/',
+    });
+  }
+
   res.status(201).json({ id: result.rows[0].id });
 });
 

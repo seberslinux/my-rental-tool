@@ -8,7 +8,7 @@ const { loadAvailability, cleanerDayStatus } = require('../services/availability
 // Whether the channel is switched on at all — see that module for why
 // "off" and "broken" must not look the same.
 const whatsapp = require('../services/whatsapp');
-const { requireRole, scopeProperties, enforcePropertyScope } = require('../middleware/auth');
+const { requireRole, scopeProperties, enforcePropertyScope, denyIfOutOfScope } = require('../middleware/auth');
 
 // Parse ?property_id= query param — comma-separated list or 'all' → null.
 // Returns null for "no explicit filter" (server-side scoping will still apply).
@@ -279,7 +279,7 @@ router.get('/dashboard/today', scopeProperties, async (req, res) => {
   if (properties.length === 0) return res.json({ needs: [], board: [] });
   const ids = properties.map((p) => p.id);
 
-  const [stays, jobs, issues, blocks] = await Promise.all([
+  const [stays, jobs, issues, blocks, supplies] = await Promise.all([
     getAll(
       `SELECT * FROM bookings WHERE property_id = ANY($1) AND check_out >= $2 AND check_in <= $3`,
       [ids, since, horizon]
@@ -297,6 +297,24 @@ router.get('/dashboard/today', scopeProperties, async (req, res) => {
     ),
     getAll(
       `SELECT * FROM blocked_dates WHERE property_id = ANY($1) AND released_at IS NULL`,
+      [ids]
+    ),
+    // Both joins outer, for the same reason the cleaner's own list needs
+    // them: added_by is null for a PIN cleaner and added_by_cleaner_id is
+    // null for a user, so an inner join on either drops half the list.
+    //
+    // Rows with no property at all are left out rather than shown to
+    // everybody. Scoping cannot prove one is yours, and this page is
+    // behind property scoping precisely so it cannot show somebody
+    // another owner's business.
+    getAll(
+      `SELECT s.id, s.property_id, s.item_name, s.quantity, s.unit, s.notes, s.created_at,
+              COALESCE(u.name, c.name) AS added_by_name
+         FROM shopping_list s
+         LEFT JOIN users u ON u.id = s.added_by
+         LEFT JOIN cleaners c ON c.id = s.added_by_cleaner_id
+        WHERE s.property_id = ANY($1) AND s.status = 'needed'
+        ORDER BY s.created_at ASC`,
       [ids]
     ),
   ]);
@@ -331,7 +349,35 @@ router.get('/dashboard/today', scopeProperties, async (req, res) => {
     console.error('Holiday lookup failed for /dashboard/today:', err.message);
   }
 
-  res.json(buildToday({ properties, stays, jobs, issues, blocks, isFree, today, now, holidays }));
+  res.json(buildToday({ properties, stays, jobs, issues, blocks, supplies, isFree, today, now, holidays }));
+});
+
+/**
+ * Bought it.
+ *
+ * The cleaner portal has had a route for this since the list existed, but
+ * it takes an id and updates it — no scoping at all — which is safe
+ * enough among cleaners who only ever reach their own list and not safe
+ * at all as the owner's button. This one checks the item's property is
+ * one the caller can see before touching it.
+ *
+ * An item with no property is refused rather than allowed through: there
+ * is nothing to check it against, and the scoping here fails closed by
+ * design.
+ */
+router.patch('/supplies/:id/purchased', scopeProperties, async (req, res) => {
+  const item = await getOne('SELECT id, property_id FROM shopping_list WHERE id = $1', [req.params.id]);
+  if (!item) return res.status(404).json({ error: 'Not on the list' });
+  if (!item.property_id) {
+    return res.status(403).json({ error: 'That item is not tied to a property' });
+  }
+  if (denyIfOutOfScope(req, res, item.property_id)) return;
+
+  await run(
+    "UPDATE shopping_list SET status = 'purchased', purchased_at = NOW() WHERE id = $1",
+    [item.id]
+  );
+  res.json({ ok: true });
 });
 
 router.get('/notifications', scopeProperties, async (req, res) => {
