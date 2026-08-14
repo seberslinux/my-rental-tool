@@ -181,6 +181,108 @@ test('a stranger cannot start somebody else\'s job', async () => {
   assert.equal(res.status, 404);
 });
 
+// --- a clean with no job behind it ---------------------------------------
+
+test('a cleaner can mark a property clean with no job scheduled', async () => {
+  // The gap this fills: sent to a property that morning, nothing on the
+  // schedule for it, and no way to say the work was done — so it went on
+  // reading dirty until a manager noticed.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const { cleaner, agent } = await signedInCleaner();
+  await linkCleanerToProperty(cleaner, property);
+
+  const res = await agent.post(`/api/cleaner-portal/properties/${property.id}/mark-clean`).expect(200);
+  assert.ok(res.body.marked_clean_at, 'a time comes back');
+
+  const { rows } = await pool.query(
+    'SELECT marked_clean_at, marked_clean_by FROM properties WHERE id = $1', [property.id]
+  );
+  assert.ok(rows[0].marked_clean_at);
+  assert.equal(rows[0].marked_clean_by, cleaner.name, 'attributed to the cleaner');
+});
+
+test('marking a property clean tells the owner', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const { cleaner, agent } = await signedInCleaner();
+  await linkCleanerToProperty(cleaner, property);
+
+  await agent.post(`/api/cleaner-portal/properties/${property.id}/mark-clean`).expect(200);
+
+  const { rows } = await pool.query(
+    `SELECT event, audience, title FROM notifications
+      WHERE property_id = $1 ORDER BY created_at DESC`, [property.id]
+  );
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].event, 'cleaning_finished');
+  assert.equal(rows[0].audience, 'owner', "it is the owner's feed, not the cleaner's");
+  assert.match(rows[0].title, new RegExp(cleaner.name));
+});
+
+test('a cleaner cannot mark a property they do not work at', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const mine = await seedProperty({ owner });
+  const theirs = await seedProperty({ owner });
+  const { cleaner, agent } = await signedInCleaner();
+  await linkCleanerToProperty(cleaner, mine);
+
+  const res = await agent.post(`/api/cleaner-portal/properties/${theirs.id}/mark-clean`);
+  assert.equal(res.status, 403);
+
+  const { rows } = await pool.query('SELECT marked_clean_at FROM properties WHERE id = $1', [theirs.id]);
+  assert.equal(rows[0].marked_clean_at, null, 'nothing was recorded');
+});
+
+test('marking clean twice in a day is once', async () => {
+  // Status is computed in whole days, so the second tap cannot change the
+  // answer — and must not put a second line in the owner's feed.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const { cleaner, agent } = await signedInCleaner();
+  await linkCleanerToProperty(cleaner, property);
+
+  const first = await agent.post(`/api/cleaner-portal/properties/${property.id}/mark-clean`).expect(200);
+  const second = await agent.post(`/api/cleaner-portal/properties/${property.id}/mark-clean`).expect(200);
+
+  assert.equal(second.body.already, true);
+  assert.equal(
+    new Date(second.body.marked_clean_at).getTime(),
+    new Date(first.body.marked_clean_at).getTime(),
+    'the time did not move'
+  );
+
+  const { rows } = await pool.query(
+    'SELECT COUNT(*)::int AS n FROM notifications WHERE property_id = $1', [property.id]
+  );
+  assert.equal(rows[0].n, 1, 'one line in the feed, not two');
+});
+
+test('marking clean again clears a manager\'s "needs doing"', async () => {
+  // The one case where a second mark on the same day is a real change:
+  // the manager overruled the first one, so saying it again is new.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const { cleaner, agent } = await signedInCleaner();
+  await linkCleanerToProperty(cleaner, property);
+
+  await agent.post(`/api/cleaner-portal/properties/${property.id}/mark-clean`).expect(200);
+  await pool.query('UPDATE properties SET marked_dirty_at = NOW() WHERE id = $1', [property.id]);
+
+  const res = await agent.post(`/api/cleaner-portal/properties/${property.id}/mark-clean`).expect(200);
+  assert.notEqual(res.body.already, true, 'not swallowed as a repeat');
+
+  const { rows } = await pool.query(
+    'SELECT marked_dirty_at FROM properties WHERE id = $1', [property.id]
+  );
+  assert.equal(rows[0].marked_dirty_at, null, 'the dirty flag is cleared');
+});
+
 // --- supplies ------------------------------------------------------------
 
 test('a cleaner can ask for supplies, and the request is visible', async () => {
