@@ -4,11 +4,35 @@ const bcrypt = require('bcrypt');
 const { getAgent, resetDb, closePool } = require('../helpers/harness');
 const { seedUser, seedProperty, seedCleaner, seedBooking, linkCleanerToProperty } = require('../helpers/seed');
 
-/** YYYY-MM-DD, n days ahead — used to land outside the cleaning window. */
+const { TIMEZONE } = require('../../src/services/cleaning-window');
+
+/**
+ * YYYY-MM-DD, n days ahead, in the timezone the server calls "today".
+ *
+ * It used to read the container's clock. Railway and this box run UTC
+ * and the properties are two hours ahead, so between 22:00 and midnight
+ * UTC the test would write yesterday's date on a job the server
+ * considered due today — and every start and finish came back 409. Green
+ * all afternoon, red for the two hours after ten at night.
+ *
+ * en-CA gives YYYY-MM-DD, the same trick and the same zone the window
+ * itself uses, imported rather than repeated so the two cannot drift.
+ */
 function futureDate(n) {
-  const d = new Date(Date.now() + n * 86400000);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return new Date(Date.now() + n * 86400000).
+  toLocaleDateString('en-CA', { timeZone: TIMEZONE });
 }
+
+/**
+ * A property whose cleaning window is open whatever the hour.
+ *
+ * The window opens two hours before check-out, so a property left on the
+ * default 10:00 cannot be started against at two in the morning. These
+ * tests are about recording a start and a finish; the window has its own
+ * tests further down, which set the dates they need. Without this the
+ * happy paths depend on what time of day somebody runs them.
+ */
+const seedOpenProperty = (owner) => seedProperty({ owner, check_out_time: '00:00' });
 const { pool } = require('../../src/db/database');
 
 /**
@@ -103,7 +127,7 @@ test('a cleaner cannot touch a job that is not theirs', async () => {
 test('starting a job records the time and marks it in progress', async () => {
   await resetDb();
   const owner = await seedUser({ role: 'admin' });
-  const property = await seedProperty({ owner });
+  const property = await seedOpenProperty(owner);
   const { cleaner, agent } = await signedInCleaner();
   const job = await seedJob(cleaner, property, { status: 'confirmed' });
 
@@ -120,7 +144,7 @@ test('tapping start twice does not move the start time', async () => {
   // minutes they have already worked.
   await resetDb();
   const owner = await seedUser({ role: 'admin' });
-  const property = await seedProperty({ owner });
+  const property = await seedOpenProperty(owner);
   const { cleaner, agent } = await signedInCleaner();
   const job = await seedJob(cleaner, property);
 
@@ -136,7 +160,7 @@ test('tapping start twice does not move the start time', async () => {
 test('finishing records the time and completes the job', async () => {
   await resetDb();
   const owner = await seedUser({ role: 'admin' });
-  const property = await seedProperty({ owner });
+  const property = await seedOpenProperty(owner);
   const { cleaner, agent } = await signedInCleaner();
   const job = await seedJob(cleaner, property);
 
@@ -157,7 +181,7 @@ test('finishing without starting back-fills the start from the scheduled time', 
   // order would help nobody.
   await resetDb();
   const owner = await seedUser({ role: 'admin' });
-  const property = await seedProperty({ owner });
+  const property = await seedOpenProperty(owner);
   const { cleaner, agent } = await signedInCleaner();
   const job = await seedJob(cleaner, property, { start_time: '00:00' });
 
