@@ -340,3 +340,51 @@ test('a term already running counts as now, not as days away', () => {
   assert.equal(money.holidays.length, 1, 'still running, so still relevant');
   assert.ok(money.holidays[0].days_away < 0, 'it began a week ago');
 });
+
+// --- supplies ------------------------------------------------------------
+
+test('supplies are their own section, not something that needs you', () => {
+  // Bin liners at the same weight as a checkout with nobody cleaning is
+  // how the old attention list buried the things that mattered.
+  const out = buildToday({
+    properties: props, today: TODAY,
+    supplies: [
+      { id: 1, property_id: 1, item_name: 'Laundry liquid', quantity: 1,
+        created_at: TODAY, added_by_name: 'Moreblessing' },
+    ],
+  });
+  assert.equal(out.supplies.length, 1);
+  assert.equal(out.needs.length, 0, 'not in needs you');
+});
+
+test('a supply line says what, where, who and when', () => {
+  const out = buildToday({
+    properties: props, today: TODAY,
+    supplies: [
+      { id: 7, property_id: 1, item_name: 'Bin liners', quantity: 3, unit: 'rolls',
+        notes: 'Large', created_at: '2026-08-08', added_by_name: 'Moreblessing' },
+    ],
+  });
+  const s = out.supplies[0];
+  assert.equal(s.item, 'Bin liners');
+  assert.equal(s.property, 'Hill Top Lodge');
+  assert.equal(s.who, 'Moreblessing');
+  assert.equal(s.amount, '3 rolls');
+  assert.equal(s.notes, 'Large');
+  assert.equal(s.asked, '2d ago');
+});
+
+test('a quantity of one is not worth saying', () => {
+  // "1 " in front of every line is noise, and the unit rarely says
+  // anything on its own.
+  const out = buildToday({
+    properties: props, today: TODAY,
+    supplies: [{ id: 2, property_id: 1, item_name: 'Dishwasher tablets', quantity: 1, created_at: TODAY }],
+  });
+  assert.equal(out.supplies[0].amount, '');
+});
+
+test('nothing asked for means an empty list, which the screen does not draw', () => {
+  const out = buildToday({ properties: props, today: TODAY });
+  assert.deepEqual(out.supplies, []);
+});

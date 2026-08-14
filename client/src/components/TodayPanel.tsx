@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { LogIn, LogOut, Check, AlertCircle, ArrowRight, RefreshCw, Sparkles } from 'lucide-react';
+import { LogIn, LogOut, Check, AlertCircle, ArrowRight, RefreshCw, Sparkles, ShoppingCart } from 'lucide-react';
 import { apiGet, Unauthorized } from '../data/session';
 import { PropertyRows, PropertyRow } from './PropertyRows';
 
@@ -43,6 +43,17 @@ interface Money {
   open_nights_14: number;capacity_14: number;booked_revenue_30: number;
 }
 
+interface Supply {
+  id: number;
+  property_id: number | null;
+  property: string | null;
+  item: string;
+  amount: string;
+  notes: string;
+  who: string | null;
+  asked: string;
+}
+
 interface UpcomingRow {
   key: string;
   kind: 'in' | 'out';
@@ -74,12 +85,15 @@ const cleanerLabel = (c: UpcomingRow['cleaner']) => {
   return `${c.name} · accepted`;
 };
 
-export function TodayPanel({ onGoToDay, onNeedsChange }: {
+export function TodayPanel({ onGoToDay, onNeedsChange, onNavigate }: {
   onGoToDay?: (propertyId: number, date: string) => void;
   /** How many things need somebody, for the tab badge. */
   onNeedsChange?: (count: number | null) => void;
+  /** Somewhere to send a row that is not about a particular day. */
+  onNavigate?: (tab: string) => void;
 }) {
   const [needs, setNeeds] = useState<Need[]>([]);
+  const [supplies, setSupplies] = useState<Supply[]>([]);
   const [properties, setProperties] = useState<PropertyRow[]>([]);
   const [upcoming, setUpcoming] = useState<UpcomingRow[]>([]);
   const [money, setMoney] = useState<Money | null>(null);
@@ -91,8 +105,10 @@ export function TodayPanel({ onGoToDay, onNeedsChange }: {
     try {
       const data = await apiGet<{
         needs: Need[];properties: PropertyRow[];upcoming: UpcomingRow[];money: Money | null;
+        supplies: Supply[];
       }>('/api/dashboard/today');
       setNeeds(data.needs || []);
+      setSupplies(data.supplies || []);
       setProperties(data.properties || []);
       setUpcoming(data.upcoming || []);
       setMoney(data.money || null);
@@ -129,9 +145,37 @@ export function TodayPanel({ onGoToDay, onNeedsChange }: {
       load();
       return;
     }
+    // A reported fault is not about a day, so it has no date and fell
+    // through both branches below — the View button on every issue row
+    // did nothing at all. It goes to the page that lists them.
+    if (n.action.kind === 'issue') {
+      if (onNavigate) onNavigate('reported');
+      return;
+    }
     if (n.action.property_id && n.action.date && onGoToDay) {
       onGoToDay(n.action.property_id, n.action.date);
     }
+  };
+
+  /**
+   * Ticked off, which is the only thing to do with it from here.
+   *
+   * Keyed under `supply:` in the same `busy` slot the needs list uses —
+   * an item id and a need key share the field, and a bare number would
+   * put the spinner on whichever happened to match.
+   */
+  const bought = async (s: Supply) => {
+    setBusy(`supply:${s.id}`);
+    setError('');
+    const res = await fetch(`/api/supplies/${s.id}/purchased`, {
+      method: 'PATCH', credentials: 'same-origin',
+    });
+    setBusy(null);
+    if (!res.ok) {
+      setError((await res.json().catch(() => ({}))).error || 'Could not tick that off');
+      return;
+    }
+    load();
   };
 
   return (
@@ -184,7 +228,44 @@ export function TodayPanel({ onGoToDay, onNeedsChange }: {
         }
       </div>
 
-      {/* 2. What is still to sell. Not the old KPI row — gross revenue
+      {/* 2. What somebody has run out of.
+
+             Drawn only when there is something on it. A "Supplies" block
+             showing "nothing needed" most of the week is a block people
+             learn to scroll past, and this page has been cut back once
+             already for exactly that. Below "Needs you" rather than in
+             it: bin liners can wait for the next shop, a checkout with
+             nobody cleaning cannot. */}
+      {!failed && supplies.length > 0 &&
+      <div className="mb-6">
+          <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
+            Supplies needed
+          </div>
+          <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] overflow-hidden">
+            {supplies.map((s, idx) =>
+          <div
+            key={s.id}
+            className={`flex items-center gap-3 px-4 py-3 ${idx > 0 ? 'border-t border-[#F0F0F0]' : ''}`}>
+                <ShoppingCart className="w-4 h-4 text-[#717171] shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-[15px] font-medium text-[#222222] truncate">{s.item}</div>
+                  <div className="text-[13px] text-[#717171] truncate">
+                    {[s.amount, s.property, s.who, s.asked, s.notes].filter(Boolean).join(' · ')}
+                  </div>
+                </div>
+                <button
+              disabled={busy === `supply:${s.id}`}
+              onClick={() => bought(s)}
+              className="shrink-0 text-[13px] font-semibold text-[#FF385C] disabled:opacity-50">
+                  {busy === `supply:${s.id}` ? 'Saving…' : 'Bought'}
+                </button>
+              </div>
+          )}
+          </div>
+        </div>
+      }
+
+      {/* 3. What is still to sell. Not the old KPI row — gross revenue
              and average nightly rate say how last quarter went, which
              Analytics already answers. These are the nights nobody has
              bought yet, which is the thing you can still act on. */}

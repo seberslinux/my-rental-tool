@@ -8,6 +8,9 @@ const { checkCleaningWindow } = require('../services/cleaning-window');
 // One place decides who hears about what — see the module header for why
 // four separate send calls is how the old ones drifted apart.
 const { notify, recentForCleaner } = require('../services/notify');
+// The same day-boundary the status calculation uses, so "already clean
+// today" here means what `cleanSince` means there.
+const { ymd } = require('../services/cleaning-status');
 
 // Resolve the cleaner record for the logged-in user
 async function getMyCleanerRecord(req) {
@@ -253,6 +256,81 @@ router.post('/jobs/:jobId/finish', requireCleaner, async (req, res) => {
   });
 
   res.json(updated || { completed_at: finishedAt });
+});
+
+/**
+ * "I cleaned it" — with no job to hang it on.
+ *
+ * Finishing a job is the usual way a property becomes clean, and it stays
+ * the better one: it records who was asked, when they started, and what
+ * the checklist said. But it needs a job to exist. A cleaner who is at a
+ * property nobody scheduled — sent that morning, covering for somebody,
+ * or simply passing — had no way to say the work was done, and the
+ * property went on reading dirty until a manager noticed and marked it
+ * themselves.
+ *
+ * So this writes the same `marked_clean_at` the manager's own mark-clean
+ * writes, and for the same reason: cleaning-status.js treats a manager
+ * saying "it is clean" and a cleaner tapping Finished as one kind of fact,
+ * not as a status and an override competing. A third source of truth here
+ * would be the thing that module exists to prevent.
+ *
+ * Marking clean does not mark dirty. Deciding a property needs doing
+ * again is a manager's call — it overrules work somebody has done — and
+ * it stays on the manager's route.
+ */
+router.post('/properties/:propertyId/mark-clean', requireCleaner, async (req, res) => {
+  const access = await getOne(
+    'SELECT 1 FROM cleaner_properties WHERE cleaner_id = $1 AND property_id = $2',
+    [req.cleaner.id, req.params.propertyId]
+  );
+  if (!access) return res.status(403).json({ error: 'No access to this property' });
+
+  const property = await getOne(
+    'SELECT id, name, marked_clean_at, marked_dirty_at FROM properties WHERE id = $1',
+    [req.params.propertyId]
+  );
+  if (!property) return res.status(404).json({ error: 'Property not found' });
+
+  // Twice in one day is once.
+  //
+  // Status is computed in whole days — `cleanSince` is a date, not a
+  // moment — so a second tap on the same day cannot change the answer,
+  // and re-recording it would put a second line in the owner's feed
+  // saying nothing new. Reported back as `already` rather than silently,
+  // so the app can tell the cleaner it is recorded.
+  //
+  // Unless the property has since been marked dirty: then the earlier
+  // clean no longer stands, and saying so again is a real change.
+  const today = ymd(new Date());
+  const standing =
+    property.marked_clean_at &&
+    ymd(property.marked_clean_at) === today &&
+    !(property.marked_dirty_at &&
+      new Date(property.marked_dirty_at) > new Date(property.marked_clean_at));
+  if (standing) {
+    return res.json({ already: true, marked_clean_at: property.marked_clean_at });
+  }
+
+  const updated = await getOne(
+    `UPDATE properties
+        SET marked_clean_at = NOW(), marked_dirty_at = NULL, marked_clean_by = $2
+      WHERE id = $1
+      RETURNING marked_clean_at`,
+    [property.id, req.cleaner.name]
+  );
+
+  await notify({
+    event: 'cleaning_finished',
+    title: `${req.cleaner.name} marked ${property.name} as cleaned`,
+    // Said plainly, because it is the part a manager would otherwise go
+    // looking for: there was no job behind this one.
+    body: 'No job was scheduled for it.',
+    propertyId: property.id, cleanerId: req.cleaner.id,
+    link: '/activity',
+  });
+
+  res.json({ ok: true, marked_clean_at: updated.marked_clean_at });
 });
 
 /**
@@ -530,7 +608,9 @@ router.post('/maintenance', requireCleaner, async (req, res) => {
     title: `${req.cleaner.name} reported: ${title}`,
     body: [property && property.name, description].filter(Boolean).join(' · '),
     propertyId: property_id, cleanerId: req.cleaner.id,
-    link: '/more',
+    // Was /more, which is the menu the page sits behind rather than the
+    // page — and before there was a router it made no difference anyway.
+    link: '/reported',
   });
 
   res.status(201).json({ id: result.rows[0].id });
@@ -639,6 +719,37 @@ router.post('/shopping-list', async (req, res) => {
       notes || '',
     ]
   );
+
+  /**
+   * Say so. This route used to record the request and tell nobody.
+   *
+   * `supplies_needed` has been in the events table since it was written
+   * and was fired from nowhere, so the one form in the cleaner's app that
+   * reached the owner was the maintenance one — and cleaners used it for
+   * supplies, because it was the one that visibly worked. Laundry liquid
+   * arrived as a reported fault while the shopping list sat silent.
+   *
+   * Only when a cleaner asks. An owner adding to their own list does not
+   * need a message telling them they did.
+   */
+  if (!req.user && cleaner) {
+    const property = property_id ?
+    await getOne('SELECT name FROM properties WHERE id = $1', [property_id]) :
+    null;
+    const amount = Number(quantity) > 1 ? `${Number(quantity)} ${unit || ''}`.trim() : '';
+    await notify({
+      event: 'supplies_needed',
+      title: `${cleaner.name} needs ${item_name}${property ? ` at ${property.name}` : ''}`,
+      body: [amount, notes].filter(Boolean).join(' · '),
+      propertyId: property_id || null, cleanerId: cleaner.id,
+      // The page that lists it, rather than the front page. Home carries
+      // outstanding supplies too, but a link there is the URL the app is
+      // most likely already sitting on — and navigating to where you
+      // already are is indistinguishable from a dead link.
+      link: '/reported',
+    });
+  }
+
   res.status(201).json({ id: result.rows[0].id });
 });
 

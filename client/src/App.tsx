@@ -16,6 +16,45 @@ import { NotificationsPanel } from './components/NotificationsPanel';
 import { CleanersPage } from './components/CleanersPage';
 import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
+import { ReportedPage } from './components/ReportedPage';
+
+/**
+ * Which screen a URL means.
+ *
+ * There is no router here — the visible screen is `activeTab`, which is
+ * state, and nothing ever read the address bar. So every notification
+ * link landed in the same place: the app booted at Home whatever the
+ * link said, and when the app was already open the service worker's
+ * navigate() went to the URL it was already on and did nothing visible.
+ * That is what "the link does not work" was.
+ *
+ * The map is also read backwards, to keep the address bar matching the
+ * tab. Without that the URL stays wherever the last notification put it,
+ * and the next one pointing at the same screen is a no-op again.
+ */
+const TAB_PATHS: Record<string, string> = {
+  home: '/',
+  calendar: '/calendar',
+  cleaners: '/cleaners',
+  analytics: '/analytics',
+  properties: '/properties',
+  users: '/users',
+  smoobu: '/smoobu',
+  reported: '/reported',
+  more: '/more',
+};
+
+/**
+ * Anything unrecognised means Home.
+ *
+ * Links written before this existed point at screens that were never
+ * tabs — /activity is the main one. They meant "open the app", and Home
+ * is what opening the app is.
+ */
+const tabForPath = (pathname: string) => {
+  const hit = Object.keys(TAB_PATHS).find((tab) => TAB_PATHS[tab] === pathname);
+  return hit || 'home';
+};
 import { SmoobuConnectionPage } from './components/SmoobuConnectionPage';
 import { CleaningDaySheet } from './components/CleaningDaySheet';
 import { UserX, UserCheck, TriangleAlert, Check } from 'lucide-react';
@@ -68,7 +107,7 @@ export function App() {
   const [cleaningVersion, setCleaningVersion] = useState(0);
   const [authChecked, setAuthChecked] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
-  const [activeTab, setActiveTab] = useState('home');
+  const [activeTab, setActiveTab] = useState(() => tabForPath(window.location.pathname));
   // Calendar state (existing)
   const [mode, setMode] = useState<'single' | 'multi'>('single');
   const [propertyId, setPropertyId] = useState<number>(0);
@@ -170,6 +209,24 @@ export function App() {
   const singleModeBookings = useMemo(() => {
     return filteredBookings.filter((b) => b.propId === propertyId);
   }, [filteredBookings, propertyId]);
+  /**
+   * Keep the address bar on the screen you are looking at.
+   *
+   * replaceState rather than pushState: this is here so a notification
+   * pointing at a different screen is a real navigation, not so the back
+   * button walks your tab history. An entry per tap would only trap
+   * somebody who pressed back expecting to leave.
+   *
+   * The invite URL carries a token and is not a tab, so it is left alone.
+   */
+  useEffect(() => {
+    if (inviteToken) return;
+    const path = TAB_PATHS[activeTab] || '/';
+    if (window.location.pathname !== path) {
+      window.history.replaceState(null, '', path);
+    }
+  }, [activeTab, inviteToken]);
+
   const getPageTitle = () => {
     switch (activeTab) {
       case 'home':
@@ -184,6 +241,8 @@ export function App() {
         return 'Users';
       case 'smoobu':
         return 'Smoobu';
+      case 'reported':
+        return 'Reported';
       case 'more':
         return 'More';
       default:
@@ -415,6 +474,7 @@ export function App() {
         {activeTab === 'analytics' && <AnalyticsPage propertyId={globalPropertyFilter} />}
         {activeTab === 'properties' && <PropertiesPage />}
         {activeTab === 'users' && <UsersPage />}
+        {activeTab === 'reported' && <ReportedPage />}
         {activeTab === 'smoobu' && <SmoobuConnectionPage isAdmin={userRole === 'admin'} />}
         {activeTab === 'more' && <MorePage onNavigate={setActiveTab} onLogout={() => { setIsLoggedIn(false); setDataLoaded(false); }} />}
         </div>
@@ -453,7 +513,10 @@ export function App() {
     {showNotifications &&
       <NotificationsPanel
         onClose={() => setShowNotifications(false)}
-        onRead={() => setUnread(0)} />
+        onRead={() => setUnread(0)}
+        // The same map the address bar uses, so a link means the same
+        // screen whether it arrives by push or is tapped in the panel.
+        onOpenLink={(link) => setActiveTab(tabForPath(link))} />
       }
 
     </div>);

@@ -274,7 +274,10 @@ function Report({ properties, onError }: {properties: {id: number;name: string;}
 export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
   const [tab, setTab] = useState<Tab>('jobs');
   const [name, setName] = useState('');
-  const [properties, setProperties] = useState<{id: number;name: string;}[]>([]);
+  // marked_clean_at rides along from /me, which selects the whole property
+  // row — so "already done today" is the server's answer, not a flag this
+  // screen sets and then has to keep true.
+  const [properties, setProperties] = useState<{id: number;name: string;marked_clean_at?: string | null;}[]>([]);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [stays, setStays] = useState<Stay[]>([]);
   const [schedule, setSchedule] = useState<Record<number, {on: boolean;start: string;end: string;}>>({});
@@ -287,6 +290,9 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
   const [busy, setBusy] = useState<number | null>(null);
   // The job whose finish was refused because the inventory is not counted.
   const [needsCount, setNeedsCount] = useState<number | null>(null);
+  // Separate from `busy`, which is keyed on a job id — a property id of
+  // the same number would otherwise put the spinner on a stranger's card.
+  const [markingProp, setMarkingProp] = useState<number | null>(null);
   const [openJob, setOpenJob] = useState<Job | null>(null);
   // 0 = every property. A cleaner working two places wants "when does The
   // loft need me" without reading past the other one.
@@ -364,6 +370,29 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
       setError(err.message);
     } finally {
       setBusy(null);
+    }
+  };
+
+  /**
+   * Record a clean nobody scheduled.
+   *
+   * Deliberately not routed through `act`: that one is about a job, and
+   * carries the checklist rescue with it. There is no job here and no
+   * checklist to answer, so a refusal is just a refusal.
+   */
+  const markCleaned = async (propertyId: number) => {
+    setMarkingProp(propertyId);
+    try {
+      const res = await post(`/api/cleaner-portal/properties/${propertyId}/mark-clean`);
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || 'That did not work');
+      }
+      await load();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setMarkingProp(null);
     }
   };
 
@@ -1257,6 +1286,48 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
                 <JobCard job={j} echo={needsAnswer.some((n) => n.id === j.id)} />
               </div>
           )}
+
+            {/* A clean nobody scheduled.
+
+                Below the jobs, not among them, and worded to send anybody
+                with a job back to it: finishing the job records who was
+                asked, when they started and what the checklist said, and
+                this records none of that. It is the way out for a
+                property that has been cleaned with no job to hang it on,
+                which otherwise reads dirty until a manager notices. */}
+            {properties.length > 0 &&
+          <div className="mt-6 pt-5 border-t border-[#EBEBEB]">
+                <p className="text-[15px] font-semibold mb-1">Cleaned something unscheduled?</p>
+                <p className="text-[13px] text-[#717171] mb-3">
+                  Only if there was no job for it. If there is one above, finish that instead.
+                </p>
+                <div className="bg-white rounded-[12px] border border-[#EBEBEB] divide-y divide-[#EBEBEB]">
+                  {(propFilter ? properties.filter((p) => p.id === propFilter) : properties).map((p) => {
+                const done = !!p.marked_clean_at && iso(new Date(p.marked_clean_at)) === todayStr;
+                return (
+                  <div key={p.id} className="flex items-center justify-between gap-3 p-4">
+                        <div className="min-w-0">
+                          <p className="text-[14px] font-medium truncate">{p.name}</p>
+                          {done &&
+                      <p className="text-[12px] text-[#717171]">Marked cleaned today</p>
+                      }
+                        </div>
+                        <button
+                      disabled={done || markingProp === p.id}
+                      onClick={() => markCleaned(p.id)}
+                      className={`shrink-0 px-3 py-2 rounded-[8px] text-[13px] font-medium border ${
+                      done ?
+                      'border-[#EBEBEB] text-[#717171]' :
+                      'border-[#222222] text-[#222222]'}`
+                      }>
+                          {done ? 'Done' : markingProp === p.id ? 'Saving…' : 'Mark cleaned'}
+                        </button>
+                      </div>);
+
+              })}
+                </div>
+              </div>
+          }
           </>
         }
 

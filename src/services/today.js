@@ -48,6 +48,10 @@ function whenLabel(n) {
  */
 function buildToday({
   properties = [], stays = [], jobs = [], issues = [], blocks = [],
+  // What the cleaners have asked for and nobody has bought yet. Passed
+  // in already filtered to outstanding rows — this decides how it reads,
+  // not what counts.
+  supplies = [],
   isFree = () => true, today, now = null, holidays = [],
   // How far the forward list looks. Seven days is a planning window.
   horizonDays = 7,
@@ -352,9 +356,36 @@ function buildToday({
     };
   })();
 
+  /**
+   * What somebody has run out of.
+   *
+   * Deliberately not in "needs you". That list is what will go wrong
+   * today if it is ignored — a checkout with no cleaner costs a booking.
+   * Bin liners can wait until you are next at the shops, and putting them
+   * at the same weight is how the old attention list buried the things
+   * that mattered.
+   *
+   * So it is its own section, and the screen only draws it when there is
+   * something on it. A block sitting empty most of the week is a block
+   * people learn to scroll past.
+   */
+  const suppliesRows = supplies.map((s) => ({
+    id: s.id,
+    property_id: s.property_id || null,
+    property: s.property_id ? propertyName(s.property_id) : null,
+    item: s.item_name,
+    // Only when it is more than one. "1 " in front of every line is
+    // noise, and the unit rarely says anything on its own.
+    amount: Number(s.quantity) > 1 ? `${Number(s.quantity)} ${s.unit || ''}`.trim() : '',
+    notes: s.notes || '',
+    who: s.added_by_name || null,
+    asked: s.created_at ? whenLabel(daysOut(s.created_at, day)) : '',
+  }));
+
   return {
     needs: needs.sort((a, b) => a.sortAt - b.sortAt),
     money,
+    supplies: suppliesRows,
     properties: propertyRows,
     // Seven days rather than two: two is not long enough to plan a
     // cleaner around, which is the main thing this is read for.
