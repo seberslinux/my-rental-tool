@@ -53,7 +53,7 @@ test('a cleaner asking for supplies tells the owner', async () => {
   // A link that points at a screen. It pointed at '/' before, which is
   // the URL the app is most likely already on — and navigating to where
   // you already are looks exactly like a dead link.
-  assert.equal(rows[0].link, '/reported');
+  assert.equal(rows[0].link, '/todo');
   assert.match(rows[0].title, new RegExp(cleaner.name));
   assert.match(rows[0].title, /Laundry liquid/);
   assert.match(rows[0].body, /The big one/);
@@ -221,6 +221,95 @@ test('the full list is scoped to your own properties', async () => {
   const agent = await getAgent();
   await loginAs(agent, mine);
   assert.deepEqual((await agent.get('/api/supplies').expect(200)).body, []);
+});
+
+// --- one line, one thing to tick off -------------------------------------
+
+test('several lines become several items, and one message', async () => {
+  // The reported case, exactly: three things typed into one box. Stored
+  // as one row they could only be dealt with as one.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const { cleaner, agent } = await signedInCleaner();
+  await linkCleanerToProperty(cleaner, property);
+
+  const res = await agent.post('/api/cleaner-portal/shopping-list')
+    .send({ property_id: property.id, item_name: 'Laundry liquid\nBin liners\nDishwasher tablets' })
+    .expect(201);
+  assert.equal(res.body.added, 3);
+
+  const { rows } = await pool.query(
+    'SELECT item_name, status FROM shopping_list ORDER BY id'
+  );
+  assert.deepEqual(
+    rows.map((r) => r.item_name),
+    ['Laundry liquid', 'Bin liners', 'Dishwasher tablets']
+  );
+
+  // One message for the lot. Four buzzes for one request is how a
+  // channel gets muted.
+  const { rows: notes } = await pool.query(
+    `SELECT title, body FROM notifications WHERE event = 'supplies_needed'`
+  );
+  assert.equal(notes.length, 1);
+  assert.match(notes[0].title, /3 things/);
+  assert.match(notes[0].body, /Bin liners/, 'the items are named, not just counted');
+});
+
+test('each of them ticks off on its own', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const { cleaner, agent: cleanerAgent } = await signedInCleaner();
+  await linkCleanerToProperty(cleaner, property);
+  await cleanerAgent.post('/api/cleaner-portal/shopping-list')
+    .send({ property_id: property.id, item_name: 'Coffee\nMilk' }).expect(201);
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const list = (await agent.get('/api/supplies').expect(200)).body;
+  const coffee = list.find((s) => s.item_name === 'Coffee');
+
+  await agent.patch(`/api/supplies/${coffee.id}/purchased`).expect(200);
+
+  const after = (await agent.get('/api/dashboard/today').expect(200)).body.supplies;
+  assert.deepEqual(after.map((s) => s.item), ['Milk'], 'the other one is untouched');
+});
+
+test('an owner can put things on the list too, one per line', async () => {
+  // Everything here arrived from a cleaner, because asking was only ever
+  // built into their app.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+
+  const res = await agent.post('/api/supplies')
+    .send({ property_id: property.id, items: 'Coffee\nRusks' })
+    .expect(201);
+  assert.equal(res.body.added, 2);
+
+  const list = (await agent.get('/api/supplies').expect(200)).body;
+  assert.deepEqual(list.map((s) => s.item_name).sort(), ['Coffee', 'Rusks']);
+  assert.equal(list[0].added_by_name, owner.name, 'attributed to them');
+});
+
+test('an owner cannot add against a property they cannot see', async () => {
+  await resetDb();
+  const mine = await seedUser({ role: 'property_manager' });
+  const theirs = await seedUser({ role: 'property_manager' });
+  const theirProperty = await seedProperty({ owner: theirs });
+  const agent = await getAgent();
+  await loginAs(agent, mine);
+
+  const res = await agent.post('/api/supplies')
+    .send({ property_id: theirProperty.id, items: 'Snooping' });
+  assert.equal(res.status, 403);
+
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM shopping_list');
+  assert.equal(rows[0].n, 0);
 });
 
 test('an item that is not on the list at all is a 404', async () => {

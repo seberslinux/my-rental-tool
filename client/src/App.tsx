@@ -16,7 +16,7 @@ import { NotificationsPanel } from './components/NotificationsPanel';
 import { CleanersPage } from './components/CleanersPage';
 import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
-import { ReportedPage } from './components/ReportedPage';
+import { TodoPage } from './components/TodoPage';
 
 /**
  * Which screen a URL means.
@@ -40,7 +40,7 @@ const TAB_PATHS: Record<string, string> = {
   properties: '/properties',
   users: '/users',
   smoobu: '/smoobu',
-  reported: '/reported',
+  todo: '/todo',
   more: '/more',
 };
 
@@ -241,8 +241,8 @@ export function App() {
         return 'Users';
       case 'smoobu':
         return 'Smoobu';
-      case 'reported':
-        return 'Reported';
+      case 'todo':
+        return 'To do';
       case 'more':
         return 'More';
       default:
@@ -269,8 +269,21 @@ export function App() {
   'Sync failed — tap to retry' :
   syncedAt ? `Synced ${relativeTime(syncedAt)}` : 'Not synced yet';
 
-  // Show loading spinner while checking auth or loading data
-  if (!authChecked || (isLoggedIn && !dataLoaded)) {
+  /**
+   * Show a spinner while checking auth or loading data.
+   *
+   * Not for cleaners, and the omission is the whole of it. `dataLoaded`
+   * is set by loadData(), which is deliberately never called for a
+   * cleaner because every call in it is a manager endpoint the server
+   * refuses them. So the flag stayed false for the rest of the session
+   * and this gate — sitting above the branch that hands them their own
+   * app — spun forever. Signing in with a PIN worked, returned 200, and
+   * then showed a spinner and nothing else.
+   *
+   * The condition is the same one the effect uses, stated the same way,
+   * so the two cannot drift apart again.
+   */
+  if (!authChecked || (isLoggedIn && userRole !== 'cleaner' && !dataLoaded)) {
     return (
       <div className="min-h-screen bg-[#F7F7F7] flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-[#FF385C] border-t-transparent rounded-full animate-spin" />
@@ -474,7 +487,7 @@ export function App() {
         {activeTab === 'analytics' && <AnalyticsPage propertyId={globalPropertyFilter} />}
         {activeTab === 'properties' && <PropertiesPage />}
         {activeTab === 'users' && <UsersPage />}
-        {activeTab === 'reported' && <ReportedPage />}
+        {activeTab === 'todo' && <TodoPage propertyId={globalPropertyFilter} />}
         {activeTab === 'smoobu' && <SmoobuConnectionPage isAdmin={userRole === 'admin'} />}
         {activeTab === 'more' && <MorePage onNavigate={setActiveTab} onLogout={() => { setIsLoggedIn(false); setDataLoaded(false); }} />}
         </div>

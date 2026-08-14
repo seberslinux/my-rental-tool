@@ -149,7 +149,7 @@ export function TodayPanel({ onGoToDay, onNeedsChange, onNavigate }: {
     // through both branches below — the View button on every issue row
     // did nothing at all. It goes to the page that lists them.
     if (n.action.kind === 'issue') {
-      if (onNavigate) onNavigate('reported');
+      if (onNavigate) onNavigate('todo');
       return;
     }
     if (n.action.property_id && n.action.date && onGoToDay) {
@@ -257,7 +257,9 @@ export function TodayPanel({ onGoToDay, onNeedsChange, onNavigate }: {
               disabled={busy === `supply:${s.id}`}
               onClick={() => bought(s)}
               className="shrink-0 text-[13px] font-semibold text-[#FF385C] disabled:opacity-50">
-                  {busy === `supply:${s.id}` ? 'Saving…' : 'Bought'}
+                  {/* An instruction, not a state. "Bought" beside an
+                      item reads as a label saying it already has been. */}
+                  {busy === `supply:${s.id}` ? 'Saving…' : 'Mark as bought'}
                 </button>
               </div>
           )}

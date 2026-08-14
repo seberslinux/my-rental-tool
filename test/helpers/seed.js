@@ -47,9 +47,15 @@ async function seedProperty({ owner, ...overrides } = {}) {
     ...overrides,
   };
   const { rows } = await pool.query(
-    `INSERT INTO properties (smoobu_id, name, owner_user_id, base_price, base_currency, bedrooms, bathrooms, max_guests)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
-    [row.smoobu_id, row.name, row.owner_user_id, row.base_price, row.base_currency, row.bedrooms, row.bathrooms, row.max_guests]
+    // check_out_time included for the same reason phone is on seedUser:
+    // the cleaning window is computed from it, and a helper that quietly
+    // drops the field makes a test look like it controls something it
+    // does not. Defaulted to the column's own default rather than left
+    // null, so a property seeded without one behaves like a real one.
+    `INSERT INTO properties (smoobu_id, name, owner_user_id, base_price, base_currency, bedrooms, bathrooms, max_guests, check_out_time)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+    [row.smoobu_id, row.name, row.owner_user_id, row.base_price, row.base_currency,
+     row.bedrooms, row.bathrooms, row.max_guests, row.check_out_time ?? '10:00']
   );
   const property = rows[0];
   if (owner) {

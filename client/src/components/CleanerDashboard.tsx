@@ -208,7 +208,16 @@ function Report({ properties, onError }: {properties: {id: number;name: string;}
         priority: kind === 'note' ? 'low' : 'medium',
       });
       if (res.ok) {
-        setSent(kind === 'supplies' ? 'Added to the shopping list.' : 'Sent. The owner can see it.');
+        // Say how many, because the box takes several and somebody who
+        // typed four lines should see that four things were understood.
+        const added = kind === 'supplies' ?
+        ((await res.json().catch(() => ({}))).added || 1) :
+        0;
+        setSent(
+          kind === 'supplies' ?
+          `${added} item${added === 1 ? '' : 's'} added to the shopping list.` :
+          'Sent. The owner can see it.'
+        );
         setTitle(''); setDetail('');
       } else {
         const d = await res.json().catch(() => ({}));
@@ -244,14 +253,26 @@ function Report({ properties, onError }: {properties: {id: number;name: string;}
           </select>
         }
 
+        {/* Supplies get a box with room in it, because supplies are
+            almost never one thing. Each line becomes its own row, so
+            the bin liners can be ticked off without closing the laundry
+            liquid with them — typed into a single field they arrived as
+            one item and had to be dealt with as one. */}
+        {kind === 'supplies' ?
+        <textarea
+          value={title}
+          onChange={(e) => { setTitle(e.target.value); setSent(''); }}
+          placeholder={'What do you need?\nOne per line'}
+          className="w-full h-[88px] p-3 mb-3 border border-[#DDDDDD] rounded-[8px] text-[14px] resize-none" /> :
+
         <input
           value={title}
           onChange={(e) => { setTitle(e.target.value); setSent(''); }}
           placeholder={
           kind === 'maintenance' ? 'What is broken?' :
-          kind === 'supplies' ? 'What do you need?' :
           'What would you like to tell the owner?'}
           className="w-full h-[44px] px-3 mb-3 border border-[#DDDDDD] rounded-[8px] text-[14px]" />
+        }
 
         <textarea
           value={detail}
@@ -582,7 +603,9 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
             disabled={busy === job.id}
             onClick={() => act(job.id, () => post(`/api/cleaner-portal/jobs/${job.id}/finish`))}
             className="flex items-center gap-1.5 px-3 py-2 rounded-[8px] bg-[#0F6E56] text-white text-[13px] font-semibold disabled:opacity-60">
-              <Square className="w-4 h-4" /> Finished
+              {/* Paired with "Start cleaning" above it. On its own,
+                  "Finished" reads as a label saying the job already is. */}
+              <Square className="w-4 h-4" /> Finish cleaning
             </button>
           }
 
@@ -1320,7 +1343,10 @@ export function CleanerDashboard({ onSignOut }: {onSignOut: () => void;}) {
                       'border-[#EBEBEB] text-[#717171]' :
                       'border-[#222222] text-[#222222]'}`
                       }>
-                          {done ? 'Done' : markingProp === p.id ? 'Saving…' : 'Mark cleaned'}
+                          {/* The disabled one may state a fact, because
+                              a greyed button is plainly not a thing to
+                              press. The live one is an instruction. */}
+                          {done ? 'Cleaned' : markingProp === p.id ? 'Saving…' : 'Mark as cleaned'}
                         </button>
                       </div>);
 

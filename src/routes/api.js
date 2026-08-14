@@ -9,6 +9,8 @@ const { loadAvailability, cleanerDayStatus } = require('../services/availability
 // "off" and "broken" must not look the same.
 const whatsapp = require('../services/whatsapp');
 const { requireRole, scopeProperties, enforcePropertyScope, denyIfOutOfScope } = require('../middleware/auth');
+// Three things typed into one box are three things to tick off.
+const { splitItems } = require('../services/list-text');
 
 // Parse ?property_id= query param — comma-separated list or 'all' → null.
 // Returns null for "no explicit filter" (server-side scoping will still apply).
@@ -381,6 +383,49 @@ router.get('/supplies', scopeProperties, async (req, res) => {
     scoped === null ? [] : [scoped]
   );
   res.json(rows);
+});
+
+/**
+ * Put something on the list yourself.
+ *
+ * Everything on this list arrived from a cleaner, because asking was
+ * only ever built into their app. An owner who notices the coffee is
+ * finished had to either tell a cleaner to report it or remember it
+ * themselves, which is the thing a list is for.
+ *
+ * The cleaner portal's POST does accept a signed-in user — but it only
+ * checks property access when the caller is a cleaner, so through that
+ * door an owner may add to any property in the database. This one is
+ * scoped like everything else on this router.
+ */
+router.post('/supplies', scopeProperties, async (req, res) => {
+  const { property_id, item_name, quantity, unit, notes } = req.body;
+  // One row per thing, however they were typed.
+  //
+  // Three items written into one box is one row, and a row is the unit
+  // you tick off — so buying the bin liners means either closing the
+  // laundry liquid with them or leaving all three open. Splitting on
+  // newlines is how somebody actually writes a shopping list.
+  const names = splitItems(req.body.items != null ? req.body.items : item_name);
+  if (!property_id || names.length === 0) {
+    return res.status(400).json({ error: 'property_id and item_name are required' });
+  }
+  if (denyIfOutOfScope(req, res, property_id)) return;
+
+  const ids = [];
+  for (const name of names) {
+    const result = await run(
+      `INSERT INTO shopping_list (property_id, item_name, quantity, unit, added_by, notes)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      // The quantity and unit belong to a single named item, so they are
+      // only applied when there is one. Three lines sharing "2 rolls"
+      // would be three wrong rows.
+      [property_id, name, names.length === 1 && Number(quantity) > 0 ? Number(quantity) : 1,
+       names.length === 1 ? unit || '' : '', req.user ? req.user.id : null, notes || '']
+    );
+    ids.push(result.rows[0].id);
+  }
+  res.status(201).json({ ids, added: ids.length });
 });
 
 /**
