@@ -149,7 +149,7 @@ export function TodayPanel({ onGoToDay, onNeedsChange, onNavigate }: {
     // through both branches below — the View button on every issue row
     // did nothing at all. It goes to the page that lists them.
     if (n.action.kind === 'issue') {
-      if (onNavigate) onNavigate('reported');
+      if (onNavigate) onNavigate('todo');
       return;
     }
     if (n.action.property_id && n.action.date && onGoToDay) {

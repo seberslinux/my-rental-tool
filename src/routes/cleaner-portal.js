@@ -11,6 +11,8 @@ const { notify, recentForCleaner } = require('../services/notify');
 // The same day-boundary the status calculation uses, so "already clean
 // today" here means what `cleanSince` means there.
 const { ymd } = require('../services/cleaning-status');
+// Three things typed into one box are three things to tick off.
+const { splitItems } = require('../services/list-text');
 
 // Resolve the cleaner record for the logged-in user
 async function getMyCleanerRecord(req) {
@@ -610,7 +612,7 @@ router.post('/maintenance', requireCleaner, async (req, res) => {
     propertyId: property_id, cleanerId: req.cleaner.id,
     // Was /more, which is the menu the page sits behind rather than the
     // page — and before there was a router it made no difference anyway.
-    link: '/reported',
+    link: '/todo',
   });
 
   res.status(201).json({ id: result.rows[0].id });
@@ -698,7 +700,12 @@ router.post('/shopping-list', async (req, res) => {
   if (!req.user && !cleaner) return res.status(403).json({ error: 'Not signed in' });
 
   const { property_id, item_name, quantity, unit, notes } = req.body;
-  if (!item_name) return res.status(400).json({ error: 'item_name required' });
+  // One row per line. A cleaner writing three things down the lines of
+  // the box means three things, and a row is the unit somebody ticks
+  // off — stored as one, buying the bin liners closes the laundry
+  // liquid too.
+  const names = splitItems(req.body.items != null ? req.body.items : item_name);
+  if (names.length === 0) return res.status(400).json({ error: 'item_name required' });
 
   // A cleaner may only ask for a property they actually work at.
   if (!req.user && property_id) {
@@ -709,16 +716,25 @@ router.post('/shopping-list', async (req, res) => {
     if (!access) return res.status(403).json({ error: 'No access to this property' });
   }
 
-  const result = await run(
-    `INSERT INTO shopping_list (property_id, item_name, quantity, unit, added_by, added_by_cleaner_id, notes)
-     VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-    [
-      property_id || null, item_name, quantity || 1, unit || '',
-      req.user ? req.user.id : null,
-      req.user ? null : cleaner.id,
-      notes || '',
-    ]
-  );
+  const ids = [];
+  for (const name of names) {
+    const result = await run(
+      `INSERT INTO shopping_list (property_id, item_name, quantity, unit, added_by, added_by_cleaner_id, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+      [
+        // A quantity and a unit describe one named item. Three lines
+        // sharing "2 rolls" would be three wrong rows, so they only
+        // apply when a single thing was asked for.
+        property_id || null, name,
+        names.length === 1 && Number(quantity) > 0 ? Number(quantity) : 1,
+        names.length === 1 ? unit || '' : '',
+        req.user ? req.user.id : null,
+        req.user ? null : cleaner.id,
+        notes || '',
+      ]
+    );
+    ids.push(result.rows[0].id);
+  }
 
   /**
    * Say so. This route used to record the request and tell nobody.
@@ -731,26 +747,38 @@ router.post('/shopping-list', async (req, res) => {
    *
    * Only when a cleaner asks. An owner adding to their own list does not
    * need a message telling them they did.
+   *
+   * One message for the lot, not one per line. Somebody writing down
+   * four things they have run out of is one request, and four buzzes is
+   * how a channel gets muted.
    */
   if (!req.user && cleaner) {
     const property = property_id ?
     await getOne('SELECT name FROM properties WHERE id = $1', [property_id]) :
     null;
-    const amount = Number(quantity) > 1 ? `${Number(quantity)} ${unit || ''}`.trim() : '';
+    const amount = names.length === 1 && Number(quantity) > 1 ?
+    `${Number(quantity)} ${unit || ''}`.trim() :
+    '';
+    const what = names.length === 1 ?
+    names[0] :
+    `${names.length} things`;
     await notify({
       event: 'supplies_needed',
-      title: `${cleaner.name} needs ${item_name}${property ? ` at ${property.name}` : ''}`,
-      body: [amount, notes].filter(Boolean).join(' · '),
+      title: `${cleaner.name} needs ${what}${property ? ` at ${property.name}` : ''}`,
+      // The items themselves when there is more than one, since "4
+      // things" on a lock screen is not worth unlocking the phone for.
+      body: [names.length > 1 ? names.join(', ') : amount, notes].filter(Boolean).join(' · '),
       propertyId: property_id || null, cleanerId: cleaner.id,
       // The page that lists it, rather than the front page. Home carries
       // outstanding supplies too, but a link there is the URL the app is
       // most likely already sitting on — and navigating to where you
       // already are is indistinguishable from a dead link.
-      link: '/reported',
+      link: '/todo',
     });
   }
 
-  res.status(201).json({ id: result.rows[0].id });
+  // `id` stays for the single-item callers that predate this.
+  res.status(201).json({ id: ids[0], ids, added: ids.length });
 });
 
 router.patch('/shopping-list/:id/purchased', async (req, res) => {
