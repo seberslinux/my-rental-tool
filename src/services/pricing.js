@@ -71,9 +71,6 @@ async function applyPricingForProperty(property, from, to) {
   let current = new Date(from);
   const endDate = new Date(to);
 
-  // price -> the nights that carry it
-  const byPrice = new Map();
-
   while (current <= endDate) {
     const dateStr = current.toISOString().split('T')[0];
 
@@ -105,38 +102,15 @@ async function applyPricingForProperty(property, from, to) {
     // Round to nearest whole number
     price = Math.round(price);
 
-    // Collected rather than sent. Smoobu takes a list of dates per
-    // price, so a month is a handful of requests instead of one for
-    // every night — and one failure no longer means thirty log lines
-    // saying the same thing.
-    if (!byPrice.has(price)) byPrice.set(price, []);
-    byPrice.get(price).push(dateStr);
+    try {
+      const apiKey = await getApiKeyForProperty(property.id);
+      await smoobu.setRates(property.smoobu_id, dateStr, dateStr, price, apiKey);
+      console.log(`Set rate for ${property.name} on ${dateStr}: ${price}`);
+    } catch (err) {
+      console.error(`Failed to set rate for ${property.name} on ${dateStr}:`, err.message);
+    }
 
     current.setDate(current.getDate() + 1);
-  }
-
-  if (byPrice.size === 0) {
-    console.log(`No rates to set for ${property.name} — every night is booked or blocked.`);
-    return;
-  }
-
-  const operations = [...byPrice.entries()].map(([price, dates]) => ({ price, dates }));
-  const nights = operations.reduce((n, op) => n + op.dates.length, 0);
-
-  try {
-    const apiKey = await getApiKeyForProperty(property.id);
-    await smoobu.setRates(property.smoobu_id, operations, apiKey);
-    console.log(
-      `Set rates for ${property.name}: ${nights} nights, ${operations.length} price(s)`
-    );
-  } catch (err) {
-    // The body, not just the status. "Request failed with status code
-    // 422" is what hid this bug for the life of the feature; Smoobu says
-    // what is wrong with the request and we were discarding it.
-    const detail = err.response && err.response.data ?
-    JSON.stringify(err.response.data) :
-    err.message;
-    console.error(`Failed to set rates for ${property.name}: ${detail}`);
   }
 }
 

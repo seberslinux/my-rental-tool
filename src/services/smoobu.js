@@ -82,34 +82,38 @@ async function getAllBookings({ from, to } = {}, apiKey) {
  *
  * The shape here is not a guess. Sending `{apartments, from, to, price}`
  * was answered with 422 "Request has wrong structure" for every date of
- * every property, every night, and the failure was invisible because the
- * caller logged only `err.message` — "Request failed with status code
- * 422" — and threw the body away. So every price this app calculated
- * since it was written stayed in our database and never reached the
- * channel manager.
+ * every property, every night, and the caller logged only `err.message`
+ * — "Request failed with status code 422" — throwing away the body that
+ * explains it. So every price this app calculated stayed in our database
+ * and never reached the channel manager.
  *
  * Asked directly, against an apartment id that does not exist so nothing
  * could be written, Smoobu says which shape it wants:
  *
- *   {apartments, from, to, price}                 wrong structure
- *   {apartments, operations:[{dates, price}]}     values are missing
+ *   {apartments, from, to, price}                    wrong structure
+ *   {apartments, operations:[{dates, price}]}        values are missing
  *   {apartments, operations:[{dates, daily_price}]}  accepted
  *
- * `dates` is a list, so a run that used to be one request per night is
- * one request per distinct price.
+ * The signature is unchanged — one call per day, as the callers and
+ * their tests expect. `dates` takes a list and this passes one, which
+ * leaves batching available later without changing anything here.
  */
-async function setRates(apartmentId, operations, apiKey) {
-  if (!operations || operations.length === 0) return null;
+async function setRates(apartmentId, from, to, pricePerNight, apiKey) {
   const client = getClient(apiKey);
+
+  // from..to inclusive, as the old `from`/`to` pair meant.
+  const dates = [];
+  for (let d = new Date(`${from}T00:00:00`); d <= new Date(`${to}T00:00:00`); d.setDate(d.getDate() + 1)) {
+    dates.push(d.toISOString().slice(0, 10));
+  }
+
   const res = await client.post('/rates', {
     apartments: [apartmentId],
-    operations: operations.map((op) => ({
-      dates: op.dates,
-      daily_price: op.price,
-    })),
+    operations: [{ dates, daily_price: pricePerNight }],
   });
   return res.data;
 }
+
 
 // Block dates (create a manual booking/block) to prevent new bookings
 async function blockDates(apartmentId, from, to, note = '', apiKey) {
