@@ -64,6 +64,14 @@ const { normalizePhone } = require('./phone');
  * not cleaned.
  */
 const EVENTS = {
+  // Money arriving, money leaving, money moving. The webhook has been
+  // writing these to the database without telling anybody since it was
+  // written — a booking could arrive overnight and the first you knew
+  // was noticing it on the calendar the next day.
+  booking_created: { severity: 'attention' },
+  booking_cancelled: { severity: 'attention' },
+  booking_changed: { severity: 'info' },
+
   cleaning_started: { severity: 'info' },
   cleaning_finished: { severity: 'info' },
   checklist_saved: { severity: 'info' },

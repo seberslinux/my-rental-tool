@@ -10,6 +10,7 @@ const {
 const smoobu = require('../services/smoobu');
 // Shared with both sync paths so the three cannot drift apart again.
 const { mapSmoobuBooking } = require('../services/smoobu-mapper');
+const { notify } = require('../services/notify');
 
 // Smoobu has no HMAC/signature support in its webhook config — the only
 // control we have is the URL itself. Require a long random secret as part
@@ -36,6 +37,30 @@ function verifyWebhookSecret(req, res, next) {
 }
 
 // Smoobu webhook endpoint — mounted at /webhook, so this is /webhook/:secret
+/**
+ * A booking, in the words somebody would use about it.
+ *
+ * "Nightingale, 3 nights from Fri, 12 Sep" says more on a lock screen
+ * than a reservation id, and the lock screen is where this now goes.
+ */
+function describe(booking, propertyName) {
+  const nights = Math.max(
+    1,
+    Math.round(
+      (new Date(booking.check_out) - new Date(booking.check_in)) / 86400000
+    )
+  );
+  const arrives = new Date(`${booking.check_in}T00:00:00`).toLocaleDateString('en-ZA', {
+    weekday: 'short', day: 'numeric', month: 'short',
+  });
+  const who = booking.guest_name || 'A guest';
+  return {
+    who,
+    line: `${nights} night${nights === 1 ? '' : 's'} from ${arrives}`,
+    where: propertyName || 'a property',
+  };
+}
+
 router.post('/:secret', verifyWebhookSecret, async (req, res) => {
   const event = req.body;
   console.log('Webhook received:', JSON.stringify(event).substring(0, 200));
@@ -95,6 +120,18 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
 
       await assignCleanerForCheckout(booking, nextBooking);
 
+      // Tell somebody. This is the event the owner most wants to hear
+      // about and the one thing the webhook never did — it wrote the
+      // row and went quiet.
+      const d = describe(booking, property.name);
+      await notify({
+        event: 'booking_created',
+        title: `New booking — ${d.where}`,
+        body: `${d.who}, ${d.line}.`,
+        propertyId: property.id,
+        link: '/',
+      });
+
     } else if (action === 'cancelReservation' || action === 'cancel') {
       const booking = await getOne('SELECT * FROM bookings WHERE smoobu_id = $1', [smoobuId]);
 
@@ -111,6 +148,17 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
         for (const blocked of blockedDates) {
           await run('DELETE FROM blocked_dates WHERE id = $1', [blocked.id]);
         }
+
+        // A cancellation is nights back on sale, which is worth knowing
+        // early enough to reprice them.
+        const d = describe(booking, property.name);
+        await notify({
+          event: 'booking_cancelled',
+          title: `Booking cancelled — ${d.where}`,
+          body: `${d.who}, ${d.line}. Those nights are free again.`,
+          propertyId: property.id,
+          link: '/',
+        });
       }
 
     } else if (action === 'modifyReservation' || action === 'modify') {
@@ -131,6 +179,18 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
       const booking = await getOne('SELECT * FROM bookings WHERE smoobu_id = $1', [smoobuId]);
       if (booking) {
         await reassignCleanerForBooking(smoobuId);
+
+        // Quieter than the other two: a changed booking is usually a
+        // detail, and the cleaner is told separately when their day
+        // actually moves.
+        const d = describe(booking, property.name);
+        await notify({
+          event: 'booking_changed',
+          title: `Booking changed — ${d.where}`,
+          body: `${d.who}, now ${d.line}.`,
+          propertyId: property.id,
+          link: '/',
+        });
       }
     }
 
