@@ -1,5 +1,4 @@
 const cron = require('node-cron');
-const { runPricingEngine } = require('../services/pricing');
 const { sendCheckinMessages, sendCheckoutMessages } = require('../services/messaging');
 const { runAssignmentForAllCheckouts } = require('../services/cleaner-assignment');
 const { getAll, getOne, run } = require('../db/database');
@@ -8,16 +7,24 @@ const { notify } = require('../services/notify');
 const { prettyDate, ymd } = require('../services/availability');
 const { STILL_TO_DO_SQL } = require('../services/job-life');
 
-// Daily at 6:00 AM SAST (UTC+2) = 4:00 AM UTC — run pricing engine
-cron.schedule('0 4 * * *', async () => {
-  console.log('Running daily pricing engine...');
-  try {
-    await runPricingEngine();
-    console.log('Pricing engine completed.');
-  } catch (err) {
-    console.error('Pricing engine cron error:', err.message);
-  }
-});
+// The pricing engine does not run.
+//
+// It prices from `properties.base_price`, which is not a nightly rate:
+// it is Smoobu's minimum-price floor. The loft's is R80 while the flat
+// actually sells for around R3,300 a night. So the engine has been
+// computing R80 — R68 inside five days — for every night of the next
+// month, every morning, since the first commit.
+//
+// None of it ever landed. Smoobu rejected every write with 422 because
+// the request body had the wrong shape, and that accident is the only
+// reason the listings were not repriced into the ground. Fixing the body
+// without fixing the number would have armed it.
+//
+// It stays off until a price is something the owner can see and set, and
+// until turning it on is a decision somebody makes per property rather
+// than a schedule that was always there. runPricingEngine and
+// POST /api/pricing/run are untouched, so it can still be run
+// deliberately against a property whose numbers have been checked.
 
 // Daily at 7:00 AM SAST = 5:00 AM UTC — send checkout reminders
 cron.schedule('0 5 * * *', async () => {
