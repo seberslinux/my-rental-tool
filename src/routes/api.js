@@ -207,49 +207,30 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
       }
     });
 
-    // The bookings are in. Say so now.
+    // The bookings are in, so the sync is as fresh as it will get.
     //
-    // Everything below this line is worth doing and none of it is worth
-    // waiting for. Measured against production: fetching took 4s and
-    // writing 5s, then cleaner assignment took another 5s and pushing
-    // rates to Smoobu took 61s — a request of well over a minute, with
-    // the timestamp written at the very end.
-    //
-    // The client only refreshes the screen once the request returns, so
-    // a booking that reached the database after nine seconds stayed
-    // invisible for the rest of the minute. Pressing Sync again just
-    // started a second minute. That is the whole of "I pressed sync and
-    // nothing happened".
+    // This used to be written last, after cleaner assignment and after
+    // every rate had been pushed to Smoobu. Any failure in those — and
+    // rates were failing with 422 on every property for months — left the
+    // timestamp untouched, so the header kept showing an older sync while
+    // the bookings underneath it were current. It measures how fresh the
+    // bookings are, so it is written when they land.
     await run(
       `INSERT INTO app_settings (key, value, updated_at) VALUES ('last_synced_at', NOW()::text, NOW())
        ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
       []
     );
 
-    res.json({ synced: allBookings.length });
-
-    // --- after the reply -------------------------------------------------
-    //
-    // Nothing past here may touch `res`. Failures are logged and notified
-    // like any other background work; the bookings are already safe.
+    // Run cleaner assignment after syncing bookings
     const { runAssignmentForAllCheckouts } = require('../services/cleaner-assignment');
-    try {
-      await runAssignmentForAllCheckouts();
-    } catch (err) {
-      console.error('Cleaner assignment after sync failed:', err.message);
-    }
+    await runAssignmentForAllCheckouts();
 
     // Rates come down in the same pass. They were previously synced only by
     // an endpoint nothing called, so daily_rates sat empty and the calendar
     // fell back to inventing prices from base_price. Failures here are
     // reported, not thrown: the bookings are already committed and are the
     // more important half.
-    let rates = { synced: 0, failures: [] };
-    try {
-      rates = await syncRates({ apiKeyForProperty: () => apiKey });
-    } catch (err) {
-      console.error('Rate sync after bookings failed:', err.message);
-    }
+    const rates = await syncRates({ apiKeyForProperty: () => apiKey });
 
     // A sync that half worked should say so.
     //
@@ -267,11 +248,14 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
       });
     }
 
+    res.json({
+      synced: allBookings.length,
+      rates_synced: rates.synced,
+      rate_failures: rates.failures,
+    });
   } catch (err) {
     console.error('Booking sync failed:', err.message);
-    // Only if we have not already replied — the slow half runs after the
-    // response, and answering twice crashes the request.
-    if (!res.headersSent) res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message });
   }
 });
 
