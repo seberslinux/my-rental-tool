@@ -376,7 +376,7 @@ test('a cleaner can be sent on a day with no booking at all', async () => {
   await loginAs(agent, owner);
   const res = await agent.post('/api/cleaners/jobs/assign').send({
     cleaner_id: cleaner.id, property_id: property.id,
-    cleaning_date: '2026-08-19', reason: 'other', note: 'Deep clean',
+    cleaning_date: soon(), reason: 'other', note: 'Deep clean',
   }).expect(201);
 
   assert.equal(res.body.booking_id, null, 'attached to the property, not a stay');
@@ -400,7 +400,7 @@ test('a preparation is timed to finish before the guests arrive', async () => {
   await loginAs(agent, owner);
   const res = await agent.post('/api/cleaners/jobs/assign').send({
     cleaner_id: cleaner.id, property_id: property.id,
-    cleaning_date: '2026-08-19', reason: 'checkin',
+    cleaning_date: soon(), reason: 'checkin',
   }).expect(201);
 
   assert.equal(res.body.start_time, '12:30');
@@ -421,7 +421,7 @@ test('a turnover starts when the guests leave', async () => {
   await loginAs(agent, owner);
   const res = await agent.post('/api/cleaners/jobs/assign').send({
     cleaner_id: cleaner.id, property_id: property.id,
-    cleaning_date: '2026-08-19', reason: 'checkout',
+    cleaning_date: soon(), reason: 'checkout',
   }).expect(201);
 
   assert.equal(res.body.start_time, '11:00');
@@ -440,7 +440,7 @@ test('a property with no times set falls back rather than to midnight', async ()
   await loginAs(agent, owner);
   const res = await agent.post('/api/cleaners/jobs/assign').send({
     cleaner_id: cleaner.id, property_id: property.id,
-    cleaning_date: '2026-08-19', reason: 'checkout',
+    cleaning_date: soon(), reason: 'checkout',
   }).expect(201);
 
   assert.equal(res.body.start_time, '10:00', 'not 00:00');
@@ -457,7 +457,7 @@ test('somebody who is not free can still be asked, and is asked rather than told
   const agent = await getAgent();
   await loginAs(agent, owner);
   await agent.post('/api/cleaners/jobs/assign').send({
-    cleaner_id: cleaner.id, property_id: property.id, cleaning_date: '2026-08-22',
+    cleaner_id: cleaner.id, property_id: property.id, cleaning_date: soon(),
   }).expect(201);
 
   const feed = await recentForCleaner(cleaner.id);
@@ -471,16 +471,22 @@ test('somebody who is free is told, not asked', async () => {
   const property = await seedProperty({ owner });
   const cleaner = await seedCleaner({ phone: '+27821234568' });
   await linkCleanerToProperty(cleaner, property);
+
+  // The weekday is derived from the day we are about to ask about, not
+  // pinned to a Saturday in August 2026. "Free on the day in question" is
+  // the fact this test needs; a particular Saturday was that fact with an
+  // expiry date attached.
+  const when = soon();
   await pool.query(
     `INSERT INTO cleaner_availability (cleaner_id, day_of_week, start_time, end_time)
-     VALUES ($1, 6, '08:00', '18:00')`, [cleaner.id]
+     VALUES ($1, $2, '08:00', '18:00')`,
+    [cleaner.id, new Date(`${when}T00:00:00`).getDay()]
   );
 
   const agent = await getAgent();
   await loginAs(agent, owner);
-  // 2026-08-22 is a Saturday.
   await agent.post('/api/cleaners/jobs/assign').send({
-    cleaner_id: cleaner.id, property_id: property.id, cleaning_date: '2026-08-22',
+    cleaner_id: cleaner.id, property_id: property.id, cleaning_date: when,
   }).expect(201);
 
   const feed = await recentForCleaner(cleaner.id);
