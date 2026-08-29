@@ -207,6 +207,20 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
       }
     });
 
+    // The bookings are in, so the sync is as fresh as it will get.
+    //
+    // This used to be written last, after cleaner assignment and after
+    // every rate had been pushed to Smoobu. Any failure in those — and
+    // rates were failing with 422 on every property for months — left the
+    // timestamp untouched, so the header kept showing an older sync while
+    // the bookings underneath it were current. It measures how fresh the
+    // bookings are, so it is written when they land.
+    await run(
+      `INSERT INTO app_settings (key, value, updated_at) VALUES ('last_synced_at', NOW()::text, NOW())
+       ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
+      []
+    );
+
     // Run cleaner assignment after syncing bookings
     const { runAssignmentForAllCheckouts } = require('../services/cleaner-assignment');
     await runAssignmentForAllCheckouts();
@@ -233,13 +247,6 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
         link: '/smoobu',
       });
     }
-
-    // Record when this sync completed so the UI can show "Synced X ago"
-    await run(
-      `INSERT INTO app_settings (key, value, updated_at) VALUES ('last_synced_at', NOW()::text, NOW())
-       ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at`,
-      []
-    );
 
     res.json({
       synced: allBookings.length,
