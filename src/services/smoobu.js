@@ -77,17 +77,52 @@ async function getAllBookings({ from, to } = {}, apiKey) {
   return allBookings;
 }
 
-// Update rates for a property
+/**
+ * Write rates back to Smoobu.
+ *
+ * The shape here is not a guess. Sending `{apartments, from, to, price}`
+ * was answered with 422 "Request has wrong structure" for every date of
+ * every property, every night, and the caller logged only `err.message`
+ * — "Request failed with status code 422" — throwing away the body that
+ * explains it. So every price this app calculated stayed in our database
+ * and never reached the channel manager.
+ *
+ * Asked directly, against an apartment id that does not exist so nothing
+ * could be written, Smoobu says which shape it wants:
+ *
+ *   {apartments, from, to, price}                    wrong structure
+ *   {apartments, operations:[{dates, price}]}        values are missing
+ *   {apartments, operations:[{dates, daily_price}]}  accepted
+ *
+ * The signature is unchanged — one call per day, as the callers and
+ * their tests expect. `dates` takes a list and this passes one, which
+ * leaves batching available later without changing anything here.
+ */
 async function setRates(apartmentId, from, to, pricePerNight, apiKey) {
   const client = getClient(apiKey);
+
+  // from..to inclusive, walked in UTC.
+  //
+  // Built from local midnight and read back with toISOString(), every
+  // date east of Greenwich comes out as the day before — the rate would
+  // be set on the wrong night, quietly, and only somewhere with a
+  // positive offset. This runs in SAST.
+  const dates = [];
+  for (
+    let d = new Date(`${from}T00:00:00Z`);
+    d <= new Date(`${to}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1)
+  ) {
+    dates.push(d.toISOString().slice(0, 10));
+  }
+
   const res = await client.post('/rates', {
     apartments: [apartmentId],
-    from,
-    to,
-    price: pricePerNight,
+    operations: [{ dates, daily_price: pricePerNight }],
   });
   return res.data;
 }
+
 
 // Block dates (create a manual booking/block) to prevent new bookings
 async function blockDates(apartmentId, from, to, note = '', apiKey) {

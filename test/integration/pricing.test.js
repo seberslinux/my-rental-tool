@@ -1,7 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { getApp, resetDb, closePool } = require('../helpers/harness');
-const { seedUser, seedProperty, seedBooking } = require('../helpers/seed');
+const { getApp, getAgent, resetDb, closePool } = require('../helpers/harness');
+const { seedUser, seedProperty, seedBooking, loginAs } = require('../helpers/seed');
+const { inDays } = require('../helpers/dates');
 const mockSmoobu = require('../helpers/mock-smoobu');
 const { runPricingEngine } = require('../../src/services/pricing');
 const { pool } = require('../../src/db/database');
@@ -219,3 +220,64 @@ function pickDate({ minDaysOut, maxDaysOut, weekdays }) {
   }
   throw new Error(`no matching date in [${minDaysOut},${maxDaysOut}] for weekdays ${weekdays}`);
 }
+
+// --- setting a nightly rate by hand --------------------------------------
+
+test('a nightly rate is sent to Smoobu before it is stored', async () => {
+  // Smoobu takes a rate per date and adds each channel's percentage on
+  // top, so one figure a night is the whole input. Storing it first would
+  // put a price on the calendar that no guest can book.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner, smoobu_id: 100 });
+  await pool.query('UPDATE properties SET base_price = 80 WHERE id = $1', [property.id]);
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const when = inDays(5);
+
+  await agent.put(`/api/properties/${property.id}/rates`)
+    .send({ from: when, to: when, price: 2400 }).expect(200);
+
+  const call = mockSmoobu.calls.setRates.find((c) => c.from === when);
+  assert.ok(call, 'Smoobu was told');
+  assert.equal(call.price, 2400);
+
+  const { rows } = await pool.query(
+    'SELECT price FROM daily_rates WHERE property_id = $1 AND date = $2', [property.id, when]
+  );
+  assert.equal(Math.round(rows[0].price), 2400, 'and our copy follows');
+});
+
+test('a rate below the Smoobu minimum is refused', async () => {
+  // base_price is Smoobu's floor. An extra zero missed off is the
+  // expensive direction, and this is the one number Smoobu already has
+  // an opinion about.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner, smoobu_id: 100 });
+  await pool.query('UPDATE properties SET base_price = 1600 WHERE id = $1', [property.id]);
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.put(`/api/properties/${property.id}/rates`)
+    .send({ from: inDays(5), to: inDays(5), price: 160 }).expect(400);
+  assert.match(res.body.error, /minimum/);
+});
+
+test('a range sets every night in it', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner, smoobu_id: 100 });
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const res = await agent.put(`/api/properties/${property.id}/rates`)
+    .send({ from: inDays(3), to: inDays(5), price: 3100 }).expect(200);
+
+  assert.equal(res.body.nights, 3);
+  const { rows } = await pool.query(
+    'SELECT count(*)::int n FROM daily_rates WHERE property_id = $1 AND price = 3100', [property.id]
+  );
+  assert.equal(rows[0].n, 3);
+});
