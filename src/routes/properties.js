@@ -232,6 +232,83 @@ router.get('/:id/summary', async (req, res) => {
 });
 
 // Update property settings
+/**
+ * Set the nightly rate for a night, or a run of nights.
+ *
+ * This is the number the owner actually manages. Smoobu takes a rate per
+ * date and applies each channel's percentage on top before pushing it to
+ * Airbnb and the rest, so one figure per night is the whole input.
+ *
+ * Until now nothing in the app could write one. Rates were pulled from
+ * Smoobu into `daily_rates` and shown, and the only thing that ever tried
+ * to write them was a nightly engine pricing from `base_price` — Smoobu's
+ * minimum-price floor, R80 on a flat that sells for R3,300.
+ *
+ * Smoobu first, then us. A rate we stored but failed to send would put a
+ * price on the calendar that no guest can book, which is worse than
+ * refusing the edit: the calendar is only worth reading if it agrees with
+ * the channel.
+ */
+router.put('/:id/rates', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  const property = await getOne('SELECT * FROM properties WHERE id = $1', [req.params.id]);
+  if (!property) return res.status(404).json({ error: 'Property not found' });
+
+  const { from, to, price } = req.body || {};
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  if (!day.test(String(from)) || !day.test(String(to || from))) {
+    return res.status(400).json({ error: 'Dates must be YYYY-MM-DD' });
+  }
+  const last = to || from;
+  if (last < from) return res.status(400).json({ error: 'That range ends before it starts' });
+
+  const amount = Number(price);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return res.status(400).json({ error: 'A nightly rate must be a positive number' });
+  }
+  // A typo of an extra zero is the expensive direction, and the floor is
+  // the one number Smoobu already holds an opinion about.
+  if (property.base_price > 0 && amount < property.base_price) {
+    return res.status(400).json({
+      error: `Below the minimum of ${Math.round(property.base_price)} set in Smoobu`,
+    });
+  }
+
+  const apiKey = await getApiKeyForProperty(property.id);
+  if (!apiKey) return res.status(400).json({ error: 'No Smoobu API key configured' });
+
+  try {
+    await smoobu.setRates(property.smoobu_id, from, last, amount, apiKey);
+  } catch (err) {
+    const detail = err.response && err.response.data ?
+    (err.response.data.detail || JSON.stringify(err.response.data)) :
+    err.message;
+    return res.status(502).json({ error: `Smoobu refused it: ${detail}` });
+  }
+
+  // Smoobu took it, so our copy can follow.
+  // Walked in UTC — see setRates. Local midnight plus toISOString()
+  // lands on the previous day anywhere east of Greenwich.
+  const dates = [];
+  for (
+    let d = new Date(`${from}T00:00:00Z`);
+    d <= new Date(`${last}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1)
+  ) {
+    dates.push(d.toISOString().slice(0, 10));
+  }
+  for (const date of dates) {
+    await run(
+      `INSERT INTO daily_rates (property_id, date, price, fetched_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT(property_id, date) DO UPDATE SET price = EXCLUDED.price, fetched_at = NOW()`,
+      [property.id, date, amount]
+    );
+  }
+
+  res.json({ ok: true, nights: dates.length, price: amount });
+});
+
 router.put('/:id', async (req, res) => {
   if (denyIfOutOfScope(req, res, req.params.id)) return;
   const property = await getOne('SELECT * FROM properties WHERE id = $1', [req.params.id]);

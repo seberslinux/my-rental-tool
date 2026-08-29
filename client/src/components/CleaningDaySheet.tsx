@@ -47,9 +47,39 @@ export function CleaningDaySheet({
   lockProperty?: boolean;
   initialReason?: Reason;
 }) {
+  const [editingRate, setEditingRate] = useState(false);
+  const [rateValue, setRateValue] = useState('');
+  const [savingRate, setSavingRate] = useState(false);
+  const [rateError, setRateError] = useState('');
+
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [reason, setReason] = useState<Reason>(initialReason);
+
+  /**
+   * Send the new rate to Smoobu, and only then believe it.
+   *
+   * The server pushes before it stores, so a refusal leaves both sides
+   * as they were. A price on this calendar that Smoobu never accepted
+   * would be a number no guest could book.
+   */
+  const saveRate = async () => {
+    setSavingRate(true);
+    setRateError('');
+    const res = await fetch(`/api/properties/${propId}/rates`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ from: date, to: date, price: Number(rateValue) }),
+    });
+    setSavingRate(false);
+    if (!res.ok) {
+      setRateError((await res.json().catch(() => ({}))).error || 'Could not set that rate');
+      return;
+    }
+    setEditingRate(false);
+    onAssigned();
+  };
   const [note, setNote] = useState('');
   const [propId, setPropId] = useState(propertyId);
 
@@ -177,12 +207,46 @@ export function CleaningDaySheet({
             until you do, and on a phone they are a few pixels wide.
             Opening the day is the moment to say them plainly. */}
         <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-[13px]">
-          {rate &&
+          {/* The rate, and the one number the owner sets.
+              Smoobu takes a nightly figure and adds each channel's
+              percentage before pushing it out, so this is the whole
+              input. Until now the app could show it and not change it. */}
+          {rate && !editingRate &&
           <span className={rate.available ? 'text-[#222222]' : 'text-[#8A8A8A]'}>
               <span className="text-[#717171]">Rate </span>
               {rate.available ? formatRate(rate.price) : `${formatRate(rate.price)} · not for sale`}
+              <button
+              onClick={() => { setRateValue(String(Math.round(rate.price))); setEditingRate(true); setRateError(''); }}
+              className="ml-1.5 text-[#FF385C] font-semibold">
+                Change
+              </button>
             </span>
           }
+
+          {editingRate &&
+          <span className="flex items-center gap-1.5 w-full">
+              <span className="text-[#717171]">Rate</span>
+              <input
+              type="number"
+              inputMode="numeric"
+              value={rateValue}
+              onChange={(e) => setRateValue(e.target.value)}
+              aria-label="Nightly rate"
+              className="w-24 px-2 py-1 border border-[#DDDDDD] rounded-[6px] text-[13px] tabular-nums" />
+              <button
+              disabled={savingRate}
+              onClick={saveRate}
+              className="px-2.5 py-1 rounded-[6px] bg-[#222222] text-white text-[12px] font-semibold disabled:opacity-50">
+                {savingRate ? 'Sending…' : 'Save'}
+              </button>
+              <button
+              onClick={() => { setEditingRate(false); setRateError(''); }}
+              className="text-[12px] text-[#717171] underline underline-offset-2">
+                Cancel
+              </button>
+            </span>
+          }
+          {rateError && <span className="w-full text-[12px] text-[#991B1B]">{rateError}</span>}
           {rate && rate.minStay > 1 &&
           <span>
               <span className="text-[#717171]">Minimum stay </span>
