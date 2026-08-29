@@ -274,11 +274,42 @@ router.put('/:id/rates', async (req, res) => {
     });
   }
 
+  // Nights somebody has already bought are not for repricing. The guest
+  // paid what they paid, and a range dragged across a month should not
+  // quietly rewrite the middle of a stay. They are reported back so the
+  // count on screen is the number of nights that actually changed.
+  const nightsIn = [];
+  for (
+    let d = new Date(`${from}T00:00:00Z`);
+    d <= new Date(`${last}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + 1)
+  ) {
+    nightsIn.push(d.toISOString().slice(0, 10));
+  }
+
+  const sold = await getAll(
+    `SELECT check_in, check_out FROM bookings
+      WHERE property_id = $1 AND status = 'confirmed'
+        AND check_out > $2 AND check_in <= $3`,
+    [property.id, from, last]
+  );
+  const isSold = (date) =>
+  sold.some((b) => String(b.check_in) <= date && date < String(b.check_out));
+
+  const dates = nightsIn.filter((d) => !isSold(d));
+  const skipped = nightsIn.length - dates.length;
+
+  if (dates.length === 0) {
+    return res.status(400).json({
+      error: skipped ? 'Every night in that range is already booked' : 'No nights in that range',
+    });
+  }
+
   const apiKey = await getApiKeyForProperty(property.id);
   if (!apiKey) return res.status(400).json({ error: 'No Smoobu API key configured' });
 
   try {
-    await smoobu.setRates(property.smoobu_id, from, last, amount, apiKey);
+    await smoobu.setRatesForDates(property.smoobu_id, dates, amount, apiKey);
   } catch (err) {
     const detail = err.response && err.response.data ?
     (err.response.data.detail || JSON.stringify(err.response.data)) :
@@ -287,16 +318,6 @@ router.put('/:id/rates', async (req, res) => {
   }
 
   // Smoobu took it, so our copy can follow.
-  // Walked in UTC — see setRates. Local midnight plus toISOString()
-  // lands on the previous day anywhere east of Greenwich.
-  const dates = [];
-  for (
-    let d = new Date(`${from}T00:00:00Z`);
-    d <= new Date(`${last}T00:00:00Z`);
-    d.setUTCDate(d.getUTCDate() + 1)
-  ) {
-    dates.push(d.toISOString().slice(0, 10));
-  }
   for (const date of dates) {
     await run(
       `INSERT INTO daily_rates (property_id, date, price, fetched_at)
@@ -306,7 +327,7 @@ router.put('/:id/rates', async (req, res) => {
     );
   }
 
-  res.json({ ok: true, nights: dates.length, price: amount });
+  res.json({ ok: true, nights: dates.length, skipped, price: amount });
 });
 
 router.put('/:id', async (req, res) => {

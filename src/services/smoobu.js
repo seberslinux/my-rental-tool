@@ -98,6 +98,24 @@ async function getAllBookings({ from, to } = {}, apiKey) {
  * their tests expect. `dates` takes a list and this passes one, which
  * leaves batching available later without changing anything here.
  */
+/**
+ * Set one price across an explicit list of nights.
+ *
+ * `dates` is a list in Smoobu's own payload, so a month of nights is one
+ * request. The list form matters beyond tidiness: a range with a booking
+ * in the middle is not a range, and the caller filters those out before
+ * calling — which a from/to pair cannot express.
+ */
+async function setRatesForDates(apartmentId, dates, pricePerNight, apiKey) {
+  if (!dates || dates.length === 0) return null;
+  const client = getClient(apiKey);
+  const res = await client.post('/rates', {
+    apartments: [apartmentId],
+    operations: [{ dates, daily_price: pricePerNight }],
+  });
+  return res.data;
+}
+
 async function setRates(apartmentId, from, to, pricePerNight, apiKey) {
   const client = getClient(apiKey);
 
@@ -155,6 +173,7 @@ async function sendGuestMessage(reservationId, subject, messageBody, apiKey) {
 }
 
 module.exports = {
+  setRatesForDates,
   getProperties,
   getPropertyDetails,
   getBookings,
