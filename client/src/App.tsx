@@ -509,6 +509,24 @@ export function App() {
           setPickedDay(null);
           setPickedFor(null);
           setDashboardVersion((v) => v + 1);
+        }}
+        /**
+         * A rate that changed, rather than a cleaner who was sent.
+         *
+         * Sending somebody is finished business, so that closes the sheet.
+         * Changing a price is not: you set it, you want to see it, and you
+         * may well set the next night too. So this reloads the rates and
+         * leaves the sheet where it is.
+         *
+         * Bumping dashboardVersion was not enough on its own — that
+         * re-renders the page but re-reads nothing, so the calendar went
+         * on drawing the price it had loaded and the new one appeared
+         * only after a sync.
+         */
+        onRatesChanged={async () => {
+          await loadCalendarData();
+          setCleaningVersion((v) => v + 1);
+          setDashboardVersion((v) => v + 1);
         }} />
       }
 

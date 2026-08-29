@@ -29,7 +29,7 @@ const REASONS: {key: Reason;label: string;hint: string;}[] = [
 
 
 export function CleaningDaySheet({
-  date, day, propertyId, propertyName, onClose, onAssigned,
+  date, day, propertyId, propertyName, onClose, onAssigned, onRatesChanged,
   lockProperty = false, initialReason = 'checkout',
 }: {
   date: string;
@@ -38,6 +38,8 @@ export function CleaningDaySheet({
   propertyName: string;
   onClose: () => void;
   onAssigned: () => void;
+  /** A price changed: reload the rates, but stay on this day. */
+  onRatesChanged?: () => void | Promise<void>;
   /**
    * True when the property came from the thing that was clicked — a
    * booking bar or a blocked bar is already about one property, and
@@ -78,7 +80,9 @@ export function CleaningDaySheet({
       return;
     }
     setEditingRate(false);
-    onAssigned();
+    // Not onAssigned: that closes the sheet, and having just set a price
+    // the thing you want is to see it.
+    if (onRatesChanged) await onRatesChanged();
   };
   const [note, setNote] = useState('');
   const [propId, setPropId] = useState(propertyId);
