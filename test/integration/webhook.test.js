@@ -328,3 +328,69 @@ test('webhook writes only affect the matched apartment — user A\'s bookings un
   const aliceRows = await pool.query('SELECT count(*)::int FROM bookings WHERE property_id = $1', [aliceProp.id]);
   assert.equal(aliceRows.rows[0].count, 0);
 });
+
+// --- the owner gets told --------------------------------------------------
+
+test('a new booking tells somebody', async () => {
+  // The webhook wrote the row and went quiet. A booking could arrive
+  // overnight and the first anybody knew was noticing it on the calendar
+  // the next day — which is also the reason it looked like the sync was
+  // broken: nothing announced the thing that had arrived.
+  const app = await getApp();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner, name: 'Hill Top Lodge' });
+
+  await request(app).post(goodUrl()).send(
+    newReservationEvent(property, {
+      id: 999501, 'guest-name': 'Nightingale',
+      arrival: '2026-09-12', departure: '2026-09-15',
+    })
+  ).expect(200);
+
+  const notes = await pool.query(
+    `SELECT * FROM notifications WHERE event = 'booking_created' ORDER BY id DESC`
+  );
+  assert.equal(notes.rows.length, 1, 'exactly one, not one per property');
+  assert.match(notes.rows[0].title, /Hill Top Lodge/, 'says which property');
+  assert.match(notes.rows[0].body, /Nightingale/, 'says who');
+  assert.match(notes.rows[0].body, /3 nights/, 'says how long');
+});
+
+test('a cancellation says the nights are free again', async () => {
+  const app = await getApp();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner, name: 'The loft' });
+
+  await request(app).post(goodUrl()).send(
+    newReservationEvent(property, {
+      id: 999502, 'guest-name': 'Bruno', arrival: '2026-09-20', departure: '2026-09-22',
+    })
+  ).expect(200);
+
+  await request(app).post(goodUrl()).send({
+    action: 'cancelReservation',
+    data: { id: 999502, apartment: { id: property.smoobu_id } },
+  }).expect(200);
+
+  const notes = await pool.query(
+    `SELECT * FROM notifications WHERE event = 'booking_cancelled' ORDER BY id DESC`
+  );
+  assert.equal(notes.rows.length, 1);
+  assert.match(notes.rows[0].body, /free again/);
+});
+
+test('a webhook that cannot notify still records the booking', async () => {
+  // The booking is the fact; telling somebody is a courtesy on top of it.
+  // If notification ever throws, the row must still be there — losing a
+  // booking because a message failed would be the worse trade.
+  const app = await getApp();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner });
+
+  await request(app).post(goodUrl()).send(
+    newReservationEvent(property, { id: 999503, arrival: '2026-10-01', departure: '2026-10-03' })
+  ).expect(200);
+
+  const row = await pool.query('SELECT * FROM bookings WHERE smoobu_id = $1', [999503]);
+  assert.equal(row.rows.length, 1, 'the booking is saved regardless');
+});
