@@ -77,14 +77,36 @@ async function getAllBookings({ from, to } = {}, apiKey) {
   return allBookings;
 }
 
-// Update rates for a property
-async function setRates(apartmentId, from, to, pricePerNight, apiKey) {
+/**
+ * Write rates back to Smoobu.
+ *
+ * The shape here is not a guess. Sending `{apartments, from, to, price}`
+ * was answered with 422 "Request has wrong structure" for every date of
+ * every property, every night, and the failure was invisible because the
+ * caller logged only `err.message` — "Request failed with status code
+ * 422" — and threw the body away. So every price this app calculated
+ * since it was written stayed in our database and never reached the
+ * channel manager.
+ *
+ * Asked directly, against an apartment id that does not exist so nothing
+ * could be written, Smoobu says which shape it wants:
+ *
+ *   {apartments, from, to, price}                 wrong structure
+ *   {apartments, operations:[{dates, price}]}     values are missing
+ *   {apartments, operations:[{dates, daily_price}]}  accepted
+ *
+ * `dates` is a list, so a run that used to be one request per night is
+ * one request per distinct price.
+ */
+async function setRates(apartmentId, operations, apiKey) {
+  if (!operations || operations.length === 0) return null;
   const client = getClient(apiKey);
   const res = await client.post('/rates', {
     apartments: [apartmentId],
-    from,
-    to,
-    price: pricePerNight,
+    operations: operations.map((op) => ({
+      dates: op.dates,
+      daily_price: op.price,
+    })),
   });
   return res.data;
 }
