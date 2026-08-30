@@ -328,3 +328,70 @@ test('a range that is entirely booked is refused, not silently ignored', async (
     .send({ from: inDays(3), to: inDays(5), price: 3100 }).expect(400);
   assert.match(res.body.error, /already booked/);
 });
+
+// --- minimum stay ---------------------------------------------------------
+
+test('a minimum stay is sent alongside the rate', async () => {
+  // Confirmed against Smoobu rather than assumed: a real write moved
+  // 2027-03-28 from 4 nights to 3 and back. Every dry probe reached date
+  // validation first and could not tell an honoured field from an
+  // ignored one.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner, smoobu_id: 100 });
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  const when = inDays(4);
+  await agent.put(`/api/properties/${property.id}/rates`)
+    .send({ from: when, to: when, price: 3800, min_stay: 3 }).expect(200);
+
+  const call = mockSmoobu.calls.setRatesForDates.at(-1);
+  assert.equal(call.minStay, 3, 'Smoobu was told the restriction');
+
+  const { rows } = await pool.query(
+    'SELECT min_stay FROM daily_rates WHERE property_id = $1 AND date = $2', [property.id, when]
+  );
+  assert.equal(rows[0].min_stay, 3, 'and our copy follows');
+});
+
+test('leaving the minimum out does not rewrite the one already there', async () => {
+  // A default sent on every save would quietly clear a restriction
+  // somebody set deliberately.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner, smoobu_id: 100 });
+  const when = inDays(4);
+  await pool.query(
+    `INSERT INTO daily_rates (property_id, date, price, min_stay) VALUES ($1, $2, 2000, 5)`,
+    [property.id, when]
+  );
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  await agent.put(`/api/properties/${property.id}/rates`)
+    .send({ from: when, to: when, price: 3800 }).expect(200);
+
+  const call = mockSmoobu.calls.setRatesForDates.at(-1);
+  assert.equal(call.minStay, null, 'Smoobu was not asked to change it');
+
+  const { rows } = await pool.query(
+    'SELECT price, min_stay FROM daily_rates WHERE property_id = $1 AND date = $2', [property.id, when]
+  );
+  assert.equal(Math.round(rows[0].price), 3800, 'the price moved');
+  assert.equal(rows[0].min_stay, 5, 'the minimum did not');
+});
+
+test('a nonsense minimum stay is refused', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner, smoobu_id: 100 });
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  for (const bad of [0, -2, 1.5, 400]) {
+    const res = await agent.put(`/api/properties/${property.id}/rates`)
+      .send({ from: inDays(4), to: inDays(4), price: 3800, min_stay: bad }).expect(400);
+    assert.match(res.body.error, /minimum stay/i, `rejected ${bad}`);
+  }
+});

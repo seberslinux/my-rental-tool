@@ -106,12 +106,20 @@ async function getAllBookings({ from, to } = {}, apiKey) {
  * in the middle is not a range, and the caller filters those out before
  * calling — which a from/to pair cannot express.
  */
-async function setRatesForDates(apartmentId, dates, pricePerNight, apiKey) {
+async function setRatesForDates(apartmentId, dates, pricePerNight, apiKey, minStay = null) {
   if (!dates || dates.length === 0) return null;
   const client = getClient(apiKey);
+
+  // min_length_of_stay is confirmed, not assumed. Every dry probe hit
+  // date validation before field validation, so the only way to tell an
+  // honoured field from an ignored one was to write it and read it back:
+  // 2027-03-28 went from 4 to 3 and back again.
+  const operation = { dates, daily_price: pricePerNight };
+  if (minStay != null) operation.min_length_of_stay = minStay;
+
   const res = await client.post('/rates', {
     apartments: [apartmentId],
-    operations: [{ dates, daily_price: pricePerNight }],
+    operations: [operation],
   });
   return res.data;
 }

@@ -254,7 +254,7 @@ router.put('/:id/rates', async (req, res) => {
   const property = await getOne('SELECT * FROM properties WHERE id = $1', [req.params.id]);
   if (!property) return res.status(404).json({ error: 'Property not found' });
 
-  const { from, to, price } = req.body || {};
+  const { from, to, price, min_stay: minStayRaw } = req.body || {};
   const day = /^\d{4}-\d{2}-\d{2}$/;
   if (!day.test(String(from)) || !day.test(String(to || from))) {
     return res.status(400).json({ error: 'Dates must be YYYY-MM-DD' });
@@ -265,6 +265,16 @@ router.put('/:id/rates', async (req, res) => {
   const amount = Number(price);
   if (!Number.isFinite(amount) || amount <= 0) {
     return res.status(400).json({ error: 'A nightly rate must be a positive number' });
+  }
+
+  // Optional. Left out, the nights keep whatever minimum they had —
+  // sending a default would quietly rewrite a restriction nobody touched.
+  let minStay = null;
+  if (minStayRaw !== undefined && minStayRaw !== null && minStayRaw !== '') {
+    minStay = Number(minStayRaw);
+    if (!Number.isInteger(minStay) || minStay < 1 || minStay > 30) {
+      return res.status(400).json({ error: 'A minimum stay must be a whole number of nights, 1 to 30' });
+    }
   }
   // A typo of an extra zero is the expensive direction, and the floor is
   // the one number Smoobu already holds an opinion about.
@@ -309,7 +319,7 @@ router.put('/:id/rates', async (req, res) => {
   if (!apiKey) return res.status(400).json({ error: 'No Smoobu API key configured' });
 
   try {
-    await smoobu.setRatesForDates(property.smoobu_id, dates, amount, apiKey);
+    await smoobu.setRatesForDates(property.smoobu_id, dates, amount, apiKey, minStay);
   } catch (err) {
     const detail = err.response && err.response.data ?
     (err.response.data.detail || JSON.stringify(err.response.data)) :
@@ -320,14 +330,19 @@ router.put('/:id/rates', async (req, res) => {
   // Smoobu took it, so our copy can follow.
   for (const date of dates) {
     await run(
+      minStay == null ?
       `INSERT INTO daily_rates (property_id, date, price, fetched_at)
-       VALUES ($1, $2, $3, NOW())
-       ON CONFLICT(property_id, date) DO UPDATE SET price = EXCLUDED.price, fetched_at = NOW()`,
-      [property.id, date, amount]
+         VALUES ($1, $2, $3, NOW())
+       ON CONFLICT(property_id, date) DO UPDATE SET price = EXCLUDED.price, fetched_at = NOW()` :
+      `INSERT INTO daily_rates (property_id, date, price, min_stay, fetched_at)
+         VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT(property_id, date) DO UPDATE SET
+         price = EXCLUDED.price, min_stay = EXCLUDED.min_stay, fetched_at = NOW()`,
+      minStay == null ? [property.id, date, amount] : [property.id, date, amount, minStay]
     );
   }
 
-  res.json({ ok: true, nights: dates.length, skipped, price: amount });
+  res.json({ ok: true, nights: dates.length, skipped, price: amount, min_stay: minStay });
 });
 
 router.put('/:id', async (req, res) => {

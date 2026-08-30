@@ -52,6 +52,7 @@ export function CleaningDaySheet({
   const [editingRate, setEditingRate] = useState(false);
   const [rateValue, setRateValue] = useState('');
   const [rateUntil, setRateUntil] = useState('');
+  const [minStay, setMinStay] = useState('');
   const [savingRate, setSavingRate] = useState(false);
   const [rateError, setRateError] = useState('');
   const [rateNote, setRateNote] = useState('');
@@ -74,7 +75,13 @@ export function CleaningDaySheet({
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ from: date, to: rateUntil || date, price: Number(rateValue) }),
+      body: JSON.stringify({
+        from: date,
+        to: rateUntil || date,
+        price: Number(rateValue),
+        // Blank means "leave it alone", not "set it to one".
+        ...(minStay === '' ? {} : { min_stay: Number(minStay) }),
+      }),
     });
     setSavingRate(false);
     if (!res.ok) {
@@ -85,11 +92,11 @@ export function CleaningDaySheet({
     setEditingRate(false);
     // A range can partly skip, so say what actually changed rather than
     // leaving somebody to count cells.
-    setRateNote(
-      out.skipped ?
-      `${out.nights} night${out.nights === 1 ? '' : 's'} set · ${out.skipped} already booked` :
-      `${out.nights} night${out.nights === 1 ? '' : 's'} set`
-    );
+    const nights = `${out.nights} night${out.nights === 1 ? '' : 's'} set`;
+    const min = out.min_stay ? `, minimum ${out.min_stay}` : '';
+    setRateNote(out.skipped ?
+    `${nights}${min} · ${out.skipped} already booked` :
+    `${nights}${min}`);
     // Not onAssigned: that closes the sheet, and having just set a price
     // the thing you want is to see it.
     if (onRatesChanged) await onRatesChanged();
@@ -230,7 +237,7 @@ export function CleaningDaySheet({
               <span className="text-[#717171]">Rate </span>
               {rate.available ? formatRate(rate.price) : `${formatRate(rate.price)} · not for sale`}
               <button
-              onClick={() => { setRateValue(String(Math.round(rate.price))); setRateUntil(date); setEditingRate(true); setRateError(''); }}
+              onClick={() => { setRateValue(String(Math.round(rate.price))); setRateUntil(date); setMinStay(rate.minStay > 1 ? String(rate.minStay) : ''); setEditingRate(true); setRateError(''); }}
               className="ml-1.5 text-[#FF385C] font-semibold">
                 Change
               </button>
@@ -252,6 +259,23 @@ export function CleaningDaySheet({
                 {/* One night unless you say otherwise. Most changes are a
                     single day; a season is the same action with an end
                     date on it, so it is one field rather than a mode. */}
+                {/* The other half of a discount. "Cheaper, but three
+                    nights" protects the rate while filling the gap, and
+                    it is the same call — so it is the same form. Left
+                    blank it is not sent, and whatever restriction the
+                    night already had stays put. */}
+                <span className="text-[#717171]">min</span>
+                <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={30}
+                placeholder="—"
+                value={minStay}
+                onChange={(e) => setMinStay(e.target.value)}
+                aria-label="Minimum nights"
+                className="w-16 px-2 py-1 border border-[#DDDDDD] rounded-[6px] text-[13px] tabular-nums" />
+
                 <span className="text-[#717171]">until</span>
                 <input
                 type="date"
@@ -277,6 +301,7 @@ export function CleaningDaySheet({
                 {rateUntil && rateUntil !== date ?
               `Every night from ${date} to ${rateUntil} that nobody has booked.` :
               'This night only.'}
+                {minStay === '' && ' Minimum stay unchanged.'}
               </p>
             </div>
           }
