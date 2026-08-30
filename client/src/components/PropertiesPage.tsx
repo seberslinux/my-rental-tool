@@ -9,6 +9,7 @@ import {
   Percent,
   MessageSquare,
   BarChart2,
+  Tag,
   ClipboardList,
   Save,
   RefreshCw,
@@ -23,6 +24,7 @@ import {
 'lucide-react';
 import { ChecklistEditor } from './ChecklistEditor';
 import { CleanerOrderEditor } from './CleanerOrderEditor';
+import { RatePlanSheet } from './RatePlanSheet';
 
 interface Property {
   id: number;
@@ -160,6 +162,7 @@ function SyncBadge() {
 const inputCls =
 'w-full h-9 px-3 border border-[#EBEBEB] rounded-[8px] text-[13px] focus:outline-none focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF]';
 export function PropertiesPage() {
+  const [pricing, setPricing] = useState<{id: number;name: string;} | null>(null);
   const [expandedProperty, setExpandedProperty] = useState<number | null>(null);
   // Which property's cleaning checklist is being edited.
   const [checklistFor, setChecklistFor] = useState<Property | null>(null);
@@ -310,6 +313,16 @@ export function PropertiesPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 pl-7 sm:pl-0">
+                  {/* Pricing belongs on the property, not buried in a
+                      sheet whose job is sending a cleaner. This is where
+                      somebody goes looking for it. */}
+                  <button
+                    className="flex items-center gap-1 text-[12px] font-semibold text-[#007AFF] hover:underline"
+                    onClick={(e) => { e.stopPropagation(); setPricing({ id: prop.id, name: prop.name }); }}>
+
+                    <Tag className="w-3.5 h-3.5" />
+                    Rates
+                  </button>
                   <button
                     className="flex items-center gap-1 text-[12px] font-semibold text-[#007AFF] hover:underline"
                     onClick={(e) => e.stopPropagation()}>
@@ -374,7 +387,7 @@ export function PropertiesPage() {
                         {prop.max_guests ?? '—'}
                       </span>
                       <span>
-                        <span className="text-[#B0B0B0]">Price:</span>{' '}
+                        <span className="text-[#B0B0B0]">Minimum:</span>{' '}
                         {prop.base_price != null
                           ? `${prop.base_currency === 'ZAR' ? 'R' : (prop.base_currency ?? '')} ${prop.base_price.toLocaleString()}`
                           : '—'}
@@ -689,6 +702,14 @@ export function PropertiesPage() {
         propertyName={checklistFor.name}
         onClose={() => setChecklistFor(null)} />
       }
+
+      {pricing &&
+      <RatePlanSheet
+        propertyId={pricing.id}
+        propertyName={pricing.name}
+        onClose={() => setPricing(null)}
+        onApplied={() => fetchProperties()} />
+      }
     </div>);
 
 }
@@ -875,6 +896,7 @@ function PropertySharing({ propertyId }: { propertyId: number }) {
           </button>
         </div>
       )}
+
     </div>
   );
 }

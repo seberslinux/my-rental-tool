@@ -395,3 +395,105 @@ test('a nonsense minimum stay is refused', async () => {
     assert.match(res.body.error, /minimum stay/i, `rejected ${bad}`);
   }
 });
+
+// --- the rate plan --------------------------------------------------------
+
+test('a plan is saved, previewed, and only applied when asked', async () => {
+  // Preview and apply share one function, so the list you approve is the
+  // list that gets sent. Computing them separately is how somebody
+  // agrees to one thing and gets another.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner, smoobu_id: 100 });
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+
+  // Every category, because the window may well fall inside a school
+  // term — it does today, Bavaria's Summer Break runs to mid-September —
+  // and a category with no rule is deliberately skipped.
+  await agent.put(`/api/properties/${property.id}/rate-plan`).send({
+    plan: {
+      long_weekend: { price: 4200, min_stay: 3 },
+      public_holiday: { price: 3800, min_stay: 2 },
+      school_holiday: { price: 3600, min_stay: 5 },
+      weekday: { price: 2400, min_stay: 2 },
+      weekend: { price: 3200, min_stay: 2 },
+    },
+  }).expect(200);
+
+  const saved = await agent.get(`/api/properties/${property.id}/rate-plan`).expect(200);
+  assert.equal(saved.body.plan.weekend.price, 3200);
+
+  const from = inDays(2);
+  const to = inDays(9);
+  const preview = await agent.post(`/api/properties/${property.id}/rate-plan/preview`)
+    .send({ from, to }).expect(200);
+
+  assert.ok(preview.body.nights >= 7, 'every night in the window');
+  assert.ok(preview.body.rows.every((r) => r.new_price > 0), 'every night got a price');
+  assert.equal(mockSmoobu.calls.setRatesForDates.length, 0, 'a preview sends nothing');
+
+  const applied = await agent.post(`/api/properties/${property.id}/rate-plan/apply`)
+    .send({ from, to }).expect(200);
+  assert.equal(applied.body.applied, preview.body.changing, 'exactly what was previewed');
+  assert.ok(mockSmoobu.calls.setRatesForDates.length > 0, 'and now it is sent');
+});
+
+test('applying twice does nothing the second time', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner, smoobu_id: 100 });
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  await agent.put(`/api/properties/${property.id}/rate-plan`)
+    .send({ plan: { weekday: { price: 2400 }, weekend: { price: 3200 } } }).expect(200);
+
+  const from = inDays(2);
+  const to = inDays(6);
+  await agent.post(`/api/properties/${property.id}/rate-plan/apply`).send({ from, to }).expect(200);
+  const calls = mockSmoobu.calls.setRatesForDates.length;
+
+  const second = await agent.post(`/api/properties/${property.id}/rate-plan/apply`)
+    .send({ from, to }).expect(200);
+  assert.equal(second.body.applied, 0, 'nothing left to change');
+  assert.equal(mockSmoobu.calls.setRatesForDates.length, calls, 'and Smoobu was not troubled again');
+});
+
+test('a plan never touches a booked night', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner, smoobu_id: 100 });
+  const from = inDays(2);
+  const mid = inDays(3);
+  await seedBooking({
+    property, smoobu_id: 77410, check_in: mid, check_out: inDays(4), status: 'confirmed',
+  });
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  await agent.put(`/api/properties/${property.id}/rate-plan`)
+    .send({ plan: { weekday: { price: 2400 }, weekend: { price: 3200 } } }).expect(200);
+
+  const preview = await agent.post(`/api/properties/${property.id}/rate-plan/preview`)
+    .send({ from, to: inDays(6) }).expect(200);
+  assert.ok(!preview.body.rows.some((r) => r.date === mid), 'the guest paid what they paid');
+});
+
+test('a blank price removes that category rather than pricing it at zero', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner, smoobu_id: 100 });
+
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  await agent.put(`/api/properties/${property.id}/rate-plan`)
+    .send({ plan: { weekday: { price: 2400 }, weekend: { price: 3200 } } }).expect(200);
+  await agent.put(`/api/properties/${property.id}/rate-plan`)
+    .send({ plan: { weekday: { price: 2400 }, weekend: { price: '' } } }).expect(200);
+
+  const saved = await agent.get(`/api/properties/${property.id}/rate-plan`).expect(200);
+  assert.equal(saved.body.plan.weekend, undefined, 'weekends are left alone now');
+  assert.equal(saved.body.plan.weekday.price, 2400);
+});
