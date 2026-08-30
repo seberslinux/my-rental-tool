@@ -51,8 +51,10 @@ export function CleaningDaySheet({
 }) {
   const [editingRate, setEditingRate] = useState(false);
   const [rateValue, setRateValue] = useState('');
+  const [rateUntil, setRateUntil] = useState('');
   const [savingRate, setSavingRate] = useState(false);
   const [rateError, setRateError] = useState('');
+  const [rateNote, setRateNote] = useState('');
 
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState('');
@@ -72,14 +74,22 @@ export function CleaningDaySheet({
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'same-origin',
-      body: JSON.stringify({ from: date, to: date, price: Number(rateValue) }),
+      body: JSON.stringify({ from: date, to: rateUntil || date, price: Number(rateValue) }),
     });
     setSavingRate(false);
     if (!res.ok) {
       setRateError((await res.json().catch(() => ({}))).error || 'Could not set that rate');
       return;
     }
+    const out = await res.json().catch(() => ({}));
     setEditingRate(false);
+    // A range can partly skip, so say what actually changed rather than
+    // leaving somebody to count cells.
+    setRateNote(
+      out.skipped ?
+      `${out.nights} night${out.nights === 1 ? '' : 's'} set · ${out.skipped} already booked` :
+      `${out.nights} night${out.nights === 1 ? '' : 's'} set`
+    );
     // Not onAssigned: that closes the sheet, and having just set a price
     // the thing you want is to see it.
     if (onRatesChanged) await onRatesChanged();
@@ -220,7 +230,7 @@ export function CleaningDaySheet({
               <span className="text-[#717171]">Rate </span>
               {rate.available ? formatRate(rate.price) : `${formatRate(rate.price)} · not for sale`}
               <button
-              onClick={() => { setRateValue(String(Math.round(rate.price))); setEditingRate(true); setRateError(''); }}
+              onClick={() => { setRateValue(String(Math.round(rate.price))); setRateUntil(date); setEditingRate(true); setRateError(''); }}
               className="ml-1.5 text-[#FF385C] font-semibold">
                 Change
               </button>
@@ -228,29 +238,52 @@ export function CleaningDaySheet({
           }
 
           {editingRate &&
-          <span className="flex items-center gap-1.5 w-full">
-              <span className="text-[#717171]">Rate</span>
-              <input
-              type="number"
-              inputMode="numeric"
-              value={rateValue}
-              onChange={(e) => setRateValue(e.target.value)}
-              aria-label="Nightly rate"
-              className="w-24 px-2 py-1 border border-[#DDDDDD] rounded-[6px] text-[13px] tabular-nums" />
-              <button
-              disabled={savingRate}
-              onClick={saveRate}
-              className="px-2.5 py-1 rounded-[6px] bg-[#222222] text-white text-[12px] font-semibold disabled:opacity-50">
-                {savingRate ? 'Sending…' : 'Save'}
-              </button>
-              <button
-              onClick={() => { setEditingRate(false); setRateError(''); }}
-              className="text-[12px] text-[#717171] underline underline-offset-2">
-                Cancel
-              </button>
-            </span>
+          <div className="w-full">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-[#717171]">Rate</span>
+                <input
+                type="number"
+                inputMode="numeric"
+                value={rateValue}
+                onChange={(e) => setRateValue(e.target.value)}
+                aria-label="Nightly rate"
+                className="w-24 px-2 py-1 border border-[#DDDDDD] rounded-[6px] text-[13px] tabular-nums" />
+
+                {/* One night unless you say otherwise. Most changes are a
+                    single day; a season is the same action with an end
+                    date on it, so it is one field rather than a mode. */}
+                <span className="text-[#717171]">until</span>
+                <input
+                type="date"
+                value={rateUntil}
+                min={date}
+                onChange={(e) => setRateUntil(e.target.value)}
+                aria-label="Last night at this rate"
+                className="px-2 py-1 border border-[#DDDDDD] rounded-[6px] text-[13px]" />
+
+                <button
+                disabled={savingRate}
+                onClick={saveRate}
+                className="px-2.5 py-1 rounded-[6px] bg-[#222222] text-white text-[12px] font-semibold disabled:opacity-50">
+                  {savingRate ? 'Sending…' : 'Save'}
+                </button>
+                <button
+                onClick={() => { setEditingRate(false); setRateError(''); }}
+                className="text-[12px] text-[#717171] underline underline-offset-2">
+                  Cancel
+                </button>
+              </div>
+              <p className="text-[12px] text-[#717171] mt-1">
+                {rateUntil && rateUntil !== date ?
+              `Every night from ${date} to ${rateUntil} that nobody has booked.` :
+              'This night only.'}
+              </p>
+            </div>
           }
           {rateError && <span className="w-full text-[12px] text-[#991B1B]">{rateError}</span>}
+          {rateNote && !editingRate &&
+          <span className="w-full text-[12px] text-[#0F6E56]">{rateNote}</span>
+          }
           {rate && rate.minStay > 1 &&
           <span>
               <span className="text-[#717171]">Minimum stay </span>

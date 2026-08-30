@@ -33,6 +33,7 @@ let failWith = null;       // { name?: 'getBookings', error: Error } — throws 
 // what was invoked. Reset per test via `mockSmoobu.reset()`.
 const calls = {
   setRates: [],
+  setRatesForDates: [],
   blockDates: [],
   unblockDates: [],
   sendGuestMessage: [],
@@ -44,6 +45,7 @@ function reset() {
   propertyDetailsFixture = {};
   failWith = null;
   calls.setRates.length = 0;
+  calls.setRatesForDates.length = 0;
   calls.blockDates.length = 0;
   calls.unblockDates.length = 0;
   calls.sendGuestMessage.length = 0;
@@ -70,6 +72,11 @@ function reset() {
     return propertyDetailsFixture[id] || null;
   };
   smoobu.getRates = async () => ({});
+  smoobu.setRatesForDates = async (apartmentId, dates, price) => {
+    calls.setRatesForDates.push({ apartmentId, dates, price });
+    return { ok: true };
+  };
+
   smoobu.setRates = async (apartmentId, from, to, price) => {
     calls.setRates.push({ apartmentId, from, to, price });
     return { ok: true };
