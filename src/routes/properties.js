@@ -5,6 +5,9 @@ const { getAll, getOne, run, inParams, transaction } = require('../db/database')
 const { propertyStatus, ymd } = require('../services/cleaning-status');
 const { scopeProperties, denyIfOutOfScope, requireRole } = require('../middleware/auth');
 const smoobu = require('../services/smoobu');
+const { CATEGORIES, LABEL, planNights } = require('../services/rate-plan');
+const { getUpcomingHolidays } = require('../services/holidays-store');
+const { getUpcomingSchoolHolidays } = require('../services/school-holidays');
 const { getApiKeyForProperty } = require('../services/api-key-resolver');
 // One place decides who gets told what.
 const { notify } = require('../services/notify');
@@ -249,6 +252,184 @@ router.get('/:id/summary', async (req, res) => {
  * refusing the edit: the calendar is only worth reading if it agrees with
  * the channel.
  */
+/**
+ * The rate plan: what each kind of night is worth.
+ *
+ * Five categories, most specific first. Stored, previewed, and only then
+ * applied — never on a schedule. The engine this replaces ran every
+ * morning against a number nobody could see, and the only thing that
+ * stopped it repricing two listings to R80 was an unrelated API bug.
+ */
+router.get('/:id/rate-plan', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  const rows = await getAll(
+    'SELECT category, price, min_stay FROM rate_plans WHERE property_id = $1',
+    [req.params.id]
+  );
+  const plan = {};
+  for (const r of rows) plan[r.category] = { price: r.price, min_stay: r.min_stay };
+  res.json({ plan, categories: CATEGORIES, labels: LABEL });
+});
+
+router.put('/:id/rate-plan', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  const plan = (req.body && req.body.plan) || {};
+
+  for (const [category, rule] of Object.entries(plan)) {
+    if (!CATEGORIES.includes(category)) {
+      return res.status(400).json({ error: `Unknown category: ${category}` });
+    }
+    // A blank price means "no rule here", which is not the same as free.
+    if (rule == null || rule.price === '' || rule.price == null) continue;
+    const price = Number(rule.price);
+    if (!Number.isFinite(price) || price <= 0) {
+      return res.status(400).json({ error: `${LABEL[category]} needs a positive rate` });
+    }
+    const minStay = rule.min_stay == null || rule.min_stay === '' ? null : Number(rule.min_stay);
+    if (minStay != null && (!Number.isInteger(minStay) || minStay < 1 || minStay > 30)) {
+      return res.status(400).json({ error: `${LABEL[category]} needs a minimum stay of 1 to 30 nights` });
+    }
+  }
+
+  for (const category of CATEGORIES) {
+    const rule = plan[category];
+    const blank = rule == null || rule.price === '' || rule.price == null;
+    if (blank) {
+      await run('DELETE FROM rate_plans WHERE property_id = $1 AND category = $2',
+        [req.params.id, category]);
+      continue;
+    }
+    await run(
+      `INSERT INTO rate_plans (property_id, category, price, min_stay, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT(property_id, category) DO UPDATE SET
+         price = EXCLUDED.price, min_stay = EXCLUDED.min_stay, updated_at = NOW()`,
+      [req.params.id, category, Number(rule.price),
+       rule.min_stay === '' || rule.min_stay == null ? null : Number(rule.min_stay)]
+    );
+  }
+
+  res.json({ ok: true });
+});
+
+/**
+ * What the plan would do, and then doing it.
+ *
+ * Preview and apply share one function so they cannot disagree — the
+ * list you approve is the list that gets sent. A preview computed one
+ * way and an apply another is how somebody ends up agreeing to one thing
+ * and getting a different one.
+ */
+async function planFor(propertyId, from, to) {
+  const property = await getOne('SELECT * FROM properties WHERE id = $1', [propertyId]);
+
+  const rows = await getAll(
+    'SELECT category, price, min_stay FROM rate_plans WHERE property_id = $1', [propertyId]
+  );
+  const plan = {};
+  for (const r of rows) plan[r.category] = { price: r.price, min_stay: r.min_stay };
+
+  const bookings = await getAll(
+    `SELECT check_in, check_out, status FROM bookings
+      WHERE property_id = $1 AND status = 'confirmed' AND check_out > $2 AND check_in <= $3`,
+    [propertyId, from, to]
+  );
+
+  const rateRows = await getAll(
+    'SELECT date, price, min_stay FROM daily_rates WHERE property_id = $1 AND date >= $2 AND date <= $3',
+    [propertyId, from, to]
+  );
+  const currentRates = {};
+  for (const r of rateRows) currentRates[r.date] = { price: r.price, min_stay: r.min_stay };
+
+  // Holidays must never take the page down; without them every night is
+  // simply a weekday or a weekend, which is wrong but not dangerous.
+  let holidays = [];
+  try {
+    const [publicDays, schoolBreaks] = await Promise.all([
+      getUpcomingHolidays(from, { countries: ['ZA'], days: 400 }),
+      getUpcomingSchoolHolidays(from, { days: 400 }),
+    ]);
+    holidays = [
+      ...publicDays.map((h) => ({ start: h.date, end: h.date, kind: 'public', name: h.name })),
+      ...schoolBreaks.map((h) => ({ start: h.start, end: h.end, kind: 'school', name: h.name })),
+    ];
+  } catch (err) {
+    console.error('Holiday lookup failed for the rate plan:', err.message);
+  }
+
+  return { property, plan, rows: planNights({ from, to, plan, holidays, currentRates, bookings }) };
+}
+
+router.post('/:id/rate-plan/preview', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  const { from, to } = req.body || {};
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  if (!day.test(String(from)) || !day.test(String(to))) {
+    return res.status(400).json({ error: 'Dates must be YYYY-MM-DD' });
+  }
+
+  const { rows } = await planFor(req.params.id, from, to);
+  const changing = rows.filter((r) => r.changes);
+  res.json({
+    nights: rows.length,
+    changing: changing.length,
+    rows,
+  });
+});
+
+router.post('/:id/rate-plan/apply', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  const { from, to } = req.body || {};
+  const day = /^\d{4}-\d{2}-\d{2}$/;
+  if (!day.test(String(from)) || !day.test(String(to))) {
+    return res.status(400).json({ error: 'Dates must be YYYY-MM-DD' });
+  }
+
+  const { property, rows } = await planFor(req.params.id, from, to);
+  if (!property) return res.status(404).json({ error: 'Property not found' });
+
+  const changing = rows.filter((r) => r.changes);
+  if (changing.length === 0) return res.json({ ok: true, applied: 0, skipped: rows.length });
+
+  const apiKey = await getApiKeyForProperty(property.id);
+  if (!apiKey) return res.status(400).json({ error: 'No Smoobu API key configured' });
+
+  // One request per distinct price-and-minimum, which is what the plan
+  // produces: five categories at most, not one call per night.
+  const groups = new Map();
+  for (const r of changing) {
+    const key = `${r.new_price}|${r.new_min_stay || ''}`;
+    if (!groups.has(key)) groups.set(key, { price: r.new_price, minStay: r.new_min_stay, dates: [] });
+    groups.get(key).dates.push(r.date);
+  }
+
+  let applied = 0;
+  for (const g of groups.values()) {
+    try {
+      await smoobu.setRatesForDates(property.smoobu_id, g.dates, g.price, apiKey, g.minStay);
+    } catch (err) {
+      const detail = err.response && err.response.data ?
+      (err.response.data.detail || JSON.stringify(err.response.data)) : err.message;
+      return res.status(502).json({ error: `Smoobu refused it: ${detail}`, applied });
+    }
+    for (const date of g.dates) {
+      await run(
+        `INSERT INTO daily_rates (property_id, date, price, min_stay, fetched_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT(property_id, date) DO UPDATE SET
+           price = EXCLUDED.price,
+           min_stay = COALESCE(EXCLUDED.min_stay, daily_rates.min_stay),
+           fetched_at = NOW()`,
+        [property.id, date, g.price, g.minStay]
+      );
+      applied += 1;
+    }
+  }
+
+  res.json({ ok: true, applied, skipped: rows.length - applied });
+});
+
 router.put('/:id/rates', async (req, res) => {
   if (denyIfOutOfScope(req, res, req.params.id)) return;
   const property = await getOne('SELECT * FROM properties WHERE id = $1', [req.params.id]);

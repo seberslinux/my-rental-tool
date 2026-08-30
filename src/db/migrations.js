@@ -492,6 +492,21 @@ async function runMigrations() {
     CREATE INDEX IF NOT EXISTS holidays_country_year_idx ON holidays (country, year);
   `);
 
+  // One row per category per property. A plan is small and read whole,
+  // so a row each keeps it editable without a JSON blob nobody can query.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS rate_plans (
+      id SERIAL PRIMARY KEY,
+      property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+      -- long_weekend | public_holiday | school_holiday | weekend | weekday
+      category TEXT NOT NULL,
+      price REAL NOT NULL,
+      min_stay INTEGER,
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(property_id, category)
+    );
+  `);
+
   // One row per device, not per person: a cleaner with a phone and a
   // tablet should be told on both. The endpoint is unique because that
   // is what the push service issues, and re-subscribing the same device
