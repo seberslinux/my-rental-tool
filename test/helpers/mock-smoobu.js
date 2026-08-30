@@ -72,8 +72,8 @@ function reset() {
     return propertyDetailsFixture[id] || null;
   };
   smoobu.getRates = async () => ({});
-  smoobu.setRatesForDates = async (apartmentId, dates, price) => {
-    calls.setRatesForDates.push({ apartmentId, dates, price });
+  smoobu.setRatesForDates = async (apartmentId, dates, price, apiKey, minStay = null) => {
+    calls.setRatesForDates.push({ apartmentId, dates, price, minStay });
     return { ok: true };
   };
 
