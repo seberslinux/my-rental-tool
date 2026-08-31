@@ -150,6 +150,41 @@ test('preview runs a config that has not been saved', async () => {
   assert.equal(rows[0].n, 0);
 });
 
+test('preview prices a plan that has not been saved', async () => {
+  // The rates screen edits the plan, the channel percentages and the
+  // rules in one place, and shows what all of it would do before any of
+  // it is written. A plan that only previews once saved would mean
+  // typing a number to see it, then typing it back.
+  const { property, agent } = await ownerWithProperty();
+  await flatPlan(agent, property, 1000);
+
+  const res = await agent.post(`/api/properties/${property.id}/rate-plan/preview`)
+    .send({
+      from: inDays(40), to: inDays(42),
+      plan: {
+        weekday: { price: 1500 }, weekend: { price: 1500 },
+        school_holiday: { price: 1500 }, public_holiday: { price: 1500 },
+        long_weekend: { price: 1500 },
+      },
+    }).expect(200);
+
+  assert.ok(res.body.rows.every((r) => r.new_price === 1500), 'priced at what was sent');
+
+  // And the saved plan is untouched by looking.
+  const saved = await agent.get(`/api/properties/${property.id}/rate-plan`).expect(200);
+  assert.equal(saved.body.plan.weekday.price, 1000);
+});
+
+test('a plan that would be refused on save is refused on preview too', async () => {
+  // One definition of a valid plan, so a rate that cannot be stored
+  // cannot quietly be priced either.
+  const { property, agent } = await ownerWithProperty();
+  const res = await agent.post(`/api/properties/${property.id}/rate-plan/preview`)
+    .send({ from: inDays(40), to: inDays(42), plan: { weekday: { price: -5 } } });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /positive rate/);
+});
+
 test('every night says why it costs what it costs', async () => {
   const { property, agent } = await ownerWithProperty();
   await flatPlan(agent, property, 1000);

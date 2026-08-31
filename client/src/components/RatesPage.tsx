@@ -1,73 +1,72 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { AlertCircle, Check, RefreshCw, Send, Save } from 'lucide-react';
+import { AlertCircle, ArrowRight, Check, RefreshCw, Send, Save } from 'lucide-react';
 import { apiGet, Unauthorized } from '../data/session';
 
 /**
- * Trying pricing algorithms, and seeing what they would do.
+ * Everything about what a night costs, in one place.
  *
- * The rate plan says what a night is worth by what kind of night it is —
- * a weekend, a school break, a long weekend. That is a statement about
- * the calendar, and the calendar does not know whether anybody has
- * booked. This is where the rules that read the diary get switched on:
- * small gaps between bookings, nights still empty as they approach, a
- * month selling slower than it should.
+ * This was two screens. A sheet on the Properties page held the rate
+ * plan — what each kind of night is worth — and a separate page held the
+ * algorithms that move those numbers and the channel percentages that
+ * decide what a guest is shown. Two places to set a price is one too
+ * many: you could set a plan in one and never see what the rules in the
+ * other would do to it.
  *
- * ## Nothing is sent until it has been seen
+ * So they are one screen, in the order somebody actually asks:
  *
- * Every change here re-previews against the real diary and shows what it
- * would do — night by night, and as a total. The settings are not even
- * saved until you say so: the preview endpoint takes the configuration
- * being tried rather than reading the stored one, which is what makes it
- * safe to turn something up to 40%, look, and put it back.
+ *   What a night is worth      the plan, by kind of night
+ *   What each channel adds     what the guest sees on top
+ *   Rules                      what moves a price given the diary
+ *   What would change          every night, old to new, before sending
+ *
+ * ## Nothing is written until you say so
+ *
+ * The preview takes the plan and the rules being tried rather than
+ * reading what is stored, so a number can go in, be looked at, and come
+ * out again with nothing persisted. Saving is a button. Applying saves
+ * first, so what reaches Smoobu is always what is on the screen and
+ * what the screen will show next time.
  *
  * The engine two versions ago ran every morning against numbers nobody
- * could see. The only thing that stopped it repricing two listings to
+ * could see. The only thing that kept it from repricing two listings to
  * R80 a night was an unrelated bug in the API call.
- *
- * ## Why each night can explain itself
- *
- * A price nobody can account for is a price nobody will send. Every row
- * carries the trail that produced it — what the plan said, what each
- * rule did to it, and what came out — because the question people
- * actually ask of a screen like this is not "what is the number" but
- * "why is it that".
  */
 
 interface Param {
-  key: string;
-  label: string;
-  type: 'int' | 'percent' | 'bool' | 'money';
-  unit?: string;
-  default: number | boolean;
-  min: number;
-  max: number;
+  key: string;label: string;type: 'int' | 'percent' | 'bool' | 'money';
+  unit?: string;default: number | boolean;min: number;max: number;
 }
-
 interface Strategy {key: string;label: string;blurb: string;params: Param[];}
 interface Entry {enabled: boolean;params: Record<string, any>;}
 
 interface TrailStep {label: string;price?: number;change?: number;why: string;}
-
 interface ChannelView {label: string;markup: number;guest: number;net: number;}
-interface Views {base: number;channels: Record<string, ChannelView>;}
-
 interface Row {
   date: string;label: string;
   plan_price: number;new_price: number;current_price: number | null;
   new_min_stay: number | null;current_min_stay: number | null;
-  changes: boolean;
-  trail: TrailStep[];
-  views: Views;
+  changes: boolean;trail: TrailStep[];
+  views: {base: number;channels: Record<string, ChannelView>;};
 }
-
 interface Channel {key: string;label: string;markup: number;commission: number;}
-
 interface Preview {
   nights: number;changing: number;occupancy: number | null;
   totals: {current: number;plan: number;strategies: number;};
-  channels: Channel[];
-  rows: Row[];
+  channels: Channel[];rows: Row[];
 }
+
+interface Rule {price: string;min_stay: string;}
+
+/** Most specific first — the order a night is tested against. */
+const ORDER = ['long_weekend', 'public_holiday', 'school_holiday', 'weekend', 'weekday'];
+
+const EXPLAIN: Record<string, string> = {
+  long_weekend: 'A public holiday next to a weekend — three nights, or four when the day between gets bridged',
+  public_holiday: 'A public holiday in the middle of the week',
+  school_holiday: 'Inside a school term in the markets these guests come from',
+  weekend: 'Friday and Saturday',
+  weekday: 'Everything else',
+};
 
 const money = (n: number | null | undefined) =>
 n == null ? '—' : `R ${Math.round(n).toLocaleString('en-ZA')}`;
@@ -77,45 +76,48 @@ new Date(`${d}T00:00:00`).toLocaleDateString('en-ZA', { weekday: 'short', day: '
 
 const iso = (d: Date) => d.toISOString().slice(0, 10);
 
-export function RatesPage() {
+const SECTION = 'text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2';
+const CARD = 'bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)]';
+
+export function RatesPage({ initialPropertyId = 0 }: {
+  /**
+   * Which property to open on.
+   *
+   * Set when somebody arrived from the Rates link on a property row, so
+   * they land on the one they were looking at rather than on the first
+   * in the list.
+   */
+  initialPropertyId?: number;
+}) {
   const [properties, setProperties] = useState<{id: number;name: string;}[]>([]);
-  const [propertyId, setPropertyId] = useState<number>(0);
+  const [propertyId, setPropertyId] = useState<number>(initialPropertyId);
+
+  const [plan, setPlan] = useState<Record<string, Rule>>({});
+  const [labels, setLabels] = useState<Record<string, string>>({});
+  const [markups, setMarkups] = useState<Record<string, string>>({});
   const [catalogue, setCatalogue] = useState<Strategy[]>([]);
   const [config, setConfig] = useState<Record<string, Entry>>({});
-  const [plan, setPlan] = useState<Record<string, {price: number;min_stay: number | null;}>>({});
-  const [labels, setLabels] = useState<Record<string, string>>({});
+  const [observed, setObserved] = useState<Record<string, {
+    markup: number;bookings: number;nights: number;low: number;high: number;confident: boolean;
+  }>>({});
 
   const [from, setFrom] = useState(iso(new Date()));
   const [to, setTo] = useState(iso(new Date(Date.now() + 90 * 86400000)));
 
-  /**
-   * Whose price we are looking at.
-   *
-   * 'base' is what you set and what gets sent; a channel key shows what
-   * a guest on that channel is charged instead. Only ever a way of
-   * looking — the number pushed to Smoobu is the base rate whichever of
-   * these is selected, or the markup would be applied twice.
-   */
-  const [view, setView] = useState<string>('base');
-  /**
-   * What the markup appears to be, from bookings Smoobu has already made.
-   *
-   * Smoobu owns the setting; this only notices what it has been doing.
-   * Shown as a suggestion beside the channel, never written on its own.
-   */
-  const [observed, setObserved] = useState<Record<string, {
-    markup: number;bookings: number;nights: number;low: number;high: number;confident: boolean;
-  }>>({});
-  const [savingMarkup, setSavingMarkup] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  /** 'base', or a channel key — a way of reading the numbers, never what is sent. */
+  const [view, setView] = useState('base');
   const [open, setOpen] = useState<string | null>(null);
   const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [done, setDone] = useState('');
   const [failed, setFailed] = useState(false);
 
-  // Which properties, and which one we are pricing.
+  useEffect(() => {
+    if (initialPropertyId) setPropertyId(initialPropertyId);
+  }, [initialPropertyId]);
+
   useEffect(() => {
     (async () => {
       try {
@@ -128,28 +130,42 @@ export function RatesPage() {
     })();
   }, []);
 
-  // The catalogue and this property's saved settings, together.
+  // Everything this property holds about its rates, in one load.
   useEffect(() => {
     if (!propertyId) return;
     (async () => {
       try {
-        const [s, p] = await Promise.all([
-          apiGet<{catalogue: Strategy[];config: Record<string, Entry>;}>(
-            `/api/properties/${propertyId}/rate-strategies`),
+        const [p, s, prop] = await Promise.all([
           apiGet<{plan: Record<string, any>;labels: Record<string, string>;}>(
             `/api/properties/${propertyId}/rate-plan`),
+          apiGet<{catalogue: Strategy[];config: Record<string, Entry>;}>(
+            `/api/properties/${propertyId}/rate-strategies`),
+          apiGet<any>(`/api/properties/${propertyId}`),
         ]);
+
+        const next: Record<string, Rule> = {};
+        for (const c of ORDER) {
+          next[c] = {
+            price: p.plan[c] ? String(Math.round(p.plan[c].price)) : '',
+            min_stay: p.plan[c] && p.plan[c].min_stay ? String(p.plan[c].min_stay) : '',
+          };
+        }
+        setPlan(next);
+        setLabels(p.labels || {});
         setCatalogue(s.catalogue || []);
         setConfig(s.config || {});
-        // Best effort: a property with no synced rates simply has
-        // nothing to say, and that must not take the page down.
+        setMarkups({
+          airbnb: String(prop.guest_markup_airbnb ?? 0),
+          booking: String(prop.guest_markup_booking ?? 0),
+          vrbo: String(prop.guest_markup_vrbo ?? 0),
+        });
+        setDone('');
+        setFailed(false);
+
+        // Best effort: a property with no synced rates has nothing to say.
         apiGet<{observed: any;}>(`/api/properties/${propertyId}/observed-markup`).
         then((o) => setObserved(o.observed || {})).
         catch(() => setObserved({}));
-        setPlan(p.plan || {});
-        setLabels(p.labels || {});
-        setDone('');
-        setFailed(false);
       } catch (e) {
         if (!(e instanceof Unauthorized)) setFailed(true);
       }
@@ -157,11 +173,11 @@ export function RatesPage() {
   }, [propertyId]);
 
   /**
-   * Re-price on every change, against what is on screen.
+   * Re-price on every change, against what is on the screen.
    *
    * Debounced, because dragging a number from 25 to 40 is a dozen
-   * keystrokes and a dozen previews would show the answer to the number
-   * you were passing through rather than the one you stopped on.
+   * keystrokes and a dozen previews would answer for the numbers passed
+   * through rather than the one stopped on.
    */
   const timer = useRef<any>(null);
   const runPreview = useCallback(() => {
@@ -175,7 +191,7 @@ export function RatesPage() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
-          body: JSON.stringify({ from, to, strategies: config }),
+          body: JSON.stringify({ from, to, strategies: config, plan }),
         });
         if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not price that');
         setPreview(await res.json());
@@ -186,10 +202,14 @@ export function RatesPage() {
         setPreviewing(false);
       }
     }, 400);
-  }, [propertyId, from, to, config]);
+  }, [propertyId, from, to, config, plan]);
 
   useEffect(() => { runPreview(); return () => clearTimeout(timer.current); }, [runPreview]);
 
+  const setRule = (c: string, field: keyof Rule, v: string) => {
+    setPlan((p) => ({ ...p, [c]: { ...p[c], [field]: v } }));
+    setDone('');
+  };
   const setParam = (key: string, param: string, value: any) => {
     setConfig((c) => ({
       ...c,
@@ -197,288 +217,203 @@ export function RatesPage() {
     }));
     setDone('');
   };
-
   const toggle = (key: string) => {
-    setConfig((c) => ({
-      ...c,
-      [key]: { enabled: !(c[key]?.enabled), params: c[key]?.params || {} },
-    }));
+    setConfig((c) => ({ ...c, [key]: { enabled: !(c[key]?.enabled), params: c[key]?.params || {} } }));
     setDone('');
   };
 
-  /**
-   * Take the observed figure as the setting.
-   *
-   * A deliberate act, not something the observation does to itself. It
-   * writes the property field the price views read, then re-previews so
-   * the guest prices on screen move to match.
-   */
-  const useObserved = async (channelKey: string, markup: number) => {
-    setSavingMarkup(true);
-    setError('');
-    const res = await fetch(`/api/properties/${propertyId}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ [`guest_markup_${channelKey}`]: markup }),
-    });
-    setSavingMarkup(false);
-    if (!res.ok) {
-      setError((await res.json().catch(() => ({}))).error || 'Could not save that markup');
-      return;
+  /** Everything on this screen, written down. */
+  const saveAll = async () => {
+    const calls: Promise<Response>[] = [
+      fetch(`/api/properties/${propertyId}/rate-plan`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin', body: JSON.stringify({ plan }),
+      }),
+      fetch(`/api/properties/${propertyId}/rate-strategies`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin', body: JSON.stringify({ config }),
+      }),
+      fetch(`/api/properties/${propertyId}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          guest_markup_airbnb: Number(markups.airbnb) || 0,
+          guest_markup_booking: Number(markups.booking) || 0,
+          guest_markup_vrbo: Number(markups.vrbo) || 0,
+        }),
+      }),
+    ];
+    const results = await Promise.all(calls);
+    const bad = results.find((r) => !r.ok);
+    if (bad) {
+      setError((await bad.json().catch(() => ({}))).error || 'Could not save that');
+      return false;
     }
-    const label = (preview?.channels.find((c) => c.key === channelKey) || {}).label || channelKey;
-    setDone(`${label} now shows guests your rate plus ${markup}%.`);
-    runPreview();
+    return true;
   };
 
   const save = async () => {
     setBusy('save');
     setError('');
-    const res = await fetch(`/api/properties/${propertyId}/rate-strategies`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ config }),
-    });
+    const ok = await saveAll();
     setBusy('');
-    if (!res.ok) {
-      setError((await res.json().catch(() => ({}))).error || 'Could not save that');
-      return;
-    }
-    setDone('Saved. These are this property’s settings from now on.');
+    if (ok) { setDone('Saved.'); runPreview(); }
   };
 
   /**
    * Send it.
    *
-   * The same configuration the preview used goes with it, so what is
-   * sent is the list on the screen rather than whatever happens to be
-   * saved — somebody who has changed a number and not pressed Save is
-   * looking at the thing they mean to apply.
+   * Saves first, so what reaches Smoobu is what the screen will still
+   * show tomorrow. Applying settings that were never stored would leave
+   * the two disagreeing the moment somebody reloaded.
    */
   const apply = async () => {
     if (!preview || preview.changing === 0) return;
     setBusy('apply');
     setError('');
+    if (!(await saveAll())) return setBusy('');
+
     const res = await fetch(`/api/properties/${propertyId}/rate-plan/apply`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'same-origin',
-      body: JSON.stringify({ from, to, strategies: config }),
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin', body: JSON.stringify({ from, to }),
     });
     setBusy('');
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setError(body.error || 'Could not send those rates');
-      return;
-    }
-    setDone(`Sent ${body.applied ?? preview.changing} night${(body.applied ?? preview.changing) === 1 ? '' : 's'} to Smoobu.`);
+    if (!res.ok) return setError(body.error || 'Could not send those rates');
+    const n = body.applied ?? preview.changing;
+    setDone(`Sent ${n} night${n === 1 ? '' : 's'} to Smoobu.`);
     runPreview();
   };
 
-  const delta = preview ? preview.totals.strategies - preview.totals.plan : 0;
+  const useObserved = (channelKey: string, markup: number) => {
+    setMarkups((m) => ({ ...m, [channelKey]: String(markup) }));
+    setDone('');
+  };
+
+  const changing = preview ? preview.rows.filter((r) => r.changes) : [];
+  const shownPrice = (r: Row, which: 'current' | 'new') => {
+    if (view === 'base') return which === 'new' ? r.new_price : r.current_price;
+    // A channel view compares like with like: both sides marked up.
+    const m = r.views?.channels?.[view]?.markup ?? 0;
+    const base = which === 'new' ? r.new_price : r.current_price;
+    return base == null ? null : Math.round(base * (1 + m / 100));
+  };
 
   return (
     <div className="p-4 lg:px-8 lg:py-6 bg-[#F7F7F7] min-h-full">
       <div className="lg:max-w-[860px]">
 
         {failed &&
-        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] px-4 py-3 mb-4 flex items-center gap-2">
+        <div className={`${CARD} px-4 py-3 mb-4 flex items-center gap-2`}>
             <AlertCircle className="w-4 h-4 text-[#D93900] shrink-0" />
             <span className="text-[14px] flex-1">Could not load your rates.</span>
           </div>
         }
 
-        {/* What we are pricing, and over what. */}
-        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] p-4 mb-4">
-          {properties.length > 1 &&
-          <select
-            value={propertyId || ''}
-            onChange={(e) => { setPropertyId(Number(e.target.value)); setPreview(null); }}
-            className="w-full h-[44px] px-3 mb-3 border border-[#DDDDDD] rounded-[8px] text-[14px]">
-              {properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
-          }
-          <div className="flex items-center gap-2">
-            <input
-              type="date" value={from} onChange={(e) => setFrom(e.target.value)}
-              className="flex-1 h-[44px] px-3 border border-[#DDDDDD] rounded-[8px] text-[14px]" />
-            <span className="text-[13px] text-[#717171]">to</span>
-            <input
-              type="date" value={to} onChange={(e) => setTo(e.target.value)}
-              className="flex-1 h-[44px] px-3 border border-[#DDDDDD] rounded-[8px] text-[14px]" />
-          </div>
+        {properties.length > 1 &&
+        <select
+          value={propertyId || ''}
+          onChange={(e) => { setPropertyId(Number(e.target.value)); setPreview(null); }}
+          className="w-full h-[44px] px-3 mb-4 border border-[#DDDDDD] rounded-[8px] text-[14px] bg-white">
+            {properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+        }
 
-          {/* The base these rules move. Read-only here: it is set on the
-              property itself, and two editors for one number is how they
-              come to disagree. */}
-          {Object.keys(plan).length > 0 ?
-          <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1">
-              {Object.entries(plan).map(([cat, rule]) =>
-            <span key={cat} className="text-[12px] text-[#717171]">
-                  {labels[cat] || cat} <span className="text-[#222222] font-medium tabular-nums">{money(rule.price)}</span>
-                </span>
-            )}
-            </div> :
-          <p className="mt-3 text-[13px] text-[#92400E]">
-              No rate plan set for this property yet — set one on Properties first, or these rules have nothing to work on.
-            </p>
-          }
-        </div>
-
-        {/* What the rules would do, in money. The reason to look at this
-            page at all. */}
-        {preview &&
-        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] p-4 mb-4">
-            <div className="grid grid-cols-3 gap-3">
-              <div>
-                <div className="text-[20px] font-semibold tabular-nums leading-tight">{money(preview.totals.plan)}</div>
-                <div className="text-[12px] text-[#717171] leading-snug">the plan alone</div>
+        {/* 1. What a night is worth. */}
+        <div className={SECTION}>What a night is worth</div>
+        <div className={`${CARD} p-4 mb-6`}>
+          <p className="text-[13px] text-[#717171] mb-3">
+            A night gets one of these — the most specific that fits. Leave a rate blank and those nights are left alone.
+          </p>
+          {ORDER.map((c, i) =>
+          <div key={c} className={`flex items-start gap-3 py-3 ${i > 0 ? 'border-t border-[#F0F0F0]' : ''}`}>
+              <div className="flex-1 min-w-0">
+                <div className="text-[15px] font-medium">{labels[c] || c}</div>
+                <div className="text-[13px] text-[#717171]">{EXPLAIN[c]}</div>
               </div>
-              <div>
-                <div className={`text-[20px] font-semibold tabular-nums leading-tight ${
-                delta < 0 ? 'text-[#D93900]' : delta > 0 ? 'text-[#0F6E56]' : ''}`}>
-                  {money(preview.totals.strategies)}
-                </div>
-                <div className="text-[12px] text-[#717171] leading-snug">
-                  {/* The sign in front of the R, not inside it — money()
-                      renders a negative as "R -1,100", which reads as a
-                      currency nobody uses. */}
-                  with these rules{delta !== 0 && <> · {delta > 0 ? '+' : '−'}{money(Math.abs(delta))}</>}
-                </div>
-              </div>
-              <div>
-                <div className="text-[20px] font-semibold tabular-nums leading-tight">{preview.changing}</div>
-                <div className="text-[12px] text-[#717171] leading-snug">
-                  of {preview.nights} nights move
-                </div>
-              </div>
+              <input
+              type="number" inputMode="numeric" placeholder="rate"
+              value={plan[c]?.price ?? ''}
+              onChange={(e) => setRule(c, 'price', e.target.value)}
+              aria-label={`${labels[c] || c} rate`}
+              className="w-[92px] shrink-0 h-[38px] px-2 border border-[#DDDDDD] rounded-[8px] text-[14px] tabular-nums" />
+              <input
+              type="number" inputMode="numeric" placeholder="min"
+              value={plan[c]?.min_stay ?? ''}
+              onChange={(e) => setRule(c, 'min_stay', e.target.value)}
+              aria-label={`${labels[c] || c} minimum nights`}
+              className="w-[64px] shrink-0 h-[38px] px-2 border border-[#DDDDDD] rounded-[8px] text-[14px] tabular-nums" />
             </div>
-
-            {/* The same window as the guest sees it, and as it lands.
-                Summed from the rows rather than recomputed, so it cannot
-                disagree with the list underneath. */}
-            {view !== 'base' &&
-          <div className="mt-3 pt-3 border-t border-[#F0F0F0] flex gap-6">
-                <div>
-                  <div className="text-[16px] font-semibold tabular-nums leading-tight">
-                    {money(preview.rows.reduce((n, r) => n + (r.views?.channels?.[view]?.guest || 0), 0))}
-                  </div>
-                  <div className="text-[12px] text-[#717171]">guests pay</div>
-                </div>
-                <div>
-                  <div className="text-[16px] font-semibold tabular-nums leading-tight">
-                    {money(preview.rows.reduce((n, r) => n + (r.views?.channels?.[view]?.net || 0), 0))}
-                  </div>
-                  <div className="text-[12px] text-[#717171]">you keep</div>
-                </div>
-              </div>
-          }
-            {preview.occupancy != null &&
-          <p className="mt-2 text-[12px] text-[#717171]">
-                {Math.round(preview.occupancy * 100)}% of this window is already booked.
-              </p>
-          }
-          </div>
-        }
-
-        {/* Whose number this is.
-            A guest comparing your flat with the one next door is
-            comparing what they are charged, not what you are paid — so
-            pricing against the market means looking at the middle
-            column, while the number you type is the first. */}
-        {preview && preview.channels && preview.channels.length > 0 &&
-        <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
-            {[{ key: 'base', label: 'Your rate', markup: 0 }, ...preview.channels].map((c) =>
-          <button
-            key={c.key}
-            onClick={() => setView(c.key)}
-            className={`shrink-0 px-3 py-1.5 rounded-full text-[13px] font-medium border ${
-            view === c.key ?
-            'bg-[#222222] text-white border-[#222222]' :
-            'bg-white border-[#DDDDDD] text-[#222222]'}`
-            }>
-                {c.label}
-                {c.key !== 'base' && c.markup > 0 && <span className="opacity-70"> +{c.markup}%</span>}
-              </button>
           )}
-          </div>
-        }
-
-        {view !== 'base' &&
-        <div className="mb-3">
-            <p className="text-[12px] text-[#717171]">
-              What a guest on {(preview?.channels.find((c) => c.key === view) || {}).label} is charged.
-              The rate sent to Smoobu is still your own.
-            </p>
-
-            {/* What the markup looks like from the bookings Smoobu has
-                already made. The setting lives in Smoobu and it decides
-                what the guest pays; this is only evidence of what it has
-                been doing, offered so the field is not filled from
-                memory. Nothing applies it but a tap. */}
-            {observed[view] &&
-          <div className="mt-2 bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] p-3">
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[13px] text-[#222222]">
-                      Your last {observed[view].bookings} booking{observed[view].bookings === 1 ? '' : 's'} here
-                      imply <span className="font-semibold tabular-nums">+{observed[view].markup}%</span>
-                    </div>
-                    <div className="text-[12px] text-[#717171]">
-                      {observed[view].low === observed[view].high ?
-                  `across ${observed[view].nights} nights` :
-                  `${observed[view].low}% to ${observed[view].high}% across ${observed[view].nights} nights`}
-                      {' · '}Smoobu decides the real one
-                    </div>
-                    {/* A markup is one fixed number. Observations that
-                        range this widely are being moved by something
-                        else — a length-of-stay discount, a promotion, a
-                        rate changed after the booking — so the median is
-                        the middle of some noise and is not offered. */}
-                    {!observed[view].confident &&
-                  <div className="text-[12px] text-[#92400E] mt-0.5">
-                        Too varied to read a setting from — check it in Smoobu.
-                      </div>
-                  }
-                  </div>
-                  {observed[view].confident &&
-                (preview?.channels.find((c) => c.key === view) || {}).markup !== observed[view].markup &&
-                <button
-                  disabled={savingMarkup}
-                  onClick={() => useObserved(view, observed[view].markup)}
-                  className="shrink-0 text-[13px] font-semibold text-[#FF385C] disabled:opacity-50">
-                      {savingMarkup ? 'Saving…' : 'Use it'}
-                    </button>
-                }
-                </div>
-              </div>
-          }
-          </div>
-        }
-
-        {error && <p className="mb-3 text-[13px] text-[#991B1B]">{error}</p>}
-        {done && <p className="mb-3 text-[13px] text-[#0F6E56]">{done}</p>}
-
-        {/* The algorithms. Rendered from the catalogue the server sends,
-            so a new one appears here by existing. */}
-        <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2">
-          Algorithms
         </div>
-        <div className="space-y-3 mb-4">
+
+        {/* 2. What each channel adds on top. */}
+        <div className={SECTION}>What each channel adds</div>
+        <div className={`${CARD} p-4 mb-6`}>
+          <p className="text-[13px] text-[#717171] mb-3">
+            The percentage a channel puts on your rate to make the price a guest sees. Set in Smoobu — this is where you
+            tell this app what it is, so the numbers below can show both.
+          </p>
+          {(preview?.channels || []).map((ch, i) =>
+          <div key={ch.key} className={`py-3 ${i > 0 ? 'border-t border-[#F0F0F0]' : ''}`}>
+              <div className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <div className="text-[15px] font-medium">{ch.label}</div>
+                  <div className="text-[13px] text-[#717171]">
+                    {ch.commission > 0 ? `${ch.commission}% commission comes off what you keep` : 'No commission set'}
+                  </div>
+                </div>
+                <span className="shrink-0 flex items-center gap-1.5">
+                  <input
+                  type="number" inputMode="numeric"
+                  value={markups[ch.key] ?? '0'}
+                  onChange={(e) => { setMarkups((m) => ({ ...m, [ch.key]: e.target.value })); setDone(''); }}
+                  aria-label={`${ch.label} guest markup`}
+                  className="w-[72px] h-[38px] px-2 border border-[#DDDDDD] rounded-[8px] text-[14px] text-right tabular-nums" />
+                  <span className="text-[12px] text-[#717171] w-[14px]">%</span>
+                </span>
+              </div>
+
+              {/* What the bookings say it has been, when they agree. */}
+              {observed[ch.key] &&
+            <div className="mt-1.5 flex items-center gap-2">
+                  {/* One booking implies, several imply — and a negative
+                      reading must not be printed as "+-2.8%". */}
+                  <span className="text-[12px] text-[#717171] flex-1">
+                    Your last {observed[ch.key].bookings}{' '}
+                    {observed[ch.key].bookings === 1 ? 'booking implies' : 'bookings imply'}
+                    {' '}<span className="font-medium text-[#222222]">
+                      {observed[ch.key].markup >= 0 ? '+' : '−'}{Math.abs(observed[ch.key].markup)}%
+                    </span>
+                    {!observed[ch.key].confident && ' — too varied to trust, check it in Smoobu'}
+                  </span>
+                  {observed[ch.key].confident && String(observed[ch.key].markup) !== markups[ch.key] &&
+              <button
+                onClick={() => useObserved(ch.key, observed[ch.key].markup)}
+                className="shrink-0 text-[12px] font-semibold text-[#FF385C]">
+                      Use it
+                    </button>
+              }
+                </div>
+            }
+            </div>
+          )}
+        </div>
+
+        {/* 3. The rules that read the diary. */}
+        <div className={SECTION}>Rules</div>
+        <div className="space-y-3 mb-6">
           {catalogue.map((s) => {
             const entry = config[s.key] || { enabled: false, params: {} };
             return (
-              <div key={s.key} className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] p-4">
+              <div key={s.key} className={`${CARD} p-4`}>
                 <div className="flex items-start gap-3">
                   <div className="flex-1 min-w-0">
                     <div className="text-[15px] font-medium">{s.label}</div>
                     <div className="text-[13px] text-[#717171]">{s.blurb}</div>
                   </div>
                   <button
-                    role="switch"
-                    aria-checked={entry.enabled}
+                    role="switch" aria-checked={entry.enabled}
                     aria-label={`${entry.enabled ? 'Turn off' : 'Turn on'} ${s.label}`}
                     onClick={() => toggle(s.key)}
                     className={`shrink-0 w-[46px] h-[26px] rounded-full transition-colors ${
@@ -494,23 +429,21 @@ export function RatesPage() {
                     const value = entry.params[p.key] ?? p.default;
                     return (
                       <div key={p.key} className="flex items-center gap-3">
-                          <label className="flex-1 text-[13px] text-[#222222]">{p.label}</label>
+                          <label className="flex-1 text-[13px]">{p.label}</label>
                           {p.type === 'bool' ?
                         <button
-                          role="switch"
-                          aria-checked={Boolean(value)}
+                          role="switch" aria-checked={Boolean(value)}
+                          aria-label={p.label}
                           onClick={() => setParam(s.key, p.key, !value)}
-                          className={`shrink-0 w-[40px] h-[22px] rounded-full ${
-                          value ? 'bg-[#0F6E56]' : 'bg-[#DDDDDD]'}`}>
+                          className={`shrink-0 w-[40px] h-[22px] rounded-full ${value ? 'bg-[#0F6E56]' : 'bg-[#DDDDDD]'}`}>
                               <span className={`block w-[16px] h-[16px] bg-white rounded-full transition-transform ${
                           value ? 'translate-x-[21px]' : 'translate-x-[3px]'}`} />
                             </button> :
 
                         <span className="shrink-0 flex items-center gap-1.5">
                               <input
-                            type="number"
-                            value={String(value)}
-                            min={p.min} max={p.max}
+                            type="number" value={String(value)} min={p.min} max={p.max}
+                            aria-label={p.label}
                             onChange={(e) => setParam(s.key, p.key, Number(e.target.value))}
                             className="w-[76px] h-[36px] px-2 border border-[#DDDDDD] rounded-[8px] text-[14px] text-right tabular-nums" />
                               <span className="text-[12px] text-[#717171] w-[46px]">
@@ -528,89 +461,138 @@ export function RatesPage() {
           })}
         </div>
 
-        <div className="flex gap-2 mb-6">
-          <button
-            onClick={save}
-            disabled={busy !== '' || !propertyId}
-            className="flex-1 h-[44px] flex items-center justify-center gap-1.5 rounded-[8px] border border-[#DDDDDD] bg-white text-[14px] font-semibold disabled:opacity-50">
-            <Save className="w-4 h-4" /> {busy === 'save' ? 'Saving…' : 'Save these settings'}
-          </button>
-          <button
-            onClick={apply}
-            disabled={busy !== '' || !preview || preview.changing === 0}
-            className="flex-1 h-[44px] flex items-center justify-center gap-1.5 rounded-[8px] bg-[#222222] text-white text-[14px] font-semibold disabled:opacity-40">
-            <Send className="w-4 h-4" />
-            {busy === 'apply' ? 'Sending…' : `Send ${preview ? preview.changing : 0} to Smoobu`}
-          </button>
-        </div>
+        {/* 4. What would change. */}
+        <div className={SECTION}>What would change</div>
+        <div className={`${CARD} p-4`}>
+          <div className="flex flex-wrap items-center gap-2 pb-3 border-b border-[#F0F0F0]">
+            <span className="text-[13px] text-[#717171]">Apply from</span>
+            <input
+              type="date" value={from} onChange={(e) => setFrom(e.target.value)}
+              aria-label="First night"
+              className="px-2 py-1.5 border border-[#DDDDDD] rounded-[8px] text-[13px]" />
+            <span className="text-[13px] text-[#717171]">to</span>
+            <input
+              type="date" value={to} min={from} onChange={(e) => setTo(e.target.value)}
+              aria-label="Last night"
+              className="px-2 py-1.5 border border-[#DDDDDD] rounded-[8px] text-[13px]" />
+            {previewing && <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#B0B0B0]" />}
+          </div>
 
-        {/* Night by night, each able to account for itself. */}
-        <div className="text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2 flex items-center gap-2">
-          Every night
-          {previewing && <RefreshCw className="w-3 h-3 animate-spin text-[#B0B0B0]" />}
-        </div>
-        <div className="bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] overflow-hidden">
-          {!preview || preview.rows.length === 0 ?
-          <div className="px-4 py-3 flex items-center gap-2">
-              <Check className="w-4 h-4 text-[#0F6E56]" />
-              <span className="text-[14px] text-[#717171]">
-                {preview ? 'Nothing to price in this range.' : 'Pricing…'}
-              </span>
-            </div> :
-
-          preview.rows.map((r, idx) =>
-          <div key={r.date} className={idx > 0 ? 'border-t border-[#F0F0F0]' : ''}>
-                <button
-              onClick={() => setOpen(open === r.date ? null : r.date)}
-              className="w-full flex items-center gap-3 px-4 py-3 text-left">
-                  <div className="flex-1 min-w-0">
-                    <div className="text-[14px] font-medium">{pretty(r.date)}</div>
-                    <div className="text-[12px] text-[#717171] truncate">
-                      {r.label}
-                      {r.new_min_stay ? ` · min ${r.new_min_stay} night${r.new_min_stay === 1 ? '' : 's'}` : ''}
-                    </div>
-                  </div>
-                  {/* In whichever currency of meaning is selected. The
-                      struck-through figure stays the plan's, in the same
-                      view, so the comparison is like for like. */}
-                  <div className="shrink-0 text-right">
-                    <div className="text-[14px] font-medium tabular-nums">
-                      {view === 'base' ?
-                    money(r.new_price) :
-                    money(r.views?.channels?.[view]?.guest)}
-                    </div>
-                    {view === 'base' ?
-                  r.new_price !== r.plan_price &&
-                  <div className="text-[12px] text-[#717171] tabular-nums line-through">{money(r.plan_price)}</div> :
-
-                  <div className="text-[12px] text-[#717171] tabular-nums">
-                        you keep {money(r.views?.channels?.[view]?.net)}
-                      </div>
-                  }
-                  </div>
+          {/* Whose price these are. Not a filter — it changes what the
+              numbers mean, not which nights are listed. */}
+          {preview && preview.channels.length > 0 &&
+          <div className="flex flex-wrap items-center gap-2 py-3 border-b border-[#F0F0F0]">
+              <span className="text-[13px] text-[#717171]">Showing</span>
+              {[{ key: 'base', label: 'your rate', markup: 0 }, ...preview.channels.map(
+              (c) => ({ key: c.key, label: `what a ${c.label} guest pays`, markup: c.markup })
+            )].map((c) =>
+            <button
+              key={c.key}
+              onClick={() => setView(c.key)}
+              className={`px-3 py-1.5 rounded-full text-[13px] font-medium border ${
+              view === c.key ?
+              'bg-[#222222] text-white border-[#222222]' :
+              'bg-white border-[#DDDDDD] text-[#222222]'}`
+              }>
+                  {c.label}{c.key !== 'base' && c.markup > 0 && ` +${c.markup}%`}
                 </button>
+            )}
+            </div>
+          }
 
-                {open === r.date &&
-            <div className="px-4 pb-3 -mt-1">
-                    {r.trail.map((step, i) =>
-              <div key={i} className="flex items-baseline gap-2 text-[12px]">
-                        <span className="text-[#222222] font-medium">{step.label}</span>
-                        <span className="text-[#717171] flex-1">{step.why}</span>
-                        <span className="tabular-nums text-[#717171]">
-                          {step.price != null ? money(step.price) :
-                  step.change != null ? `${step.change > 0 ? '+' : ''}${step.change}%` : ''}
-                        </span>
+          {error && <p className="mt-3 text-[13px] text-[#991B1B]">{error}</p>}
+          {done &&
+          <p className="mt-3 text-[13px] text-[#0F6E56] flex items-center gap-1.5">
+              <Check className="w-4 h-4" strokeWidth={3} /> {done}
+            </p>
+          }
+
+          {preview && changing.length === 0 &&
+          <p className="mt-3 text-[13px] text-[#717171] flex items-center gap-1.5">
+              <Check className="w-4 h-4 text-[#0F6E56]" strokeWidth={3} />
+              Nothing would change — those nights already match.
+            </p>
+          }
+
+          {preview && changing.length > 0 &&
+          <>
+              <p className="mt-3 mb-2 text-[13px] font-medium">
+                {changing.length} night{changing.length === 1 ? '' : 's'} would change
+                {' · '}
+                <span className="text-[#717171] font-normal">
+                  {money(preview.totals.current)} → {money(preview.totals.strategies)} over the range
+                </span>
+              </p>
+
+              <div className="border border-[#EBEBEB] rounded-[8px] overflow-hidden max-h-[320px] overflow-y-auto">
+                {changing.map((r, i) =>
+              <div key={r.date} className={i > 0 ? 'border-t border-[#F0F0F0]' : ''}>
+                    <button
+                  onClick={() => setOpen(open === r.date ? null : r.date)}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-[13px] text-left">
+                      <span className="w-[104px] shrink-0 text-[#717171]">{pretty(r.date)}</span>
+                      <span className="flex-1 min-w-0 truncate text-[12px] text-[#717171]">{r.label}</span>
+                      <span className="text-[#717171] tabular-nums">{money(shownPrice(r, 'current'))}</span>
+                      <ArrowRight className="w-3.5 h-3.5 text-[#B0B0B0] shrink-0" />
+                      <span className="font-semibold tabular-nums">{money(shownPrice(r, 'new'))}</span>
+                      {r.new_min_stay &&
+                  <span className="text-[12px] text-[#717171] shrink-0">· min {r.new_min_stay}</span>
+                  }
+                    </button>
+
+                    {/* Why, when a rule moved it. */}
+                    {open === r.date &&
+                <div className="px-3 pb-2 bg-[#FAFAFA]">
+                        {r.trail.map((step, n) =>
+                  <div key={n} className="flex items-baseline gap-2 text-[12px] py-0.5">
+                            <span className="font-medium">{step.label}</span>
+                            <span className="text-[#717171] flex-1">{step.why}</span>
+                            <span className="tabular-nums text-[#717171]">
+                              {step.price != null ? money(step.price) :
+                    step.change != null ? `${step.change > 0 ? '+' : ''}${step.change}%` : ''}
+                            </span>
+                          </div>
+                  )}
+                        {view !== 'base' &&
+                  <div className="flex items-baseline gap-2 text-[12px] py-0.5 border-t border-[#EBEBEB] mt-1 pt-1">
+                            <span className="font-medium flex-1">You keep</span>
+                            <span className="tabular-nums">{money(r.views?.channels?.[view]?.net)}</span>
+                          </div>
+                  }
                       </div>
-              )}
-                    <div className="flex items-baseline gap-2 text-[12px] mt-1 pt-1 border-t border-[#F0F0F0]">
-                      <span className="font-medium flex-1">Comes to</span>
-                      <span className="tabular-nums font-medium">{money(r.new_price)}</span>
-                    </div>
+                }
                   </div>
-            }
+              )}
               </div>
-          )}
+            </>
+          }
+
+          <div className="flex flex-wrap items-center gap-2 mt-4 pt-3 border-t border-[#F0F0F0]">
+            <AlertCircle className="w-4 h-4 text-[#D93900] shrink-0" />
+            <span className="text-[12px] text-[#717171] flex-1 min-w-[200px]">
+              Applying saves these settings and sends the new rates to Smoobu, which passes them to your channels.
+            </span>
+            <button
+              onClick={save}
+              disabled={busy !== '' || !propertyId}
+              className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-[8px] border border-[#DDDDDD] text-[13px] font-semibold disabled:opacity-50">
+              <Save className="w-4 h-4" /> {busy === 'save' ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              onClick={apply}
+              disabled={busy !== '' || changing.length === 0}
+              className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-[8px] bg-[#222222] text-white text-[13px] font-semibold disabled:opacity-40">
+              <Send className="w-4 h-4" />
+              {busy === 'apply' ? 'Sending…' : `Apply to ${changing.length}`}
+            </button>
+          </div>
         </div>
+
+        {preview && preview.occupancy != null &&
+        <p className="mt-2 mb-6 text-[12px] text-[#717171]">
+            {Math.round(preview.occupancy * 100)}% of this range is already booked. Booked nights are never repriced.
+          </p>
+        }
       </div>
     </div>);
 

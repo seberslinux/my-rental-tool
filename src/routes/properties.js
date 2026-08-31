@@ -283,25 +283,45 @@ router.get('/:id/rate-plan', async (req, res) => {
   res.json({ plan, categories: CATEGORIES, labels: LABEL });
 });
 
+/**
+ * A plan as sent, checked and turned into numbers.
+ *
+ * Shared by the saver and the preview so a plan that is refused when
+ * saved cannot quietly be priced anyway, and one that prices cannot be
+ * refused when saved. Returns `{ plan }` or `{ error }`.
+ *
+ * A blank price means "no rule for these nights", which is not the same
+ * as free — those nights are left alone rather than priced at zero.
+ */
+function validatePlan(raw) {
+  const given = raw || {};
+  const plan = {};
+
+  for (const [category, rule] of Object.entries(given)) {
+    if (!CATEGORIES.includes(category)) {
+      return { error: `Unknown category: ${category}` };
+    }
+    if (rule == null || rule.price === '' || rule.price == null) continue;
+
+    const price = Number(rule.price);
+    if (!Number.isFinite(price) || price <= 0) {
+      return { error: `${LABEL[category]} needs a positive rate` };
+    }
+    const minStay = rule.min_stay == null || rule.min_stay === '' ? null : Number(rule.min_stay);
+    if (minStay != null && (!Number.isInteger(minStay) || minStay < 1 || minStay > 30)) {
+      return { error: `${LABEL[category]} needs a minimum stay of 1 to 30 nights` };
+    }
+    plan[category] = { price, min_stay: minStay };
+  }
+  return { plan };
+}
+
 router.put('/:id/rate-plan', async (req, res) => {
   if (denyIfOutOfScope(req, res, req.params.id)) return;
   const plan = (req.body && req.body.plan) || {};
 
-  for (const [category, rule] of Object.entries(plan)) {
-    if (!CATEGORIES.includes(category)) {
-      return res.status(400).json({ error: `Unknown category: ${category}` });
-    }
-    // A blank price means "no rule here", which is not the same as free.
-    if (rule == null || rule.price === '' || rule.price == null) continue;
-    const price = Number(rule.price);
-    if (!Number.isFinite(price) || price <= 0) {
-      return res.status(400).json({ error: `${LABEL[category]} needs a positive rate` });
-    }
-    const minStay = rule.min_stay == null || rule.min_stay === '' ? null : Number(rule.min_stay);
-    if (minStay != null && (!Number.isInteger(minStay) || minStay < 1 || minStay > 30)) {
-      return res.status(400).json({ error: `${LABEL[category]} needs a minimum stay of 1 to 30 nights` });
-    }
-  }
+  const checked = validatePlan(plan);
+  if (checked.error) return res.status(400).json({ error: checked.error });
 
   for (const category of CATEGORIES) {
     const rule = plan[category];
@@ -352,14 +372,27 @@ async function strategyConfigFor(propertyId, override) {
   return config;
 }
 
-async function planFor(propertyId, from, to, strategyOverride) {
+async function planFor(propertyId, from, to, strategyOverride, planOverride) {
   const property = await getOne('SELECT * FROM properties WHERE id = $1', [propertyId]);
 
-  const planRows = await getAll(
-    'SELECT category, price, min_stay FROM rate_plans WHERE property_id = $1', [propertyId]
-  );
-  const plan = {};
-  for (const r of planRows) plan[r.category] = { price: r.price, min_stay: r.min_stay };
+  /**
+   * The plan being tried, or the one that is saved.
+   *
+   * Same reasoning as the strategy override beside it: the screen shows
+   * what a change would do before anything is written, so somebody can
+   * put a number in, look, and take it out again. Absent an override the
+   * stored plan is used, which is what apply and any other caller want.
+   */
+  let plan;
+  if (planOverride) {
+    plan = validatePlan(planOverride).plan || {};
+  } else {
+    const planRows = await getAll(
+      'SELECT category, price, min_stay FROM rate_plans WHERE property_id = $1', [propertyId]
+    );
+    plan = {};
+    for (const r of planRows) plan[r.category] = { price: r.price, min_stay: r.min_stay };
+  }
 
   /**
    * Bookings around the window, not merely inside it.
@@ -440,11 +473,17 @@ router.post('/:id/rate-plan/preview', async (req, res) => {
     return res.status(400).json({ error: 'Dates must be YYYY-MM-DD' });
   }
 
-  // `strategies` in the body is a config the screen is trying out and has
-  // not saved. That is the point of the page: change a number, see what
-  // it would do, change it back.
+  // `strategies` and `plan` in the body are what the screen is trying
+  // out and has not saved. That is the point of the page: change a
+  // number, see what it would do, change it back.
+  const tryingPlan = req.body && req.body.plan;
+  if (tryingPlan) {
+    const checked = validatePlan(tryingPlan);
+    if (checked.error) return res.status(400).json({ error: checked.error });
+  }
+
   const { rows: priced, occupancy, property } = await planFor(
-    req.params.id, from, to, req.body && req.body.strategies
+    req.params.id, from, to, req.body && req.body.strategies, tryingPlan
   );
 
   /**
