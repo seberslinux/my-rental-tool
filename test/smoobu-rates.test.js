@@ -23,6 +23,11 @@ test('rates are asked for with start_date and end_date', async () => {
   const originalCreate = axios.create;
   axios.create = () => ({
     get: async (url, config) => { seen = { url, params: config.params }; return { data: {} }; },
+    // A real axios instance has these two, and the client reaches for
+    // them to attach credentials. A stub missing them fails on its own
+    // shape rather than on anything this test is about.
+    defaults: { headers: {} },
+    interceptors: { request: { use() {} } },
   });
 
   try {
