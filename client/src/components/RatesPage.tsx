@@ -48,17 +48,24 @@ interface Entry {enabled: boolean;params: Record<string, any>;}
 
 interface TrailStep {label: string;price?: number;change?: number;why: string;}
 
+interface ChannelView {label: string;markup: number;guest: number;net: number;}
+interface Views {base: number;channels: Record<string, ChannelView>;}
+
 interface Row {
   date: string;label: string;
   plan_price: number;new_price: number;current_price: number | null;
   new_min_stay: number | null;current_min_stay: number | null;
   changes: boolean;
   trail: TrailStep[];
+  views: Views;
 }
+
+interface Channel {key: string;label: string;markup: number;commission: number;}
 
 interface Preview {
   nights: number;changing: number;occupancy: number | null;
   totals: {current: number;plan: number;strategies: number;};
+  channels: Channel[];
   rows: Row[];
 }
 
@@ -81,6 +88,15 @@ export function RatesPage() {
   const [from, setFrom] = useState(iso(new Date()));
   const [to, setTo] = useState(iso(new Date(Date.now() + 90 * 86400000)));
 
+  /**
+   * Whose price we are looking at.
+   *
+   * 'base' is what you set and what gets sent; a channel key shows what
+   * a guest on that channel is charged instead. Only ever a way of
+   * looking — the number pushed to Smoobu is the base rate whichever of
+   * these is selected, or the markup would be applied twice.
+   */
+  const [view, setView] = useState<string>('base');
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -298,12 +314,62 @@ export function RatesPage() {
                 </div>
               </div>
             </div>
+
+            {/* The same window as the guest sees it, and as it lands.
+                Summed from the rows rather than recomputed, so it cannot
+                disagree with the list underneath. */}
+            {view !== 'base' &&
+          <div className="mt-3 pt-3 border-t border-[#F0F0F0] flex gap-6">
+                <div>
+                  <div className="text-[16px] font-semibold tabular-nums leading-tight">
+                    {money(preview.rows.reduce((n, r) => n + (r.views?.channels?.[view]?.guest || 0), 0))}
+                  </div>
+                  <div className="text-[12px] text-[#717171]">guests pay</div>
+                </div>
+                <div>
+                  <div className="text-[16px] font-semibold tabular-nums leading-tight">
+                    {money(preview.rows.reduce((n, r) => n + (r.views?.channels?.[view]?.net || 0), 0))}
+                  </div>
+                  <div className="text-[12px] text-[#717171]">you keep</div>
+                </div>
+              </div>
+          }
             {preview.occupancy != null &&
           <p className="mt-2 text-[12px] text-[#717171]">
                 {Math.round(preview.occupancy * 100)}% of this window is already booked.
               </p>
           }
           </div>
+        }
+
+        {/* Whose number this is.
+            A guest comparing your flat with the one next door is
+            comparing what they are charged, not what you are paid — so
+            pricing against the market means looking at the middle
+            column, while the number you type is the first. */}
+        {preview && preview.channels && preview.channels.length > 0 &&
+        <div className="flex gap-2 mb-4 overflow-x-auto pb-1">
+            {[{ key: 'base', label: 'Your rate', markup: 0 }, ...preview.channels].map((c) =>
+          <button
+            key={c.key}
+            onClick={() => setView(c.key)}
+            className={`shrink-0 px-3 py-1.5 rounded-full text-[13px] font-medium border ${
+            view === c.key ?
+            'bg-[#222222] text-white border-[#222222]' :
+            'bg-white border-[#DDDDDD] text-[#222222]'}`
+            }>
+                {c.label}
+                {c.key !== 'base' && c.markup > 0 && <span className="opacity-70"> +{c.markup}%</span>}
+              </button>
+          )}
+          </div>
+        }
+
+        {view !== 'base' &&
+        <p className="mb-3 text-[12px] text-[#717171]">
+            What a guest on {(preview?.channels.find((c) => c.key === view) || {}).label} is charged.
+            The rate sent to Smoobu is still your own.
+          </p>
         }
 
         {error && <p className="mb-3 text-[13px] text-[#991B1B]">{error}</p>}
@@ -418,11 +484,23 @@ export function RatesPage() {
                       {r.new_min_stay ? ` · min ${r.new_min_stay} night${r.new_min_stay === 1 ? '' : 's'}` : ''}
                     </div>
                   </div>
+                  {/* In whichever currency of meaning is selected. The
+                      struck-through figure stays the plan's, in the same
+                      view, so the comparison is like for like. */}
                   <div className="shrink-0 text-right">
-                    <div className="text-[14px] font-medium tabular-nums">{money(r.new_price)}</div>
-                    {r.new_price !== r.plan_price &&
-                <div className="text-[12px] text-[#717171] tabular-nums line-through">{money(r.plan_price)}</div>
-                }
+                    <div className="text-[14px] font-medium tabular-nums">
+                      {view === 'base' ?
+                    money(r.new_price) :
+                    money(r.views?.channels?.[view]?.guest)}
+                    </div>
+                    {view === 'base' ?
+                  r.new_price !== r.plan_price &&
+                  <div className="text-[12px] text-[#717171] tabular-nums line-through">{money(r.plan_price)}</div> :
+
+                  <div className="text-[12px] text-[#717171] tabular-nums">
+                        you keep {money(r.views?.channels?.[view]?.net)}
+                      </div>
+                  }
                   </div>
                 </button>
 

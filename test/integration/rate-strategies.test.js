@@ -209,6 +209,57 @@ test('booked nights are never repriced, whatever is switched on', async () => {
   assert.ok(dates.includes(inDays(43)), 'the night they leave is for sale again');
 });
 
+// --- whose price is it ---------------------------------------------------
+
+test('every night comes back as your rate, the guest price and what you keep', async () => {
+  // Airbnb's split fee: a little off the host, a lot on top of the guest.
+  // One percentage cannot say that, which is why there are two fields.
+  const { property, agent } = await ownerWithProperty();
+  await flatPlan(agent, property, 2000);
+  await agent.put(`/api/properties/${property.id}`).send({
+    commission_airbnb: 3, guest_markup_airbnb: 14,
+    vat_rate: 0, vat_airbnb: 0, bank_charge_airbnb: 0,
+  }).expect(200);
+
+  const res = await agent.post(`/api/properties/${property.id}/rate-plan/preview`)
+    .send({ from: inDays(40), to: inDays(42) }).expect(200);
+
+  const row = res.body.rows[0];
+  assert.equal(row.new_price, 2000, 'what you set, and what gets sent');
+  assert.equal(row.views.channels.airbnb.guest, 2280, 'what the guest is charged');
+  assert.equal(row.views.channels.airbnb.net, 1940, 'what reaches you');
+});
+
+test('the markup is a way of looking, never what gets sent', async () => {
+  // Applying it to the rate pushed to Smoobu would charge the guest the
+  // channel fee twice.
+  const { property, agent } = await ownerWithProperty();
+  await flatPlan(agent, property, 2000);
+  await agent.put(`/api/properties/${property.id}`)
+    .send({ guest_markup_airbnb: 14 }).expect(200);
+
+  const res = await agent.post(`/api/properties/${property.id}/rate-plan/preview`)
+    .send({ from: inDays(40), to: inDays(42) }).expect(200);
+
+  assert.ok(res.body.rows.every((r) => r.new_price === 2000),
+    'the rate itself is untouched by the markup');
+});
+
+test('the channels name themselves, with what each charges', async () => {
+  const { property, agent } = await ownerWithProperty();
+  await flatPlan(agent, property, 2000);
+  await agent.put(`/api/properties/${property.id}`)
+    .send({ guest_markup_airbnb: 14, commission_airbnb: 3 }).expect(200);
+
+  const res = await agent.post(`/api/properties/${property.id}/rate-plan/preview`)
+    .send({ from: inDays(40), to: inDays(42) }).expect(200);
+
+  const airbnb = res.body.channels.find((c) => c.key === 'airbnb');
+  assert.equal(airbnb.label, 'Airbnb');
+  assert.equal(airbnb.markup, 14);
+  assert.equal(airbnb.commission, 3);
+});
+
 // --- who may touch it ----------------------------------------------------
 
 test('another owner cannot read or change your algorithms', async () => {

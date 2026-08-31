@@ -11,6 +11,10 @@ const { CATEGORIES, LABEL, planNights } = require('../services/rate-plan');
 const { catalogue, defaultsFor, readParams, applyStrategies, STRATEGIES, FLOOR } =
   require('../services/rate-strategies');
 const { occupancyByProperty } = require('../services/dashboard-calc');
+// One rate, three numbers — what you set, what the guest is charged,
+// what reaches you. See that module for why markup and commission are
+// separate fields rather than one number in different clothes.
+const { viewsFor, channelList } = require('../services/channel-price');
 const { getUpcomingHolidays } = require('../services/holidays-store');
 const { getUpcomingSchoolHolidays } = require('../services/school-holidays');
 const { getApiKeyForProperty } = require('../services/api-key-resolver');
@@ -436,7 +440,19 @@ router.post('/:id/rate-plan/preview', async (req, res) => {
   // `strategies` in the body is a config the screen is trying out and has
   // not saved. That is the point of the page: change a number, see what
   // it would do, change it back.
-  const { rows, occupancy } = await planFor(req.params.id, from, to, req.body && req.body.strategies);
+  const { rows: priced, occupancy, property } = await planFor(
+    req.params.id, from, to, req.body && req.body.strategies
+  );
+
+  /**
+   * Each night in all three of its forms.
+   *
+   * What you set is not what the guest is charged and is not what
+   * reaches you. Computed here rather than in the client because "what
+   * you keep" runs through calcDeductions — VAT applies to the fees, not
+   * to the rate, and that is not arithmetic worth writing twice.
+   */
+  const rows = priced.map((r) => ({ ...r, views: viewsFor(r.new_price, property) }));
   const changing = rows.filter((r) => r.changes);
 
   // What it is worth, so the comparison is in money rather than in a
@@ -450,6 +466,9 @@ router.post('/:id/rate-plan/preview', async (req, res) => {
     nights: rows.length,
     changing: changing.length,
     occupancy,
+    // Named here so the screen can label a toggle without knowing which
+    // channels exist or what this property charges on each.
+    channels: channelList(property),
     totals: {
       current: Math.round(currentTotal),
       plan: Math.round(planTotal),
@@ -668,7 +687,7 @@ router.put('/:id', async (req, res) => {
   const property = await getOne('SELECT * FROM properties WHERE id = $1', [req.params.id]);
   if (!property) return res.status(404).json({ error: 'Property not found' });
 
-  const fields = ['address','cleaning_hours_required','base_price','base_currency','airbnb_url','airbnb_id','booking_url','booking_id_ext','vrbo_url','vrbo_id','commission_airbnb','commission_booking','commission_vrbo','bank_charge_airbnb','bank_charge_booking','bank_charge_vrbo','vat_rate','vat_airbnb','vat_booking','vat_vrbo','property_type','bedrooms','bathrooms','max_guests','location','neighbourhood','wifi_network','wifi_password','access_code','checkin_instructions','checkout_instructions','supply_checklist','emergency_contact'];
+  const fields = ['address','cleaning_hours_required','base_price','base_currency','airbnb_url','airbnb_id','booking_url','booking_id_ext','vrbo_url','vrbo_id','commission_airbnb','commission_booking','commission_vrbo','guest_markup_airbnb','guest_markup_booking','guest_markup_vrbo','bank_charge_airbnb','bank_charge_booking','bank_charge_vrbo','vat_rate','vat_airbnb','vat_booking','vat_vrbo','property_type','bedrooms','bathrooms','max_guests','location','neighbourhood','wifi_network','wifi_password','access_code','checkin_instructions','checkout_instructions','supply_checklist','emergency_contact'];
   const updates = [];
   const values = [];
   for (const f of fields) {

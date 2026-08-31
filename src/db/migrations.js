@@ -590,6 +590,20 @@ async function runMigrations() {
     ['commission_airbnb', 'REAL DEFAULT 18'],
     ['commission_booking', 'REAL DEFAULT 15'],
     ['commission_vrbo', 'REAL DEFAULT 8'],
+    // What the channel adds on top for the guest, as a percentage.
+    //
+    // Deliberately not the commission columns above, which are the other
+    // direction: those come out of what you receive. Airbnb's split fee
+    // is both at once — a few percent off the host and a larger fee added
+    // to the guest — so one number cannot express it, and overloading the
+    // commission field would silently change every net revenue figure
+    // that already reads it.
+    //
+    // Zero by default, because a channel that shows the guest exactly the
+    // rate you set is the common case and the honest starting point.
+    ['guest_markup_airbnb', 'REAL DEFAULT 0'],
+    ['guest_markup_booking', 'REAL DEFAULT 0'],
+    ['guest_markup_vrbo', 'REAL DEFAULT 0'],
     ['bank_charge_airbnb', 'REAL DEFAULT 0'],
     ['bank_charge_booking', 'REAL DEFAULT 2.1'],
     ['bank_charge_vrbo', 'REAL DEFAULT 0'],
