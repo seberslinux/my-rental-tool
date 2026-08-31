@@ -260,6 +260,70 @@ test('the channels name themselves, with what each charges', async () => {
   assert.equal(airbnb.commission, 3);
 });
 
+// --- reading the markup off real bookings --------------------------------
+
+test('the markup is read back from what guests were actually charged', async () => {
+  // Smoobu decides what a guest pays; this only notices what it has been
+  // deciding, so the field is not filled in from memory.
+  const { property, agent } = await ownerWithProperty();
+  const from = inDays(40);
+  const nights = [inDays(40), inDays(41), inDays(42)];
+  for (const d of nights) {
+    await pool.query(
+      'INSERT INTO daily_rates (property_id, date, price, min_stay) VALUES ($1,$2,$3,1)',
+      [property.id, d, 1000]
+    );
+  }
+  // Three nights asked at 1000; the guest paid 3420. That is +14%.
+  await seedBooking({
+    property, check_in: from, check_out: inDays(43),
+    platform: 'Airbnb', total_price: 3420,
+  });
+
+  const res = await agent.get(`/api/properties/${property.id}/observed-markup`).expect(200);
+  assert.equal(res.body.observed.airbnb.markup, 14);
+  assert.equal(res.body.observed.airbnb.bookings, 1);
+  assert.equal(res.body.observed.airbnb.nights, 3);
+});
+
+test('a property with no synced rates says nothing rather than zero', async () => {
+  // Absent means "no idea"; zero would read as "no markup".
+  const { property, agent } = await ownerWithProperty();
+  const res = await agent.get(`/api/properties/${property.id}/observed-markup`).expect(200);
+  assert.deepEqual(res.body.observed, {});
+  assert.equal(res.body.rated_nights, 0);
+});
+
+test('observing a markup does not set it', async () => {
+  // It is a suggestion on a screen. Nothing writes the field but a person.
+  const { property, agent } = await ownerWithProperty();
+  await pool.query(
+    'INSERT INTO daily_rates (property_id, date, price, min_stay) VALUES ($1,$2,$3,1)',
+    [property.id, inDays(40), 1000]
+  );
+  await seedBooking({
+    property, check_in: inDays(40), check_out: inDays(41),
+    platform: 'Airbnb', total_price: 1140,
+  });
+
+  await agent.get(`/api/properties/${property.id}/observed-markup`).expect(200);
+
+  const { rows } = await pool.query(
+    'SELECT guest_markup_airbnb FROM properties WHERE id = $1', [property.id]
+  );
+  assert.equal(Number(rows[0].guest_markup_airbnb), 0, 'untouched until somebody says so');
+});
+
+test('another owner cannot read what your bookings imply', async () => {
+  const { property } = await ownerWithProperty();
+  const stranger = await seedUser({ role: 'property_manager' });
+  await seedProperty({ owner: stranger });
+  const agent = await getAgent();
+  await loginAs(agent, stranger);
+
+  assert.equal((await agent.get(`/api/properties/${property.id}/observed-markup`)).status, 403);
+});
+
 // --- who may touch it ----------------------------------------------------
 
 test('another owner cannot read or change your algorithms', async () => {

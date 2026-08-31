@@ -15,6 +15,9 @@ const { occupancyByProperty } = require('../services/dashboard-calc');
 // what reaches you. See that module for why markup and commission are
 // separate fields rather than one number in different clothes.
 const { viewsFor, channelList } = require('../services/channel-price');
+// What Smoobu's markup has been doing, read off the bookings it made.
+// Offered as a suggestion; Smoobu remains the authority.
+const { observedMarkup } = require('../services/observed-markup');
 const { getUpcomingHolidays } = require('../services/holidays-store');
 const { getUpcomingSchoolHolidays } = require('../services/school-holidays');
 const { getApiKeyForProperty } = require('../services/api-key-resolver');
@@ -485,6 +488,46 @@ router.post('/:id/rate-plan/preview', async (req, res) => {
  * strategy appears on the page by existing — its label, its blurb and
  * the parameters it takes all come from the one place that defines it.
  */
+/**
+ * What the channel markup appears to be, from the bookings it produced.
+ *
+ * Smoobu owns this setting and is the only authority on it — whatever
+ * comes back here, the guest pays what Smoobu decides. But every booking
+ * records what the guest was charged and daily_rates records what was
+ * being asked for those nights, so the ratio is the markup observed
+ * rather than declared.
+ *
+ * Offered, never applied. It fills a suggestion on the screen that
+ * somebody accepts or overrules; nothing writes guest_markup_* but a
+ * person.
+ *
+ * Only nights that still carry a synced rate can be measured, and
+ * daily_rates runs from today forward, so in practice this reads future
+ * bookings. A property with none returns an empty object, which the
+ * screen shows as nothing rather than as zero.
+ */
+router.get('/:id/observed-markup', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+
+  const rateRows = await getAll(
+    'SELECT date, price FROM daily_rates WHERE property_id = $1', [req.params.id]
+  );
+  if (rateRows.length === 0) return res.json({ observed: {}, rated_nights: 0 });
+
+  const rates = {};
+  for (const r of rateRows) rates[String(r.date).slice(0, 10)] = r.price;
+
+  const dates = Object.keys(rates).sort();
+  const bookings = await getAll(
+    `SELECT check_in, check_out, total_price, platform, status FROM bookings
+      WHERE property_id = $1 AND status = 'confirmed'
+        AND check_out > $2 AND check_in <= $3`,
+    [req.params.id, dates[0], dates[dates.length - 1]]
+  );
+
+  res.json({ observed: observedMarkup({ bookings, rates }), rated_nights: dates.length });
+});
+
 router.get('/:id/rate-strategies', async (req, res) => {
   if (denyIfOutOfScope(req, res, req.params.id)) return;
   const rows = await getAll(

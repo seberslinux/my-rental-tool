@@ -97,6 +97,16 @@ export function RatesPage() {
    * these is selected, or the markup would be applied twice.
    */
   const [view, setView] = useState<string>('base');
+  /**
+   * What the markup appears to be, from bookings Smoobu has already made.
+   *
+   * Smoobu owns the setting; this only notices what it has been doing.
+   * Shown as a suggestion beside the channel, never written on its own.
+   */
+  const [observed, setObserved] = useState<Record<string, {
+    markup: number;bookings: number;nights: number;low: number;high: number;confident: boolean;
+  }>>({});
+  const [savingMarkup, setSavingMarkup] = useState(false);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [previewing, setPreviewing] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -131,6 +141,11 @@ export function RatesPage() {
         ]);
         setCatalogue(s.catalogue || []);
         setConfig(s.config || {});
+        // Best effort: a property with no synced rates simply has
+        // nothing to say, and that must not take the page down.
+        apiGet<{observed: any;}>(`/api/properties/${propertyId}/observed-markup`).
+        then((o) => setObserved(o.observed || {})).
+        catch(() => setObserved({}));
         setPlan(p.plan || {});
         setLabels(p.labels || {});
         setDone('');
@@ -189,6 +204,32 @@ export function RatesPage() {
       [key]: { enabled: !(c[key]?.enabled), params: c[key]?.params || {} },
     }));
     setDone('');
+  };
+
+  /**
+   * Take the observed figure as the setting.
+   *
+   * A deliberate act, not something the observation does to itself. It
+   * writes the property field the price views read, then re-previews so
+   * the guest prices on screen move to match.
+   */
+  const useObserved = async (channelKey: string, markup: number) => {
+    setSavingMarkup(true);
+    setError('');
+    const res = await fetch(`/api/properties/${propertyId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ [`guest_markup_${channelKey}`]: markup }),
+    });
+    setSavingMarkup(false);
+    if (!res.ok) {
+      setError((await res.json().catch(() => ({}))).error || 'Could not save that markup');
+      return;
+    }
+    const label = (preview?.channels.find((c) => c.key === channelKey) || {}).label || channelKey;
+    setDone(`${label} now shows guests your rate plus ${markup}%.`);
+    runPreview();
   };
 
   const save = async () => {
@@ -366,10 +407,55 @@ export function RatesPage() {
         }
 
         {view !== 'base' &&
-        <p className="mb-3 text-[12px] text-[#717171]">
-            What a guest on {(preview?.channels.find((c) => c.key === view) || {}).label} is charged.
-            The rate sent to Smoobu is still your own.
-          </p>
+        <div className="mb-3">
+            <p className="text-[12px] text-[#717171]">
+              What a guest on {(preview?.channels.find((c) => c.key === view) || {}).label} is charged.
+              The rate sent to Smoobu is still your own.
+            </p>
+
+            {/* What the markup looks like from the bookings Smoobu has
+                already made. The setting lives in Smoobu and it decides
+                what the guest pays; this is only evidence of what it has
+                been doing, offered so the field is not filled from
+                memory. Nothing applies it but a tap. */}
+            {observed[view] &&
+          <div className="mt-2 bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)] p-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[13px] text-[#222222]">
+                      Your last {observed[view].bookings} booking{observed[view].bookings === 1 ? '' : 's'} here
+                      imply <span className="font-semibold tabular-nums">+{observed[view].markup}%</span>
+                    </div>
+                    <div className="text-[12px] text-[#717171]">
+                      {observed[view].low === observed[view].high ?
+                  `across ${observed[view].nights} nights` :
+                  `${observed[view].low}% to ${observed[view].high}% across ${observed[view].nights} nights`}
+                      {' · '}Smoobu decides the real one
+                    </div>
+                    {/* A markup is one fixed number. Observations that
+                        range this widely are being moved by something
+                        else — a length-of-stay discount, a promotion, a
+                        rate changed after the booking — so the median is
+                        the middle of some noise and is not offered. */}
+                    {!observed[view].confident &&
+                  <div className="text-[12px] text-[#92400E] mt-0.5">
+                        Too varied to read a setting from — check it in Smoobu.
+                      </div>
+                  }
+                  </div>
+                  {observed[view].confident &&
+                (preview?.channels.find((c) => c.key === view) || {}).markup !== observed[view].markup &&
+                <button
+                  disabled={savingMarkup}
+                  onClick={() => useObserved(view, observed[view].markup)}
+                  className="shrink-0 text-[13px] font-semibold text-[#FF385C] disabled:opacity-50">
+                      {savingMarkup ? 'Saving…' : 'Use it'}
+                    </button>
+                }
+                </div>
+              </div>
+          }
+          </div>
         }
 
         {error && <p className="mb-3 text-[13px] text-[#991B1B]">{error}</p>}
