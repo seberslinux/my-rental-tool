@@ -29,13 +29,27 @@ async function ownerWithProperty() {
   return { owner, property, agent };
 }
 
-/** A plan that prices every kind of night the same, so the strategies are
- *  the only thing moving a number. */
-async function flatPlan(agent, property, price = 1000) {
+/**
+ * A plan that prices every kind of night the same.
+ *
+ * Every category, always — not because each is interesting, but because
+ * a night with no rule for its category produces no row at all, and
+ * which category a date falls into depends on live holiday data.
+ *
+ * That is not hypothetical. This suite priced only weekdays and weekends
+ * for the orphan-gap test, which passed wherever the school-holiday
+ * lookup was unavailable and failed in CI, where it succeeds: the night
+ * in question is a Saturday inside a South African school break, so it
+ * categorised as school_holiday, had no rule, and never appeared. The
+ * test is about the gap rule; pricing everything keeps the calendar out
+ * of it.
+ */
+async function flatPlan(agent, property, price = 1000, minStay) {
+  const rule = minStay ? { price, min_stay: minStay } : { price };
   await agent.put(`/api/properties/${property.id}/rate-plan`).send({
     plan: {
-      weekday: { price }, weekend: { price }, school_holiday: { price },
-      public_holiday: { price }, long_weekend: { price },
+      weekday: rule, weekend: rule, school_holiday: rule,
+      public_holiday: rule, long_weekend: rule,
     },
   }).expect(200);
 }
@@ -156,9 +170,7 @@ test('an orphan gap is discounted and made bookable', async () => {
   // The case the old engine could not fix: it cut the price and left the
   // minimum stay at three, so nobody could book the two nights anyway.
   const { property, agent } = await ownerWithProperty();
-  await agent.put(`/api/properties/${property.id}/rate-plan`).send({
-    plan: { weekday: { price: 1000, min_stay: 3 }, weekend: { price: 1000, min_stay: 3 } },
-  }).expect(200);
+  await flatPlan(agent, property, 1000, 3);
 
   await seedBooking({ property, check_in: inDays(30), check_out: inDays(40) });
   await seedBooking({ property, check_in: inDays(42), check_out: inDays(50) });
@@ -175,6 +187,54 @@ test('an orphan gap is discounted and made bookable', async () => {
   assert.ok(gapNight, 'the first night of the gap is priced');
   assert.equal(gapNight.new_price, 750);
   assert.equal(gapNight.new_min_stay, 2, 'short enough to actually fit the gap');
+});
+
+test('a gap inside a school holiday is still priced', async () => {
+  /**
+   * The failure CI caught and this machine could not.
+   *
+   * Which category a night falls into depends on live holiday data, and
+   * a night whose category has no rule produces no row at all. The gap
+   * test above priced only weekdays and weekends, so it passed wherever
+   * the school-holiday lookup was unavailable — as it is here, where
+   * egress to the API is blocked — and failed in CI, where the lookup
+   * succeeds and the night in question is a Saturday inside a South
+   * African school break.
+   *
+   * Seeding the cache reproduces that here. School holidays are read
+   * cache-first, so a row is enough to make the night categorise as one
+   * without the API being reachable.
+   */
+  await resetDb();
+  const owner = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner, base_price: 1000 });
+  const agent = await getAgent();
+  await loginAs(agent, owner);
+  await flatPlan(agent, property, 1000, 3);
+
+  const gapStart = inDays(40);
+  await pool.query(
+    `INSERT INTO holidays (country, year, date, end_date, name, kind, source)
+     VALUES ($1, $2, $3, $4, 'Spring break', 'school', 'test')`,
+    ['ZA', Number(gapStart.slice(0, 4)), inDays(35), inDays(45)]
+  );
+
+  await seedBooking({ property, check_in: inDays(30), check_out: gapStart });
+  await seedBooking({ property, check_in: inDays(42), check_out: inDays(50) });
+
+  const res = await agent.post(`/api/properties/${property.id}/rate-plan/preview`)
+    .send({
+      from: gapStart, to: inDays(41),
+      strategies: {
+        orphan_gap: { enabled: true, params: { max_gap: 2, discount: 25, release_min_stay: true } },
+      },
+    }).expect(200);
+
+  const night = res.body.rows.find((r) => r.date === gapStart);
+  assert.ok(night, 'a school-holiday night is priced like any other');
+  assert.equal(night.label, 'School holidays', 'and categorised as one');
+  assert.equal(night.new_price, 750, 'the gap rule still applies to it');
+  assert.equal(night.new_min_stay, 2);
 });
 
 test('the preview totals it in money, not just in nights that moved', async () => {
