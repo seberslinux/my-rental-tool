@@ -1,17 +1,52 @@
 const axios = require('axios');
+const { sign } = require('./smoobu-auth');
 
 const BASE_URL = 'https://login.smoobu.com/api';
 
+/**
+ * A Smoobu client that signs what it sends.
+ *
+ * Every call in this app is built here, which is the only reason the
+ * move off the `Api-Key` header is a small change: one function, one
+ * interceptor, and the twenty call sites are untouched.
+ *
+ * With a secret configured each request is signed (see smoobu-auth).
+ * Without one it falls back to the legacy header, so a deployment that
+ * has not been given the new credentials keeps working until 25
+ * September rather than failing the moment this ships.
+ */
 function getClient(apiKey) {
   const key = apiKey || process.env.SMOOBU_API_KEY;
   if (!key) throw new Error('No Smoobu API key available');
-  return axios.create({
+  const secret = process.env.SMOOBU_API_SECRET;
+
+  const client = axios.create({
     baseURL: BASE_URL,
-    headers: {
-      'Api-Key': key,
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
   });
+
+  if (!secret) {
+    client.defaults.headers['Api-Key'] = key;
+    return client;
+  }
+
+  client.interceptors.request.use((config) => {
+    // The path as the server sees it, which includes the /api prefix
+    // baseURL carries — sign what is sent, not what was typed here.
+    const path = `/api${config.url}`;
+    const { headers } = sign({
+      method: config.method,
+      path,
+      params: config.params,
+      body: config.data,
+      key,
+      secret,
+    });
+    Object.assign(config.headers, headers);
+    return config;
+  });
+
+  return client;
 }
 
 // Fetch all apartments/properties
