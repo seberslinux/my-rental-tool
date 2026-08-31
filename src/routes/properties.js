@@ -6,6 +6,18 @@ const { propertyStatus, ymd } = require('../services/cleaning-status');
 const { scopeProperties, denyIfOutOfScope, requireRole } = require('../middleware/auth');
 const smoobu = require('../services/smoobu');
 const { CATEGORIES, LABEL, planNights } = require('../services/rate-plan');
+// The rules that read the diary — see that module for why they multiply
+// rather than take turns overwriting each other.
+const { catalogue, defaultsFor, readParams, applyStrategies, STRATEGIES, FLOOR } =
+  require('../services/rate-strategies');
+const { occupancyByProperty } = require('../services/dashboard-calc');
+// One rate, three numbers — what you set, what the guest is charged,
+// what reaches you. See that module for why markup and commission are
+// separate fields rather than one number in different clothes.
+const { viewsFor, channelList } = require('../services/channel-price');
+// What Smoobu's markup has been doing, read off the bookings it made.
+// Offered as a suggestion; Smoobu remains the authority.
+const { observedMarkup } = require('../services/observed-markup');
 const { getUpcomingHolidays } = require('../services/holidays-store');
 const { getUpcomingSchoolHolidays } = require('../services/school-holidays');
 const { getApiKeyForProperty } = require('../services/api-key-resolver');
@@ -320,19 +332,56 @@ router.put('/:id/rate-plan', async (req, res) => {
  * way and an apply another is how somebody ends up agreeing to one thing
  * and getting a different one.
  */
-async function planFor(propertyId, from, to) {
+/**
+ * Whatever the caller wants tried, or whatever is saved.
+ *
+ * The screen sends a config it has not saved so somebody can try a
+ * setting, look at what it does and change their mind — which is most of
+ * what that page is for. Absent one, the property's own saved strategies
+ * are used, so apply and the nightly view agree without the client
+ * having to remember to send anything.
+ */
+async function strategyConfigFor(propertyId, override) {
+  if (override && typeof override === 'object') return override;
+  const rows = await getAll(
+    'SELECT strategy, enabled, params FROM rate_strategies WHERE property_id = $1',
+    [propertyId]
+  );
+  const config = {};
+  for (const r of rows) config[r.strategy] = { enabled: r.enabled, params: r.params || {} };
+  return config;
+}
+
+async function planFor(propertyId, from, to, strategyOverride) {
   const property = await getOne('SELECT * FROM properties WHERE id = $1', [propertyId]);
 
-  const rows = await getAll(
+  const planRows = await getAll(
     'SELECT category, price, min_stay FROM rate_plans WHERE property_id = $1', [propertyId]
   );
   const plan = {};
-  for (const r of rows) plan[r.category] = { price: r.price, min_stay: r.min_stay };
+  for (const r of planRows) plan[r.category] = { price: r.price, min_stay: r.min_stay };
+
+  /**
+   * Bookings around the window, not merely inside it.
+   *
+   * A gap is defined by the two bookings on either side of it, and one of
+   * those can easily sit outside the range being priced — a guest who
+   * checks out on the first night of the window was excluded by
+   * `check_out > from`, so the hole they leave behind was invisible and
+   * the orphan-gap rule had nothing to work with.
+   *
+   * The padding is a month, comfortably more than any gap worth filling.
+   * Nothing else is affected by the extra rows: a night is sold only if a
+   * booking actually spans it, and occupancy clips to the window itself.
+   */
+  const PAD_DAYS = 31;
+  const pad = (date, n) =>
+  new Date(new Date(`${date}T00:00:00Z`).getTime() + n * 86400000).toISOString().slice(0, 10);
 
   const bookings = await getAll(
     `SELECT check_in, check_out, status FROM bookings
       WHERE property_id = $1 AND status = 'confirmed' AND check_out > $2 AND check_in <= $3`,
-    [propertyId, from, to]
+    [propertyId, pad(from, -PAD_DAYS), pad(to, PAD_DAYS)]
   );
 
   const rateRows = await getAll(
@@ -358,7 +407,29 @@ async function planFor(propertyId, from, to) {
     console.error('Holiday lookup failed for the rate plan:', err.message);
   }
 
-  return { property, plan, rows: planNights({ from, to, plan, holidays, currentRates, bookings }) };
+  const planned = planNights({ from, to, plan, holidays, currentRates, bookings });
+
+  /**
+   * How full the window being priced already is.
+   *
+   * Counted by the function the dashboard uses rather than a second one
+   * here, so "60% booked" means the same thing on both screens. Over the
+   * window itself, not a fixed thirty days: the question the pace rule
+   * asks is about the stretch you are pricing.
+   */
+  const nights = Math.max(1, Math.round((new Date(`${to}T00:00:00Z`) - new Date(`${from}T00:00:00Z`)) / 86400000) + 1);
+  const [occ] = occupancyByProperty(
+    bookings.map((b) => ({ ...b, property_id: Number(propertyId) })),
+    [Number(propertyId)], from, nights
+  );
+  const occupancy = occ ? Math.min(1, occ.booked_nights / nights) : null;
+
+  const config = await strategyConfigFor(propertyId, strategyOverride);
+  const rows = applyStrategies({
+    rows: planned, config, today: new Date().toISOString().slice(0, 10), bookings, occupancy,
+  });
+
+  return { property, plan, config, occupancy, rows };
 }
 
 router.post('/:id/rate-plan/preview', async (req, res) => {
@@ -369,13 +440,138 @@ router.post('/:id/rate-plan/preview', async (req, res) => {
     return res.status(400).json({ error: 'Dates must be YYYY-MM-DD' });
   }
 
-  const { rows } = await planFor(req.params.id, from, to);
+  // `strategies` in the body is a config the screen is trying out and has
+  // not saved. That is the point of the page: change a number, see what
+  // it would do, change it back.
+  const { rows: priced, occupancy, property } = await planFor(
+    req.params.id, from, to, req.body && req.body.strategies
+  );
+
+  /**
+   * Each night in all three of its forms.
+   *
+   * What you set is not what the guest is charged and is not what
+   * reaches you. Computed here rather than in the client because "what
+   * you keep" runs through calcDeductions — VAT applies to the fees, not
+   * to the rate, and that is not arithmetic worth writing twice.
+   */
+  const rows = priced.map((r) => ({ ...r, views: viewsFor(r.new_price, property) }));
   const changing = rows.filter((r) => r.changes);
+
+  // What it is worth, so the comparison is in money rather than in a
+  // count of nights that moved. Only over nights the plan actually
+  // covers — a night with no rule is not revenue anybody is choosing.
+  const planTotal = rows.reduce((n, r) => n + (r.plan_price || 0), 0);
+  const newTotal = rows.reduce((n, r) => n + r.new_price, 0);
+  const currentTotal = rows.reduce((n, r) => n + (r.current_price || r.plan_price || 0), 0);
+
   res.json({
     nights: rows.length,
     changing: changing.length,
+    occupancy,
+    // Named here so the screen can label a toggle without knowing which
+    // channels exist or what this property charges on each.
+    channels: channelList(property),
+    totals: {
+      current: Math.round(currentTotal),
+      plan: Math.round(planTotal),
+      strategies: Math.round(newTotal),
+    },
     rows,
   });
+});
+
+/**
+ * The algorithms on offer, and which of them this property uses.
+ *
+ * The catalogue is served rather than hard-coded in the client so a new
+ * strategy appears on the page by existing — its label, its blurb and
+ * the parameters it takes all come from the one place that defines it.
+ */
+/**
+ * What the channel markup appears to be, from the bookings it produced.
+ *
+ * Smoobu owns this setting and is the only authority on it — whatever
+ * comes back here, the guest pays what Smoobu decides. But every booking
+ * records what the guest was charged and daily_rates records what was
+ * being asked for those nights, so the ratio is the markup observed
+ * rather than declared.
+ *
+ * Offered, never applied. It fills a suggestion on the screen that
+ * somebody accepts or overrules; nothing writes guest_markup_* but a
+ * person.
+ *
+ * Only nights that still carry a synced rate can be measured, and
+ * daily_rates runs from today forward, so in practice this reads future
+ * bookings. A property with none returns an empty object, which the
+ * screen shows as nothing rather than as zero.
+ */
+router.get('/:id/observed-markup', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+
+  const rateRows = await getAll(
+    'SELECT date, price FROM daily_rates WHERE property_id = $1', [req.params.id]
+  );
+  if (rateRows.length === 0) return res.json({ observed: {}, rated_nights: 0 });
+
+  const rates = {};
+  for (const r of rateRows) rates[String(r.date).slice(0, 10)] = r.price;
+
+  const dates = Object.keys(rates).sort();
+  const bookings = await getAll(
+    `SELECT check_in, check_out, total_price, platform, status FROM bookings
+      WHERE property_id = $1 AND status = 'confirmed'
+        AND check_out > $2 AND check_in <= $3`,
+    [req.params.id, dates[0], dates[dates.length - 1]]
+  );
+
+  res.json({ observed: observedMarkup({ bookings, rates }), rated_nights: dates.length });
+});
+
+router.get('/:id/rate-strategies', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  const rows = await getAll(
+    'SELECT strategy, enabled, params FROM rate_strategies WHERE property_id = $1',
+    [req.params.id]
+  );
+  const config = {};
+  for (const r of rows) config[r.strategy] = { enabled: r.enabled, params: r.params || {} };
+
+  // Anything never configured comes back with its defaults filled in, so
+  // the form has something to show and turning a strategy on does not
+  // require setting every field first.
+  const list = catalogue();
+  for (const s of list) {
+    if (!config[s.key]) config[s.key] = { enabled: false, params: defaultsFor(s.key) };
+    else config[s.key].params = readParams(s.key, config[s.key].params);
+  }
+  res.json({ catalogue: list, config });
+});
+
+router.put('/:id/rate-strategies', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  const given = (req.body && req.body.config) || {};
+  const known = new Set([...Object.keys(STRATEGIES), FLOOR.key]);
+
+  for (const key of Object.keys(given)) {
+    if (!known.has(key)) return res.status(400).json({ error: `Unknown strategy: ${key}` });
+  }
+
+  for (const key of known) {
+    const entry = given[key];
+    if (!entry) continue;
+    // Read through the catalogue on the way in, so a number typed past
+    // its bounds is stored as the bound rather than kept and clamped
+    // differently by every later reader.
+    await run(
+      `INSERT INTO rate_strategies (property_id, strategy, enabled, params, updated_at)
+       VALUES ($1, $2, $3, $4, NOW())
+       ON CONFLICT(property_id, strategy) DO UPDATE SET
+         enabled = EXCLUDED.enabled, params = EXCLUDED.params, updated_at = NOW()`,
+      [req.params.id, key, Boolean(entry.enabled), JSON.stringify(readParams(key, entry.params))]
+    );
+  }
+  res.json({ ok: true });
 });
 
 router.post('/:id/rate-plan/apply', async (req, res) => {
@@ -386,7 +582,10 @@ router.post('/:id/rate-plan/apply', async (req, res) => {
     return res.status(400).json({ error: 'Dates must be YYYY-MM-DD' });
   }
 
-  const { property, rows } = await planFor(req.params.id, from, to);
+  // Apply reads the same override the preview did, so pressing the
+  // button sends the list on screen rather than the saved settings the
+  // screen may have been changed away from.
+  const { property, rows } = await planFor(req.params.id, from, to, req.body && req.body.strategies);
   if (!property) return res.status(404).json({ error: 'Property not found' });
 
   const changing = rows.filter((r) => r.changes);
@@ -531,7 +730,7 @@ router.put('/:id', async (req, res) => {
   const property = await getOne('SELECT * FROM properties WHERE id = $1', [req.params.id]);
   if (!property) return res.status(404).json({ error: 'Property not found' });
 
-  const fields = ['address','cleaning_hours_required','base_price','base_currency','airbnb_url','airbnb_id','booking_url','booking_id_ext','vrbo_url','vrbo_id','commission_airbnb','commission_booking','commission_vrbo','bank_charge_airbnb','bank_charge_booking','bank_charge_vrbo','vat_rate','vat_airbnb','vat_booking','vat_vrbo','property_type','bedrooms','bathrooms','max_guests','location','neighbourhood','wifi_network','wifi_password','access_code','checkin_instructions','checkout_instructions','supply_checklist','emergency_contact'];
+  const fields = ['address','cleaning_hours_required','base_price','base_currency','airbnb_url','airbnb_id','booking_url','booking_id_ext','vrbo_url','vrbo_id','commission_airbnb','commission_booking','commission_vrbo','guest_markup_airbnb','guest_markup_booking','guest_markup_vrbo','bank_charge_airbnb','bank_charge_booking','bank_charge_vrbo','vat_rate','vat_airbnb','vat_booking','vat_vrbo','property_type','bedrooms','bathrooms','max_guests','location','neighbourhood','wifi_network','wifi_password','access_code','checkin_instructions','checkout_instructions','supply_checklist','emergency_contact'];
   const updates = [];
   const values = [];
   for (const f of fields) {

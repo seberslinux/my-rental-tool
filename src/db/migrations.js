@@ -507,6 +507,26 @@ async function runMigrations() {
     );
   `);
 
+  // Which algorithms are switched on for a property, and how they are set.
+  //
+  // A row per strategy rather than a blob, for the same reason the plan
+  // above is a row per category: it stays queryable, and turning one off
+  // is a row rather than a rewrite. The parameters themselves are JSON
+  // because each strategy declares its own and the set differs per
+  // strategy — the catalogue in rate-strategies.js is what says which
+  // keys are meaningful, and it validates them on the way in.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS rate_strategies (
+      id SERIAL PRIMARY KEY,
+      property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+      strategy TEXT NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      params JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(property_id, strategy)
+    );
+  `);
+
   // One row per device, not per person: a cleaner with a phone and a
   // tablet should be told on both. The endpoint is unique because that
   // is what the push service issues, and re-subscribing the same device
@@ -570,6 +590,20 @@ async function runMigrations() {
     ['commission_airbnb', 'REAL DEFAULT 18'],
     ['commission_booking', 'REAL DEFAULT 15'],
     ['commission_vrbo', 'REAL DEFAULT 8'],
+    // What the channel adds on top for the guest, as a percentage.
+    //
+    // Deliberately not the commission columns above, which are the other
+    // direction: those come out of what you receive. Airbnb's split fee
+    // is both at once — a few percent off the host and a larger fee added
+    // to the guest — so one number cannot express it, and overloading the
+    // commission field would silently change every net revenue figure
+    // that already reads it.
+    //
+    // Zero by default, because a channel that shows the guest exactly the
+    // rate you set is the common case and the honest starting point.
+    ['guest_markup_airbnb', 'REAL DEFAULT 0'],
+    ['guest_markup_booking', 'REAL DEFAULT 0'],
+    ['guest_markup_vrbo', 'REAL DEFAULT 0'],
     ['bank_charge_airbnb', 'REAL DEFAULT 0'],
     ['bank_charge_booking', 'REAL DEFAULT 2.1'],
     ['bank_charge_vrbo', 'REAL DEFAULT 0'],
