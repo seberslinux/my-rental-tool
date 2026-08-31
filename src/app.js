@@ -105,7 +105,19 @@ function buildApp({
   app.use('/api/push', require('./routes/push'));
   app.use('/api/properties', require('./routes/properties'));
   app.use('/api/cleaners', require('./routes/cleaners'));
-  app.use('/api/pricing', require('./routes/pricing'));
+  // No /api/pricing. The engine behind it priced from
+  // properties.base_price, which is Smoobu's minimum floor rather than a
+  // nightly rate — R80 on a flat that sells for about R3,300 — and the
+  // route had no role check and no property scoping, so any signed-in
+  // account could reprice every listing.
+  //
+  // Every write it made used to be rejected by Smoobu with 422, and that
+  // accident was the only thing protecting two listings. Fixing the
+  // payload so the manual rate editor could reach Smoobu armed this at
+  // the same time.
+  //
+  // What replaced it: a rate plan somebody sets, a preview they read,
+  // and an Apply they press.
   app.use('/api/analytics', require('./routes/analytics'));
   app.use('/api/finances', require('./routes/finances'));
   app.use('/api/maintenance', require('./routes/maintenance'));
