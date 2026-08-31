@@ -65,6 +65,25 @@ function guestPrice(rate, markupPercent) {
 }
 
 /**
+ * The rate that produces a given guest price — the inverse, by division.
+ *
+ * It has to be `guest / 1.205`, never `guest * 0.795`. A markup is a
+ * fraction of the base and a discount is a fraction of the guest price,
+ * so the two are not the same number and reversing one with the other is
+ * silently wrong: 2,109.67 back through 20.5% gives 1,750.76 by division
+ * and 1,677.19 by multiplication, seventy-four rand adrift on one night.
+ *
+ * It exists so nobody has to work that out again. Every percentage in
+ * this app is a markup on the base; this is the only place the sum runs
+ * backwards.
+ */
+function rateForGuestPrice(guest, markupPercent) {
+  const g = Number(guest);
+  if (!Number.isFinite(g) || g <= 0) return 0;
+  return Math.round(g / (1 + pct(markupPercent) / 100));
+}
+
+/**
  * What reaches you from a night priced at `rate` on this channel.
  *
  * Through calcDeductions rather than around it. The fake booking carries
@@ -121,4 +140,6 @@ function channelList(property = {}) {
   }));
 }
 
-module.exports = { CHANNELS, guestPrice, netForChannel, viewsFor, channelList };
+module.exports = {
+  CHANNELS, guestPrice, rateForGuestPrice, netForChannel, viewsFor, channelList,
+};

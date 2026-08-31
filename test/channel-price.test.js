@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { guestPrice, netForChannel, viewsFor, channelList } = require('../src/services/channel-price');
+const { guestPrice, netForChannel, viewsFor, channelList, rateForGuestPrice } = require('../src/services/channel-price');
 
 /**
  * One rate, three numbers.
@@ -103,4 +103,37 @@ test('the channel list carries both percentages for a form to show', () => {
   assert.equal(airbnb.label, 'Airbnb');
   assert.equal(airbnb.markup, 14);
   assert.equal(airbnb.commission, 3);
+});
+
+// --- one direction, and its inverse ---------------------------------------
+
+test('a markup is a fraction of the base, so the inverse is a division', () => {
+  // The same money described from the other end is a different number.
+  // Reversing a 20.5% markup by taking 20.5% off the guest price loses
+  // R74 a night, and does it silently.
+  const base = 1751;
+  const guest = guestPrice(base, 20.5);
+  assert.equal(guest, 2110);
+  assert.equal(rateForGuestPrice(guest, 20.5), base, 'divides back to where it started');
+
+  const wrong = Math.round(guest * (1 - 0.205));
+  assert.equal(wrong, 1677);
+  assert.notEqual(wrong, base, 'which is why the inverse is not a subtraction');
+});
+
+test('the round trip holds for every channel percentage we use', () => {
+  for (const markup of [0, 12.5, 20.5, 25, 40]) {
+    for (const base of [800, 1500, 2400, 3783]) {
+      const back = rateForGuestPrice(guestPrice(base, markup), markup);
+      assert.ok(Math.abs(back - base) <= 1, `${base} at ${markup}% came back as ${back}`);
+    }
+  }
+});
+
+test('nonsense in, zero out rather than a wrong number', () => {
+  assert.equal(rateForGuestPrice(0, 20.5), 0);
+  assert.equal(rateForGuestPrice(-100, 20.5), 0);
+  assert.equal(rateForGuestPrice('', 20.5), 0);
+  // No markup set is not an error: the rate is the guest price.
+  assert.equal(rateForGuestPrice(2400, 0), 2400);
 });
