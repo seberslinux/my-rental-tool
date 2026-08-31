@@ -115,6 +115,7 @@ function observedMarkup({ bookings = [], rates = {} } = {}) {
 
     (samples[key] = samples[key] || []).push({
       ratio: paid / base,
+      // Kept for the caller to reject: see below.
       nights: nights.length,
       from: nights[0],
     });
@@ -122,7 +123,35 @@ function observedMarkup({ bookings = [], rates = {} } = {}) {
 
   const out = {};
   for (const [key, rows] of Object.entries(samples)) {
-    const ratios = rows.map((r) => r.ratio);
+    /**
+     * A markup is never negative.
+     *
+     * `base` is what the rate is *now*, because Smoobu keeps one price
+     * per date and forgets the previous one — there is no history
+     * endpoint, and a booking carries no per-night breakdown. So when a
+     * rate has been changed since a booking was taken, `paid / base` can
+     * land below 1 and the channel is reported as taking money off the
+     * price it adds to.
+     *
+     * That is not a small markup, it is a wrong denominator, and
+     * averaging it in poisons the median. Such a booking is evidence
+     * only that the rate moved, so it is discarded rather than counted.
+     */
+    const usable = rows.filter((r) => r.ratio >= 1);
+    if (usable.length === 0) {
+      out[key] = {
+        confident: false,
+        markup: null,
+        bookings: 0,
+        stale: rows.length,
+        nights: 0,
+        low: null,
+        high: null,
+      };
+      continue;
+    }
+
+    const ratios = usable.map((r) => r.ratio);
     const mid = median(ratios);
     const low = Math.round((Math.min(...ratios) - 1) * 1000) / 10;
     const high = Math.round((Math.max(...ratios) - 1) * 1000) / 10;
@@ -140,11 +169,13 @@ function observedMarkup({ bookings = [], rates = {} } = {}) {
        * with each other" is worth knowing. It is the screen's cue not to
        * offer the number as something to accept.
        */
-      confident: rows.length >= 2 && high - low <= SPREAD_LIMIT,
+      confident: usable.length >= 2 && high - low <= SPREAD_LIMIT,
       // As a percentage on top, which is how the field is expressed.
       markup: Math.round((mid - 1) * 1000) / 10,
-      bookings: rows.length,
-      nights: rows.reduce((n, r) => n + r.nights, 0),
+      bookings: usable.length,
+      nights: usable.reduce((n, r) => n + r.nights, 0),
+      // How many were thrown out because the rate has since moved.
+      stale: rows.length - usable.length,
       // The spread, so a wide one can be distrusted at a glance. Two
       // bookings 3% apart is a setting; two 40% apart is not a number
       // anybody should paste into a field.

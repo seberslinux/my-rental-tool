@@ -98,7 +98,8 @@ export function RatesPage({ initialPropertyId = 0 }: {
   const [catalogue, setCatalogue] = useState<Strategy[]>([]);
   const [config, setConfig] = useState<Record<string, Entry>>({});
   const [observed, setObserved] = useState<Record<string, {
-    markup: number;bookings: number;nights: number;low: number;high: number;confident: boolean;
+    markup: number | null;bookings: number;nights: number;stale?: number;
+    low: number | null;high: number | null;confident: boolean;
   }>>({});
 
   const [from, setFrom] = useState(iso(new Date()));
@@ -360,7 +361,16 @@ export function RatesPage({ initialPropertyId = 0 }: {
                 <div className="flex-1 min-w-0">
                   <div className="text-[15px] font-medium">{ch.label}</div>
                   <div className="text-[13px] text-[#717171]">
-                    {ch.commission > 0 ? `${ch.commission}% commission comes off what you keep` : 'No commission set'}
+                    {/* Not the commission. This section is what a channel
+                        puts on top for the guest; commission is what it
+                        takes off you, and the two ran in opposite
+                        directions under one heading — "15% commission"
+                        sat beside a markup field as though it were the
+                        same kind of number. What you keep is shown where
+                        it belongs, against a real nightly rate. */}
+                    {markups[ch.key] && Number(markups[ch.key]) > 0 ?
+                `A guest pays ${(1 + Number(markups[ch.key]) / 100).toFixed(3).replace(/0+$/, '')}× your rate` :
+                'Adds nothing to your rate'}
                   </div>
                 </div>
                 <span className="shrink-0 flex items-center gap-1.5">
@@ -374,22 +384,35 @@ export function RatesPage({ initialPropertyId = 0 }: {
                 </span>
               </div>
 
-              {/* What the bookings say it has been, when they agree. */}
+              {/* What the bookings say it has been, when they agree.
+                  Three different things were being said with one
+                  sentence: a reading, a doubt about it, and no reading
+                  at all. A single booking was reported as "too varied",
+                  which one observation cannot be — and a negative
+                  markup was printed as though it were a measurement
+                  rather than proof the rate had moved since. */}
               {observed[ch.key] &&
             <div className="mt-1.5 flex items-center gap-2">
-                  {/* One booking implies, several imply — and a negative
-                      reading must not be printed as "+-2.8%". */}
                   <span className="text-[12px] text-[#717171] flex-1">
-                    Your last {observed[ch.key].bookings}{' '}
-                    {observed[ch.key].bookings === 1 ? 'booking implies' : 'bookings imply'}
-                    {' '}<span className="font-medium text-[#222222]">
-                      {observed[ch.key].markup >= 0 ? '+' : '−'}{Math.abs(observed[ch.key].markup)}%
-                    </span>
-                    {!observed[ch.key].confident && ' — too varied to trust, check it in Smoobu'}
+                    {observed[ch.key].markup == null ?
+                <>Nothing to measure it against — the rate for those nights has changed since{observed[ch.key].stale ? ` (${observed[ch.key].stale} booking${observed[ch.key].stale === 1 ? '' : 's'} skipped)` : ''}</> :
+                <>
+                        Your last {observed[ch.key].bookings}{' '}
+                        {observed[ch.key].bookings === 1 ? 'booking implies' : 'bookings imply'}
+                        {' '}<span className="font-medium text-[#222222]">
+                          +{observed[ch.key].markup}%
+                        </span>
+                        {!observed[ch.key].confident && (
+                  observed[ch.key].bookings === 1 ?
+                  ' — one booking, so treat it as a hint' :
+                  ' — too varied to trust, check it in Smoobu')}
+                      </>
+                }
                   </span>
-                  {observed[ch.key].confident && String(observed[ch.key].markup) !== markups[ch.key] &&
+                  {observed[ch.key].confident && observed[ch.key].markup != null &&
+              String(observed[ch.key].markup) !== markups[ch.key] &&
               <button
-                onClick={() => useObserved(ch.key, observed[ch.key].markup)}
+                onClick={() => useObserved(ch.key, observed[ch.key].markup as number)}
                 className="shrink-0 text-[12px] font-semibold text-[#FF385C]">
                       Use it
                     </button>
