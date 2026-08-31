@@ -9,6 +9,7 @@ import {
   Users,
   Settings,
   LogOut,
+  TrendingUp,
   Wifi } from
 'lucide-react';
 interface MorePageProps {
@@ -54,6 +55,21 @@ export function MorePage({ onNavigate, onLogout }: MorePageProps) {
               className="w-3.5 h-3.5 text-[#B0B0B0] shrink-0"
               strokeWidth={2} />
             
+          </div>
+
+          {/* Rates sits above Finances rather than replacing it: that row
+              is a placeholder for a page the backend already has routes
+              for, and quietly renaming it would lose it. */}
+          <div
+            className="flex items-center gap-3 p-3 px-4 min-h-[48px] active:bg-[#F7F7F7] cursor-pointer border-t border-[#F0F0F0]"
+            onClick={() => onNavigate && onNavigate('rates')}>
+            <div className="w-[30px] h-[30px] rounded-[7px] bg-[#0F6E56] flex items-center justify-center shrink-0 text-white">
+              <TrendingUp className="w-4 h-4" strokeWidth={2} />
+            </div>
+            <div className="flex-1 text-[16px] font-normal text-[#222222]">
+              Rates
+            </div>
+            <ChevronRight className="w-3.5 h-3.5 text-[#B0B0B0] shrink-0" strokeWidth={2} />
           </div>
 
           <div className="flex items-center gap-3 p-3 px-4 min-h-[48px] active:bg-[#F7F7F7] cursor-pointer border-t border-[#F0F0F0]">

@@ -507,6 +507,26 @@ async function runMigrations() {
     );
   `);
 
+  // Which algorithms are switched on for a property, and how they are set.
+  //
+  // A row per strategy rather than a blob, for the same reason the plan
+  // above is a row per category: it stays queryable, and turning one off
+  // is a row rather than a rewrite. The parameters themselves are JSON
+  // because each strategy declares its own and the set differs per
+  // strategy — the catalogue in rate-strategies.js is what says which
+  // keys are meaningful, and it validates them on the way in.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS rate_strategies (
+      id SERIAL PRIMARY KEY,
+      property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+      strategy TEXT NOT NULL,
+      enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      params JSONB NOT NULL DEFAULT '{}'::jsonb,
+      updated_at TIMESTAMPTZ DEFAULT NOW(),
+      UNIQUE(property_id, strategy)
+    );
+  `);
+
   // One row per device, not per person: a cleaner with a phone and a
   // tablet should be told on both. The endpoint is unique because that
   // is what the push service issues, and re-subscribing the same device

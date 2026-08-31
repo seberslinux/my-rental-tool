@@ -17,6 +17,7 @@ import { CleanersPage } from './components/CleanersPage';
 import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
 import { TodoPage } from './components/TodoPage';
+import { RatesPage } from './components/RatesPage';
 
 /**
  * Which screen a URL means.
@@ -41,6 +42,7 @@ const TAB_PATHS: Record<string, string> = {
   users: '/users',
   smoobu: '/smoobu',
   todo: '/todo',
+  rates: '/rates',
   more: '/more',
 };
 
@@ -243,6 +245,8 @@ export function App() {
         return 'Smoobu';
       case 'todo':
         return 'To do';
+      case 'rates':
+        return 'Rates';
       case 'more':
         return 'More';
       default:
@@ -488,6 +492,7 @@ export function App() {
         {activeTab === 'properties' && <PropertiesPage />}
         {activeTab === 'users' && <UsersPage />}
         {activeTab === 'todo' && <TodoPage propertyId={globalPropertyFilter} />}
+        {activeTab === 'rates' && <RatesPage />}
         {activeTab === 'smoobu' && <SmoobuConnectionPage isAdmin={userRole === 'admin'} />}
         {activeTab === 'more' && <MorePage onNavigate={setActiveTab} onLogout={() => { setIsLoggedIn(false); setDataLoaded(false); }} />}
         </div>
