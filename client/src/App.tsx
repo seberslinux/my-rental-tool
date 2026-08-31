@@ -118,6 +118,9 @@ export function App() {
   // Property filter lives in the top nav and applies across pages, so
   // switching tabs keeps the selection.
   const [globalPropertyFilter, setGlobalPropertyFilter] = useState<number>(0);
+  // Which property the Rates page opens on, when arrived at from a
+  // property row rather than from the menu.
+  const [ratesProperty, setRatesProperty] = useState<number>(0);
   const [dashboardVersion, setDashboardVersion] = useState(0);
 
   // Tick every 60s so the "Synced X ago" label stays fresh between data loads
@@ -489,10 +492,13 @@ export function App() {
 
         {activeTab === 'cleaners' && <CleanersPage />}
         {activeTab === 'analytics' && <AnalyticsPage propertyId={globalPropertyFilter} />}
-        {activeTab === 'properties' && <PropertiesPage />}
+        {activeTab === 'properties' &&
+        <PropertiesPage
+          onOpenRates={(id) => { setRatesProperty(id); setActiveTab('rates'); }} />
+        }
         {activeTab === 'users' && <UsersPage />}
         {activeTab === 'todo' && <TodoPage propertyId={globalPropertyFilter} />}
-        {activeTab === 'rates' && <RatesPage />}
+        {activeTab === 'rates' && <RatesPage initialPropertyId={ratesProperty} />}
         {activeTab === 'smoobu' && <SmoobuConnectionPage isAdmin={userRole === 'admin'} />}
         {activeTab === 'more' && <MorePage onNavigate={setActiveTab} onLogout={() => { setIsLoggedIn(false); setDataLoaded(false); }} />}
         </div>

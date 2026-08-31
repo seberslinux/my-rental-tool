@@ -24,7 +24,6 @@ import {
 'lucide-react';
 import { ChecklistEditor } from './ChecklistEditor';
 import { CleanerOrderEditor } from './CleanerOrderEditor';
-import { RatePlanSheet } from './RatePlanSheet';
 
 interface Property {
   id: number;
@@ -161,8 +160,10 @@ function SyncBadge() {
 }
 const inputCls =
 'w-full h-9 px-3 border border-[#EBEBEB] rounded-[8px] text-[13px] focus:outline-none focus:border-[#007AFF] focus:ring-1 focus:ring-[#007AFF]';
-export function PropertiesPage() {
-  const [pricing, setPricing] = useState<{id: number;name: string;} | null>(null);
+export function PropertiesPage({ onOpenRates }: {
+  /** Open the Rates page on this property. */
+  onOpenRates?: (propertyId: number) => void;
+} = {}) {
   const [expandedProperty, setExpandedProperty] = useState<number | null>(null);
   // Which property's cleaning checklist is being edited.
   const [checklistFor, setChecklistFor] = useState<Property | null>(null);
@@ -313,12 +314,13 @@ export function PropertiesPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2 pl-7 sm:pl-0">
-                  {/* Pricing belongs on the property, not buried in a
-                      sheet whose job is sending a cleaner. This is where
-                      somebody goes looking for it. */}
+                  {/* Rates are set in one place, on the Rates page. This
+                      is still where somebody goes looking for them, so it
+                      opens that page on this property rather than being a
+                      second copy of the same settings. */}
                   <button
                     className="flex items-center gap-1 text-[12px] font-semibold text-[#007AFF] hover:underline"
-                    onClick={(e) => { e.stopPropagation(); setPricing({ id: prop.id, name: prop.name }); }}>
+                    onClick={(e) => { e.stopPropagation(); onOpenRates && onOpenRates(prop.id); }}>
 
                     <Tag className="w-3.5 h-3.5" />
                     Rates
@@ -703,13 +705,6 @@ export function PropertiesPage() {
         onClose={() => setChecklistFor(null)} />
       }
 
-      {pricing &&
-      <RatePlanSheet
-        propertyId={pricing.id}
-        propertyName={pricing.name}
-        onClose={() => setPricing(null)}
-        onApplied={() => fetchProperties()} />
-      }
     </div>);
 
 }
