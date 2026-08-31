@@ -238,3 +238,64 @@ test('Direct bookings contribute 0 deductions even if rates are configured', asy
   assert.equal(body.summary.total_deductions, 0);
   assert.equal(body.summary.net_revenue, 1000);
 });
+
+// --- the date range ------------------------------------------------------
+
+/**
+ * A query parameter that is not a date.
+ *
+ * The security suite fires SQL payloads at these and checks the database
+ * survives — it does, because every query is parameterised. What it
+ * deliberately does not assert is the status, noting that whether a
+ * hostile string 200s, 400s or 500s is an input-validation matter rather
+ * than a security one.
+ *
+ * It was 500ing, with a stack trace. An unparseable `to` gave NaN for
+ * year and month, and calling toISOString() on the resulting Invalid
+ * Date throws.
+ */
+test('a malformed date range is refused, not crashed on', async () => {
+  const admin = await seedUser({ role: 'admin' });
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+
+  for (const bad of ["1' OR '1'='1", '1; DROP TABLE bookings;--', 'March', '2026-13-99-', '']) {
+    const res = await agent.get(`/api/analytics/data?display_currency=ZAR&to=${encodeURIComponent(bad)}`);
+    // An empty parameter means "no bound", which is not malformed.
+    const expected = bad === '' ? 200 : 400;
+    assert.equal(res.status, expected, `to=${JSON.stringify(bad)}`);
+    if (expected === 400) assert.match(res.body.error, /YYYY-MM/);
+  }
+
+  const badFrom = await agent.get('/api/analytics/data?display_currency=ZAR&from=nonsense');
+  assert.equal(badFrom.status, 400);
+  assert.match(badFrom.body.error, /^from/);
+});
+
+test('a month means the whole month, last day included', async () => {
+  // The bound is expanded to the end of the month, so a booking on the
+  // 31st is inside "2026-03". Computed in UTC: the local-time version
+  // lost the final day on any server east of it.
+  const admin = await seedUser({ role: 'admin' });
+  const property = await seedProperty({ owner: admin, base_currency: 'ZAR' });
+  await seedBooking({
+    property, check_in: '2026-03-31', check_out: '2026-04-02',
+    total_price: 5000, currency: 'ZAR', platform: 'Airbnb',
+  });
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+
+  const res = await agent
+    .get('/api/analytics/data?display_currency=ZAR&from=2026-03&to=2026-03')
+    .expect(200);
+  assert.ok(res.body.summary.total_revenue > 0, 'the 31st is inside March');
+});
+
+test('a full date is taken as given', async () => {
+  const admin = await seedUser({ role: 'admin' });
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  await agent
+    .get('/api/analytics/data?display_currency=ZAR&from=2026-03-01&to=2026-03-15')
+    .expect(200);
+});

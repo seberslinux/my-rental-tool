@@ -357,6 +357,52 @@ router.get('/export-csv', async (req, res) => {
 });
 
 // Get full analytics data
+const MONTH = /^\d{4}-\d{2}$/;
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * A date range from the query string, or a complaint about it.
+ *
+ * Either bound may be a month or a day: `from` is rounded down to the
+ * start of its month and `to` expanded to the end of its, so somebody
+ * can ask for "2026-03" and mean the whole of March.
+ *
+ * Anything that is neither is refused rather than coerced. It used to be
+ * coerced, and badly: an unparseable `to` gave NaN for the year and the
+ * month, `new Date(NaN, NaN, 0)` is an Invalid Date, and calling
+ * toISOString() on one throws. So a junk query parameter came back as a
+ * 500 with a stack trace in the log instead of "that is not a date" —
+ * which the security suite noticed and left standing as an
+ * input-validation matter rather than a security one. It was right on
+ * both counts: the payloads never reached the database as SQL.
+ *
+ * End of month is computed in UTC. The local-time version was correct
+ * only on a server that runs UTC: east of it, midnight on the last day
+ * of the month is still the previous day in UTC, and the range quietly
+ * lost its final day.
+ */
+function monthRange(rawFrom, rawTo) {
+  const from = rawFrom == null || rawFrom === '' ? null : String(rawFrom);
+  const to = rawTo == null || rawTo === '' ? null : String(rawTo);
+
+  if (from !== null && !MONTH.test(from) && !DAY.test(from)) {
+    return { error: 'from must be YYYY-MM or YYYY-MM-DD' };
+  }
+  if (to !== null && !MONTH.test(to) && !DAY.test(to)) {
+    return { error: 'to must be YYYY-MM or YYYY-MM-DD' };
+  }
+
+  return {
+    from: from === null ? null : `${from.substring(0, 7)}-01`,
+    to: to === null ? null :
+    DAY.test(to) ? to : (() => {
+      const [y, m] = to.split('-').map(Number);
+      // Day 0 of the next month is the last day of this one.
+      return new Date(Date.UTC(y, m, 0)).toISOString().split('T')[0];
+    })(),
+  };
+}
+
 router.get('/data', async (req, res) => {
   const propIds = scopedPropertyIds(req);
   const today = new Date();
@@ -374,9 +420,9 @@ router.get('/data', async (req, res) => {
     properties = await getAll('SELECT * FROM properties');
   }
 
-  // Round 'from' to start of month; use 'to' as-is if full date, else expand to end of month
-  const from = rawFrom ? rawFrom.substring(0, 7) + '-01' : null;
-  const to = rawTo ? (rawTo.length === 10 ? rawTo : (() => { const [y, m] = rawTo.split('-').map(Number); return new Date(y, m, 0).toISOString().split('T')[0]; })()) : null;
+  const range = monthRange(rawFrom, rawTo);
+  if (range.error) return res.status(400).json({ error: range.error });
+  const { from, to } = range;
 
   // Build dynamic filter
   let bookingFilters = '';
