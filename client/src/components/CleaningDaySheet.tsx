@@ -396,7 +396,7 @@ export function CleaningDaySheet({
                       history, not a problem. */}
                   {!j.cleaner_available && !j.started &&
               <p className="text-[13px] text-[#92400E]">
-                      Has marked themselves unavailable that day.
+                      Not available that day.
                     </p>
               }
                   <p className="text-[12px] text-[#717171]">

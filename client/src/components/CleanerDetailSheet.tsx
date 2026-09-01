@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { X, Check } from 'lucide-react';
+import { X, Check, AlertCircle } from 'lucide-react';
 import { MonthCalendar } from './MonthCalendar';
 
 /**
- * When this cleaner can actually work.
+ * When this cleaner can actually work — and setting it, when they cannot.
  *
  * The weekly schedule is what they usually do. It is not what they are
  * doing. Somebody who works Mondays can still have said no to the 24th,
@@ -15,9 +15,20 @@ import { MonthCalendar } from './MonthCalendar';
  * a ring for free, a tick for booked, the date struck through for a day
  * they are not working. Two people looking at one person's availability
  * should be looking at the same picture.
+ *
+ * Tapping a day sets it. The cleaner has always been able to do this
+ * from their own app; the manager could only read it. So a cleaner who
+ * said on the phone that they could not do the 14th left the manager
+ * with nowhere to put that — the grid went on showing them free, and
+ * assignment went on offering them.
+ *
+ * Two buttons rather than one, because toggling is not undoing. An
+ * override wins outright, hours included, so a day switched off and on
+ * again reads as a blanket yes and would offer somebody an afternoon
+ * they do not work. "Back to their usual" is the one that takes it back.
  */
 
-interface Day {state: 'free' | 'off' | 'booked';why: string;}
+interface Day {state: 'free' | 'off' | 'booked';why: string;override?: boolean;}
 interface Job {
   id: number;cleaning_date: string;start_time: string;end_time: string;
   status: string;property_name: string;reason: string | null;
@@ -39,23 +50,64 @@ export function CleanerDetailSheet({
   const [jobs, setJobs] = useState<Job[]>([]);
   const [schedule, setSchedule] = useState<{day_of_week: number;start_time: string;end_time: string;}[]>([]);
   const [loading, setLoading] = useState(true);
+  /** The day being set, if any. */
+  const [picked, setPicked] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
 
-  useEffect(() => {
-    (async () => {
-      const from = new Date().toISOString().slice(0, 10);
-      const to = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
-      const res = await fetch(`/api/cleaners/${cleanerId}/calendar?from=${from}&to=${to}`, {
-        credentials: 'same-origin',
-      });
-      if (res.ok) {
-        const d = await res.json();
-        setDays(d.days || {});
-        setJobs(d.jobs || []);
-        setSchedule(d.schedule || []);
-      }
-      setLoading(false);
-    })();
+  const load = React.useCallback(async () => {
+    const from = new Date().toISOString().slice(0, 10);
+    const to = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+    const res = await fetch(`/api/cleaners/${cleanerId}/calendar?from=${from}&to=${to}`, {
+      credentials: 'same-origin',
+    });
+    if (res.ok) {
+      const d = await res.json();
+      setDays(d.days || {});
+      setJobs(d.jobs || []);
+      setSchedule(d.schedule || []);
+    }
+    setLoading(false);
   }, [cleanerId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  /**
+   * Set the day, or hand it back to their weekly pattern.
+   *
+   * The grid is redrawn from the server rather than patched here: the
+   * answer depends on the pattern, the override and any job on the day,
+   * and a second opinion computed in the browser is how two screens
+   * start disagreeing about who is free.
+   */
+  const setDay = async (date: string, available: boolean | null) => {
+    setSaving(true);
+    setError('');
+    const res = available === null ?
+    await fetch(`/api/cleaners/${cleanerId}/overrides?date=${date}`, {
+      method: 'DELETE', credentials: 'same-origin',
+    }) :
+    await fetch(`/api/cleaners/${cleanerId}/overrides`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ date, available }),
+    });
+    setSaving(false);
+    if (!res.ok) {
+      setError((await res.json().catch(() => ({}))).error || 'Could not save that');
+      return;
+    }
+    await load();
+    setPicked(null);
+  };
+
+  /** A Date as the key everything else here is keyed by. */
+  const dateKey = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  /** What they are already down for on a day. */
+  const jobsOn = (date: string) => jobs.filter((j) => j.cleaning_date === date);
 
   // MonthCalendar takes the states keyed by date, exactly as the cleaner's
   // own app passes them.
@@ -122,7 +174,80 @@ export function CleanerDetailSheet({
             onBookingClick={() => {}}
             months={3}
             dayStates={dayStates}
+            onDayClick={(d) => {
+              setError('');
+              setPicked(dateKey(d));
+            }}
             plainBars />
+
+            {error && <p className="mt-3 text-[13px] text-[#991B1B]">{error}</p>}
+
+            {/* The day being set. Everything about it is stated before
+                the buttons — which day, what it is now, and whether
+                anybody is relying on them for it. */}
+            {picked && days[picked] &&
+          <div className="mt-4 border border-[#DDDDDD] rounded-[10px] p-3">
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className="text-[14px] font-medium">{pretty(picked)}</p>
+                  <button
+                onClick={() => setPicked(null)}
+                className="text-[12px] text-[#717171] underline underline-offset-2">
+                    Close
+                  </button>
+                </div>
+
+                <p className="text-[13px] text-[#717171] mt-0.5">
+                  {days[picked].state === 'booked' ? 'Booked to clean' :
+              days[picked].state === 'free' ? 'Available' : 'Not available'}
+                  {' · '}
+                  {days[picked].override ?
+              'you or they set this day' :
+              'from their usual weekly pattern'}
+                </p>
+
+                {/* Taking somebody off a day does not take the day's
+                    work off them. Said here, where the decision is,
+                    rather than discovered later by an empty flat. */}
+                {jobsOn(picked).length > 0 &&
+            <div className="mt-2 flex items-start gap-1.5 text-[13px] text-[#92400E] bg-[#FFFBEB] border border-[#F0C36D] rounded-[8px] px-2.5 py-2">
+                    <AlertCircle className="w-4 h-4 text-[#BA7517] shrink-0 mt-px" />
+                    <span>
+                      Still down to clean {jobsOn(picked).map((j) => j.property_name).join(' and ')} that day.
+                      Marking them off does not cancel it.
+                    </span>
+                  </div>
+            }
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                disabled={saving}
+                onClick={() => setDay(picked, days[picked].state === 'off' ? true : false)}
+                className={`px-3 py-2 rounded-[8px] text-[13px] font-semibold disabled:opacity-50 ${
+                days[picked].state === 'off' ?
+                'bg-[#222222] text-white' :
+                'border border-[#DDDDDD] text-[#222222]'}`}>
+                    {saving ? 'Saving…' :
+                days[picked].state === 'off' ?
+                `Mark ${cleanerName} available` :
+                `Mark ${cleanerName} not available`}
+                  </button>
+
+                  {/* Only where there is something to take back. */}
+                  {days[picked].override &&
+              <button
+                disabled={saving}
+                onClick={() => setDay(picked, null)}
+                className="px-3 py-2 rounded-[8px] text-[13px] font-semibold border border-[#DDDDDD] text-[#222222] disabled:opacity-50">
+                      Back to their usual
+                    </button>
+              }
+                </div>
+
+                <p className="text-[12px] text-[#717171] mt-2">
+                  They are told when this changes what they can work.
+                </p>
+              </div>
+          }
 
             {jobs.length > 0 &&
           <div className="mt-5">

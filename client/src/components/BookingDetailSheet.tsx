@@ -263,7 +263,7 @@ export function BookingDetailSheet({ booking, onClose, onRequestCleaner }: Booki
                 </p>
                 {!clean.cleaner_available &&
                 <p className="text-[13px] text-[#92400E] mt-0.5">
-                    They have since marked themselves unavailable that day.
+                    They are since down as not available that day.
                   </p>
                 }
                 {onRequestCleaner &&
