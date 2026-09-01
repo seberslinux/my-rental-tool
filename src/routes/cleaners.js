@@ -128,6 +128,23 @@ router.get('/calendar', async (req, res) => {
         id: c.id, name: c.name,
         reason: committed ? `already at ${committed.property_name}` : status.reason,
         property_ids: links.filter((l) => l.cleaner_id === c.id).map((l) => l.property_id),
+        /**
+         * Whether this day was set, or is just the weekly pattern
+         * showing through.
+         *
+         * Without it a screen cannot tell "put it back to their usual"
+         * apart from "mark them available", which are different things:
+         * an override wins outright, hours included, so handing a day
+         * back to the pattern is the only way to restore somebody's
+         * morning-only Tuesday.
+         */
+        override: av.overrides.get(c.id)?.has(key) === true,
+        /**
+         * Committed elsewhere. Their availability is not what is
+         * stopping them, so a screen offering to change it would be
+         * offering something that cannot help.
+         */
+        committed: Boolean(committed),
       };
       if (committed) { day.unavailable.push(entry); return; }
       // Both lists, not just the free one. Somebody who is not available

@@ -30,6 +30,7 @@ const REASONS: {key: Reason;label: string;hint: string;}[] = [
 
 export function CleaningDaySheet({
   date, day, propertyId, propertyName, onClose, onAssigned, onRatesChanged,
+  onAvailabilityChanged,
   lockProperty = false, initialReason = 'checkout',
 }: {
   date: string;
@@ -40,6 +41,12 @@ export function CleaningDaySheet({
   onAssigned: () => void;
   /** A price changed: reload the rates, but stay on this day. */
   onRatesChanged?: () => void | Promise<void>;
+  /**
+   * Somebody's availability changed. Same shape as a rate, and for the
+   * same reason: you are still looking at the day, and the next thing
+   * you do is usually about the same day.
+   */
+  onAvailabilityChanged?: () => void | Promise<void>;
   /**
    * True when the property came from the thing that was clicked — a
    * booking bar or a blocked bar is already about one property, and
@@ -58,6 +65,10 @@ export function CleaningDaySheet({
   const [rateNote, setRateNote] = useState('');
 
   const [busy, setBusy] = useState<number | null>(null);
+  /** Whose availability is being changed for this date, and what went wrong. */
+  const [availBusy, setAvailBusy] = useState<number | null>(null);
+  const [availError, setAvailError] = useState('');
+  const [showAvail, setShowAvail] = useState(false);
   const [error, setError] = useState('');
   const [reason, setReason] = useState<Reason>(initialReason);
 
@@ -144,6 +155,21 @@ export function CleaningDaySheet({
   day.available.filter((c) => c.property_ids.includes(propId)) :
   [];
 
+  /**
+   * Everybody who cleans this property, free or not.
+   *
+   * The two lists above answer "who can I send", which is a different
+   * question from "who can work that day" — somebody already down for
+   * this property is missing from both, and they are exactly the person
+   * whose day you might need to change.
+   */
+  const everyone = day ?
+  [...day.available.map((c) => ({ ...c, free: true })),
+  ...day.unavailable.map((c) => ({ ...c, free: false }))].
+  filter((c) => c.property_ids.includes(propId)).
+  sort((a, b) => a.name.localeCompare(b.name)) :
+  [];
+
   // What actually happens at this property that day. "After checkout" on
   // a day nothing checks out of, or "before check-in" on a day nobody
   // arrives, are not choices — they are words that cannot mean anything,
@@ -186,6 +212,43 @@ export function CleaningDaySheet({
       return;
     }
     onAssigned();
+  };
+
+  /**
+   * Change whether somebody can work this day, from the day itself.
+   *
+   * Their sheet on the Cleaners tab could already do this, but that is
+   * two screens away from where the question comes up: you open a day,
+   * see that nobody is free, and the fix lives somewhere else. The
+   * calendar told you who was free and would not let you change it.
+   *
+   * `null` hands the date back to their weekly pattern. That is not the
+   * same as marking them available — an override wins outright, hours
+   * included, so a blanket yes would offer somebody an afternoon they
+   * have never worked.
+   */
+  const setAvailable = async (cleanerId: number, available: boolean | null) => {
+    setAvailBusy(cleanerId);
+    setAvailError('');
+    const res = available === null ?
+    await fetch(`/api/cleaners/${cleanerId}/overrides?date=${date}`, {
+      method: 'DELETE', credentials: 'same-origin',
+    }) :
+    await fetch(`/api/cleaners/${cleanerId}/overrides`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ date, available }),
+    });
+    setAvailBusy(null);
+    if (!res.ok) {
+      setAvailError((await res.json().catch(() => ({}))).error || 'Could not change that day');
+      return;
+    }
+    // Redrawn from the server. Who is free depends on the pattern, the
+    // override and any job that day, and a second opinion worked out in
+    // the browser is how two screens start disagreeing about it.
+    await onAvailabilityChanged?.();
   };
 
   const Person = ({ c, ask }: {c: {id: number;name: string;reason?: string;};ask: boolean;}) =>
@@ -498,6 +561,66 @@ export function CleaningDaySheet({
             'Everybody who cleans this property is already down for that day.' :
             'No cleaner is assigned to this property yet.'}
             </p>
+          }
+
+          {/* Who can work the day, as opposed to who to send. Behind a
+              line rather than open, because the common errand here is
+              sending somebody — but it is on the day, which is where you
+              are standing when you find out somebody cannot make it. */}
+          {everyone.length > 0 &&
+          <div className="mt-5 pt-4 border-t border-[#F0F0F0]">
+              <button
+              onClick={() => setShowAvail(!showAvail)}
+              className="text-[13px] font-semibold text-[#222222] underline underline-offset-2">
+                {showAvail ? 'Done with who can work' : 'Change who can work that day'}
+              </button>
+
+              {showAvail &&
+            <div className="mt-3 space-y-1.5">
+                  {everyone.map((c) =>
+              <div key={c.id} className="flex items-center justify-between gap-2">
+                      <span className="text-[13px] min-w-0 truncate">
+                        {c.name}
+                        <span className="text-[#717171]"> · {c.reason}</span>
+                      </span>
+
+                      {/* Being down at another property is not something
+                          their availability can fix, so nothing here
+                          pretends it can. */}
+                      {c.committed ?
+                <span className="text-[12px] text-[#717171] shrink-0">already booked</span> :
+                <span className="flex gap-1.5 shrink-0">
+                          <button
+                    disabled={availBusy === c.id}
+                    onClick={() => setAvailable(c.id, !c.free)}
+                    className={`px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold disabled:opacity-50 ${
+                    c.free ?
+                    'border border-[#DDDDDD] text-[#222222]' :
+                    'bg-[#222222] text-white'}`}>
+                            {availBusy === c.id ? 'Saving…' : c.free ? 'Mark off' : 'Mark available'}
+                          </button>
+                          {c.override &&
+                  <button
+                    disabled={availBusy === c.id}
+                    onClick={() => setAvailable(c.id, null)}
+                    className="px-2.5 py-1.5 rounded-[8px] text-[12px] font-semibold border border-[#DDDDDD] text-[#222222] disabled:opacity-50">
+                              Usual
+                            </button>
+                  }
+                        </span>
+                }
+                    </div>
+              )}
+
+                  {availError && <p className="text-[12px] text-[#991B1B]">{availError}</p>}
+
+                  <p className="text-[12px] text-[#717171] pt-1">
+                    They are told when this changes what they can work. Marking
+                    somebody off does not cancel a clean they are already down for.
+                  </p>
+                </div>
+            }
+            </div>
           }
         </div>
       </div>
