@@ -121,6 +121,9 @@ export function CleanersPage() {
   const [focusAvailability, setFocusAvailability] = useState(false);
   const availabilityRef = React.useRef<HTMLDivElement>(null);
   const [invitingId, setInvitingId] = useState<number | null>(null);
+  /** The day circle being saved, as `cleanerId:dayOfWeek`, and why it failed. */
+  const [togglingDay, setTogglingDay] = useState<string | null>(null);
+  const [dayError, setDayError] = useState('');
   const [invite, setInvite] = useState<
   { cleanerId: number; url: string; days: number; copied: boolean;
     sent: boolean; reason?: string } | null>(null);
@@ -315,6 +318,58 @@ export function CleanersPage() {
       }
     } catch (e) {
       alert(`Network error ${editingId ? 'updating' : 'adding'} cleaner`);
+    }
+  };
+
+  /**
+   * Turn one of the seven day circles on or off.
+   *
+   * They sit under a heading that says Availability and they are shaped
+   * like buttons, so they were the obvious thing to press and the one
+   * thing on the card that did nothing. Changing a cleaner's usual days
+   * meant opening the edit form and finding the weekly grid inside it.
+   *
+   * The whole week is sent because the server replaces rather than
+   * merges. Hours are not asked for here: a day being switched on borrows
+   * the hours of a day they already work, which is nearly always right,
+   * and the sheet is where hours are actually set.
+   */
+  const toggleUsualDay = async (cleaner: Cleaner, dow: number) => {
+    setTogglingDay(`${cleaner.id}:${dow}`);
+    setDayError('');
+    const current = cleaner.availability || [];
+    const on = current.some((a) => a.day_of_week === dow);
+    const like = current[0];
+    const schedule = on ?
+    current.filter((a) => a.day_of_week !== dow) :
+    [...current, {
+      day_of_week: dow,
+      start_time: like ? like.start_time : '09:00',
+      end_time: like ? like.end_time : '17:00',
+    }];
+
+    try {
+      const res = await fetch(`/api/cleaners/${cleaner.id}/availability`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({
+          schedule: schedule.map((a) => ({
+            day_of_week: a.day_of_week,
+            start_time: String(a.start_time).slice(0, 5),
+            end_time: String(a.end_time).slice(0, 5),
+          })),
+        }),
+      });
+      if (!res.ok) {
+        setDayError((await res.json().catch(() => ({}))).error || 'Could not change that day');
+        return;
+      }
+      await fetchData();
+    } catch {
+      setDayError('Could not change that day');
+    } finally {
+      setTogglingDay(null);
     }
   };
 
@@ -540,25 +595,38 @@ export function CleanersPage() {
                   </div>
                   <div>
                     <div className="text-[10px] font-semibold uppercase tracking-[0.3px] text-[#B0B0B0] mb-2">
-                      Availability
+                      Usual days
                     </div>
                     <div className="flex gap-1.5">
-                      {dayOrder.map((dow, i) =>
-                        availSet.has(dow) ? (
-                          <div
+                      {dayOrder.map((dow, i) => {
+                        const on = availSet.has(dow);
+                        const busy = togglingDay === `${cleaner.id}:${dow}`;
+                        return (
+                          <button
                             key={i}
-                            className="w-6 h-6 md:w-7 md:h-7 rounded-full bg-[#007AFF] text-white flex items-center justify-center text-[10px] md:text-[11px] font-semibold">
-                              {dayLetters[i]}
-                          </div>
-                        ) : (
-                          <div
-                            key={i}
-                            className="w-6 h-6 md:w-7 md:h-7 rounded-full bg-[#F0F0F0] text-[#B0B0B0] flex items-center justify-center text-[10px] md:text-[11px] font-semibold">
-                              {dayLetters[i]}
-                          </div>
-                        )
-                      )}
+                            type="button"
+                            aria-pressed={on}
+                            aria-label={`${DAY_NAMES_SHORT[dow]} — ${on ? 'works' : 'does not work'}`}
+                            title={`${DAY_NAMES_SHORT[dow]} — tap to ${on ? 'take off' : 'add'}`}
+                            disabled={busy}
+                            onClick={() => toggleUsualDay(cleaner, dow)}
+                            className={`w-6 h-6 md:w-7 md:h-7 rounded-full flex items-center justify-center text-[10px] md:text-[11px] font-semibold transition-colors disabled:opacity-50 ${
+                            on ?
+                            'bg-[#007AFF] text-white hover:bg-[#0062CC]' :
+                            'bg-[#F0F0F0] text-[#B0B0B0] hover:bg-[#E0E0E0]'}`}>
+                            {dayLetters[i]}
+                          </button>);
+
+                      })}
                     </div>
+                    {/* Said once, under the thing it describes, because a
+                        circle that changes colour is not obviously a save. */}
+                    <p className="text-[11px] text-[#B0B0B0] mt-1.5">
+                      Tap a day to change it. Single dates go under Availability.
+                    </p>
+                    {dayError && togglingDay === null &&
+                    <p className="text-[11px] text-[#991B1B] mt-1">{dayError}</p>
+                    }
                   </div>
                 </div>
                 {/* The invitation link, once issued. Shown here rather than

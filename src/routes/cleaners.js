@@ -818,7 +818,15 @@ router.delete('/:id/properties/:propertyId', async (req, res) => {
   res.json({ removed: true });
 });
 
-const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+/**
+ * Seconds are tolerated and dropped.
+ *
+ * The column is text and everything here writes HH:MM, but a caller
+ * echoing a time back from somewhere that formats it as HH:MM:SS is
+ * sending the same time, not a malformed one — and now that two screens
+ * post to this route, refusing it would be a 400 nobody could read.
+ */
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 const DAY_NAME = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 /**
@@ -847,11 +855,13 @@ function validateSchedule(schedule) {
     if (seen.has(dow)) return { error: `${DAY_NAME[dow]} is listed twice` };
     seen.add(dow);
 
-    const start = String(slot.start_time || '');
-    const end = String(slot.end_time || '');
-    if (!HHMM.test(start) || !HHMM.test(end)) {
+    const rawStart = String(slot.start_time || '');
+    const rawEnd = String(slot.end_time || '');
+    if (!HHMM.test(rawStart) || !HHMM.test(rawEnd)) {
       return { error: `${DAY_NAME[dow]} needs a start and end time as HH:MM` };
     }
+    const start = rawStart.slice(0, 5);
+    const end = rawEnd.slice(0, 5);
     if (end <= start) {
       return { error: `${DAY_NAME[dow]} ends before it starts` };
     }

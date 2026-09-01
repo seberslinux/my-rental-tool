@@ -71,8 +71,12 @@ export function CleanerDetailSheet({
   const [draft, setDraft] = useState<Record<number, {on: boolean;start: string;end: string;}>>({});
 
   const load = React.useCallback(async () => {
+    // A year, not a quarter. The grid pages forward as far as anybody
+    // cares to look, and a day outside what was fetched used to swallow
+    // the click: `picked` was set, nothing rendered, and the day looked
+    // like it simply could not be changed.
     const from = new Date().toISOString().slice(0, 10);
-    const to = new Date(Date.now() + 90 * 86400000).toISOString().slice(0, 10);
+    const to = new Date(Date.now() + 365 * 86400000).toISOString().slice(0, 10);
     const res = await fetch(`/api/cleaners/${cleanerId}/calendar?from=${from}&to=${to}`, {
       credentials: 'same-origin',
     });
@@ -226,21 +230,23 @@ export function CleanerDetailSheet({
         {editing &&
         <div className="mt-3 border border-[#EBEBEB] rounded-[8px] p-3">
             <p className="text-[12px] text-[#717171] mb-2">
-              The days they normally work. Individual dates are still set on the calendar below.
+              Tap a day to switch it on or off. Individual dates are set on the calendar below.
             </p>
             {WEEK.map((d) =>
           <div key={d.dow} className="flex items-center gap-2 py-1">
+                {/* The day is the button. A switch beside a label is two
+                    things to aim at for one decision. */}
                 <button
-              role="switch"
-              aria-checked={Boolean(draft[d.dow]?.on)}
+              type="button"
+              aria-pressed={Boolean(draft[d.dow]?.on)}
               aria-label={d.label}
               onClick={() => setDraft({ ...draft, [d.dow]: { ...draft[d.dow], on: !draft[d.dow]?.on } })}
-              className={`w-[38px] h-[22px] shrink-0 rounded-full ${
-              draft[d.dow]?.on ? 'bg-[#0F6E56]' : 'bg-[#DDDDDD]'}`}>
-                  <span className={`block w-[16px] h-[16px] bg-white rounded-full transition-transform ${
-              draft[d.dow]?.on ? 'translate-x-[19px]' : 'translate-x-[3px]'}`} />
+              className={`w-[58px] h-[30px] shrink-0 rounded-full text-[13px] font-semibold transition-colors ${
+              draft[d.dow]?.on ?
+              'bg-[#0F6E56] text-white' :
+              'bg-[#F0F0F0] text-[#B0B0B0]'}`}>
+                  {d.label}
                 </button>
-                <span className="w-[34px] shrink-0 text-[13px]">{d.label}</span>
                 {draft[d.dow]?.on ?
             <>
                     <input
@@ -294,6 +300,10 @@ export function CleanerDetailSheet({
               <span className="flex items-center gap-1.5">
                 <span className="line-through text-[#8A8A8A]">00</span> Not available
               </span>
+              {/* The cleaner's own app says this over the same grid. The
+                  manager's did not, and a grid that can be read is
+                  indistinguishable from one that can be changed. */}
+              <span className="text-[#222222]">Tap a day to change it</span>
             </div>
 
             <MonthCalendar
@@ -313,6 +323,15 @@ export function CleanerDetailSheet({
             {/* The day being set. Everything about it is stated before
                 the buttons — which day, what it is now, and whether
                 anybody is relying on them for it. */}
+            {/* Past the year that was fetched. Better to say so than to
+                let the tap land on nothing. */}
+            {picked && !days[picked] &&
+          <p className="mt-4 text-[13px] text-[#717171] border border-[#DDDDDD] rounded-[10px] p-3">
+                {pretty(picked)} is further ahead than this goes. Their usual
+                days apply until somebody says otherwise.
+              </p>
+          }
+
             {picked && days[picked] &&
           <div className="mt-4 border border-[#DDDDDD] rounded-[10px] p-3">
                 <div className="flex items-baseline justify-between gap-2">

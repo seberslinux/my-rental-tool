@@ -95,6 +95,67 @@ test('an empty week means they work no days', async () => {
   assert.deepEqual(res.body, []);
 });
 
+// --- one day at a time ---------------------------------------------------
+
+/**
+ * The seven circles on the cleaner card send the whole week with one day
+ * added or taken away. Both directions have to leave everything else
+ * exactly as it was, or tapping Saturday would quietly reset the hours
+ * somebody set for Monday.
+ */
+
+test('adding one day leaves the other days hours alone', async () => {
+  const cleaner = await seedCleaner({});
+  const agent = await manager();
+  await agent.put(`/api/cleaners/${cleaner.id}/availability`).send({
+    schedule: [{ day_of_week: 1, start_time: '06:30', end_time: '11:45' }],
+  }).expect(200);
+
+  // Monday as it stands, plus a Saturday on the card's default hours.
+  const res = await agent.put(`/api/cleaners/${cleaner.id}/availability`).send({
+    schedule: [
+      { day_of_week: 1, start_time: '06:30', end_time: '11:45' },
+      { day_of_week: 6, start_time: '06:30', end_time: '11:45' },
+    ],
+  }).expect(200);
+
+  const monday = res.body.find((r) => r.day_of_week === 1);
+  assert.equal(monday.start_time, '06:30', 'not reset to nine');
+  assert.equal(monday.end_time, '11:45');
+});
+
+test('taking one day away keeps the rest', async () => {
+  const cleaner = await seedCleaner({});
+  const agent = await manager();
+  await agent.put(`/api/cleaners/${cleaner.id}/availability`).send({
+    schedule: [
+      { day_of_week: 1, start_time: '06:30', end_time: '11:45' },
+      { day_of_week: 2, start_time: '06:30', end_time: '11:45' },
+    ],
+  }).expect(200);
+
+  const res = await agent.put(`/api/cleaners/${cleaner.id}/availability`).send({
+    schedule: [{ day_of_week: 2, start_time: '06:30', end_time: '11:45' }],
+  }).expect(200);
+
+  assert.deepEqual(res.body.map((r) => r.day_of_week), [2]);
+  assert.equal(res.body[0].start_time, '06:30');
+});
+
+test('a time with seconds on it is the same time', async () => {
+  // The card sends back what it was given. Somewhere that formats a time
+  // as 09:00:00 should not be a 400 about the format.
+  const cleaner = await seedCleaner({});
+  const agent = await manager();
+
+  const res = await agent.put(`/api/cleaners/${cleaner.id}/availability`).send({
+    schedule: [{ day_of_week: 3, start_time: '09:00:00', end_time: '17:00:00' }],
+  }).expect(200);
+
+  assert.equal(res.body[0].start_time, '09:00', 'stored the way everything else writes it');
+  assert.equal(res.body[0].end_time, '17:00');
+});
+
 // --- refusing nonsense ---------------------------------------------------
 
 test('a malformed day is refused with a reason, not a 500', async () => {
