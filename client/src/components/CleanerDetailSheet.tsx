@@ -318,83 +318,7 @@ export function CleanerDetailSheet({
             }}
             plainBars />
 
-            {error && <p className="mt-3 text-[13px] text-[#991B1B]">{error}</p>}
-
-            {/* The day being set. Everything about it is stated before
-                the buttons — which day, what it is now, and whether
-                anybody is relying on them for it. */}
-            {/* Past the year that was fetched. Better to say so than to
-                let the tap land on nothing. */}
-            {picked && !days[picked] &&
-          <p className="mt-4 text-[13px] text-[#717171] border border-[#DDDDDD] rounded-[10px] p-3">
-                {pretty(picked)} is further ahead than this goes. Their usual
-                days apply until somebody says otherwise.
-              </p>
-          }
-
-            {picked && days[picked] &&
-          <div className="mt-4 border border-[#DDDDDD] rounded-[10px] p-3">
-                <div className="flex items-baseline justify-between gap-2">
-                  <p className="text-[14px] font-medium">{pretty(picked)}</p>
-                  <button
-                onClick={() => setPicked(null)}
-                className="text-[12px] text-[#717171] underline underline-offset-2">
-                    Close
-                  </button>
-                </div>
-
-                <p className="text-[13px] text-[#717171] mt-0.5">
-                  {days[picked].state === 'booked' ? 'Booked to clean' :
-              days[picked].state === 'free' ? 'Available' : 'Not available'}
-                  {' · '}
-                  {days[picked].override ?
-              'you or they set this day' :
-              'from their usual weekly pattern'}
-                </p>
-
-                {/* Taking somebody off a day does not take the day's
-                    work off them. Said here, where the decision is,
-                    rather than discovered later by an empty flat. */}
-                {jobsOn(picked).length > 0 &&
-            <div className="mt-2 flex items-start gap-1.5 text-[13px] text-[#92400E] bg-[#FFFBEB] border border-[#F0C36D] rounded-[8px] px-2.5 py-2">
-                    <AlertCircle className="w-4 h-4 text-[#BA7517] shrink-0 mt-px" />
-                    <span>
-                      Still down to clean {jobsOn(picked).map((j) => j.property_name).join(' and ')} that day.
-                      Marking them off does not cancel it.
-                    </span>
-                  </div>
-            }
-
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                disabled={saving}
-                onClick={() => setDay(picked, days[picked].state === 'off' ? true : false)}
-                className={`px-3 py-2 rounded-[8px] text-[13px] font-semibold disabled:opacity-50 ${
-                days[picked].state === 'off' ?
-                'bg-[#222222] text-white' :
-                'border border-[#DDDDDD] text-[#222222]'}`}>
-                    {saving ? 'Saving…' :
-                days[picked].state === 'off' ?
-                `Mark ${cleanerName} available` :
-                `Mark ${cleanerName} not available`}
-                  </button>
-
-                  {/* Only where there is something to take back. */}
-                  {days[picked].override &&
-              <button
-                disabled={saving}
-                onClick={() => setDay(picked, null)}
-                className="px-3 py-2 rounded-[8px] text-[13px] font-semibold border border-[#DDDDDD] text-[#222222] disabled:opacity-50">
-                      Back to their usual
-                    </button>
-              }
-                </div>
-
-                <p className="text-[12px] text-[#717171] mt-2">
-                  They are told when this changes what they can work.
-                </p>
-              </div>
-          }
+            {error && !picked && <p className="mt-3 text-[13px] text-[#991B1B]">{error}</p>}
 
             {jobs.length > 0 &&
           <div className="mt-5">
@@ -417,6 +341,99 @@ export function CleanerDetailSheet({
           </>
         }
       </div>
+
+      {/*
+       * The day being set, on its own layer.
+       *
+       * This used to render inline, underneath three months of grid. The
+       * tap worked and the panel appeared fourteen hundred pixels below
+       * the fold on a phone — so the day you tapped did nothing you could
+       * see, and the only way to find out otherwise was to scroll past
+       * the whole calendar. The cleaner's own app has always put its day
+       * on top; this is the same, over the same grid.
+       */}
+      {picked &&
+      <>
+        <div className="fixed inset-0 bg-black/30 z-[80]" onClick={() => setPicked(null)} />
+        <div className="fixed inset-x-0 bottom-0 z-[90] bg-white rounded-t-[16px] shadow-2xl p-5 pb-8
+                        max-h-[70vh] overflow-y-auto
+                        sm:inset-auto sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2
+                        sm:w-[420px] sm:rounded-2xl sm:pb-5">
+          <div className="flex items-baseline justify-between gap-2">
+            <p className="text-[15px] font-semibold">{pretty(picked)}</p>
+            <button
+              onClick={() => setPicked(null)}
+              className="text-[12px] text-[#717171] underline underline-offset-2">
+              Close
+            </button>
+          </div>
+
+          {/* Past the year that was fetched. Better to say so than to let
+              the tap land on nothing. */}
+          {!days[picked] ?
+          <p className="text-[13px] text-[#717171] mt-2">
+              That is further ahead than this calendar goes. Their usual days
+              apply until somebody says otherwise.
+            </p> :
+
+          <>
+              <p className="text-[13px] text-[#717171] mt-0.5">
+                {days[picked].state === 'booked' ? 'Booked to clean' :
+              days[picked].state === 'free' ? 'Available' : 'Not available'}
+                {' · '}
+                {days[picked].override ?
+              'you or they set this day' :
+              'from their usual weekly pattern'}
+              </p>
+
+              {/* Taking somebody off a day does not take the day's work
+                  off them. Said here, where the decision is, rather than
+                  discovered later by an empty flat. */}
+              {jobsOn(picked).length > 0 &&
+            <div className="mt-2 flex items-start gap-1.5 text-[13px] text-[#92400E] bg-[#FFFBEB] border border-[#F0C36D] rounded-[8px] px-2.5 py-2">
+                  <AlertCircle className="w-4 h-4 text-[#BA7517] shrink-0 mt-px" />
+                  <span>
+                    Still down to clean {jobsOn(picked).map((j) => j.property_name).join(' and ')} that day.
+                    Marking them off does not cancel it.
+                  </span>
+                </div>
+            }
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                disabled={saving}
+                onClick={() => setDay(picked, days[picked].state === 'off')}
+                className={`px-3 py-2 rounded-[8px] text-[13px] font-semibold disabled:opacity-50 ${
+                days[picked].state === 'off' ?
+                'bg-[#222222] text-white' :
+                'border border-[#DDDDDD] text-[#222222]'}`}>
+                  {saving ? 'Saving…' :
+                days[picked].state === 'off' ?
+                `Mark ${cleanerName} available` :
+                `Mark ${cleanerName} not available`}
+                </button>
+
+                {/* Only where there is something to take back. */}
+                {days[picked].override &&
+              <button
+                disabled={saving}
+                onClick={() => setDay(picked, null)}
+                className="px-3 py-2 rounded-[8px] text-[13px] font-semibold border border-[#DDDDDD] text-[#222222] disabled:opacity-50">
+                    Back to their usual
+                  </button>
+              }
+              </div>
+
+              {error && <p className="mt-2 text-[13px] text-[#991B1B]">{error}</p>}
+
+              <p className="text-[12px] text-[#717171] mt-2">
+                They are told when this changes what they can work.
+              </p>
+            </>
+          }
+        </div>
+      </>
+      }
     </>);
 
 }
