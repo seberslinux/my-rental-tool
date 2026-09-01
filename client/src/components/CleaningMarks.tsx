@@ -32,7 +32,7 @@ export interface MarkSource {
  *   crossed-out person   a checkout with nobody on it — the only thing
  *                        here that has to be acted on. Amber if somebody
  *                        could still take it, red if nobody is free.
- *   warning triangle     assigned, then the cleaner marked themselves
+ *   warning triangle     assigned, then the day was marked
  *                        off. Looks covered; is not.
  *   tick                 settled — somebody said yes and can still come.
  *   person with a tick   asked, no answer yet. Not the same as settled,

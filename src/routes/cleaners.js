@@ -10,6 +10,8 @@ const { loadAvailability, cleanerDayStatus, ymd, prettyDate } = require('../serv
 const { notify } = require('../services/notify');
 // One definition of what "blocked" means, shared with revenue.
 const { isBlockedPlatform } = require('../services/analytics-calc');
+// One definition of a job that is still somebody's commitment.
+const { STILL_ON_SQL } = require('../services/job-life');
 
 // Long enough that an owner can send it at their convenience, short
 // enough that a link forwarded once and forgotten does not stay live.
@@ -228,6 +230,10 @@ router.get('/:id/calendar', async (req, res) => {
       // whatever the pattern says about it.
       state: bookedOn.has(key) ? 'booked' : status.available ? 'free' : 'off',
       why: status.reason,
+      // Whether this day is an exception or just the weekly pattern
+      // showing through. Without it there is no way to offer "put it
+      // back to their usual" only where there is something to put back.
+      override: av.overrides.get(cleaner.id)?.has(key) === true,
     };
   }
 
@@ -840,13 +846,49 @@ router.put('/:id/availability', async (req, res) => {
   res.json(availability);
 });
 
-// Add/update a date-specific override
+/**
+ * Set one of a cleaner's days, on their behalf.
+ *
+ * A cleaner can already do this from their own app, and the manager was
+ * told when they did. The other direction did not exist: Francesca says
+ * on the phone that she cannot do the 14th, and there was nowhere to put
+ * that. It stayed in the manager's head, the calendar went on showing her
+ * free, and the assignment service went on offering her.
+ *
+ * Three things are true here that were not true of the route this
+ * replaces:
+ *
+ *   - The date is checked. It was inserted raw, so a typo wrote a row
+ *     that no lookup would ever match — an override that existed in the
+ *     table and did nothing, which is the worst way for this to fail.
+ *   - The cleaner is told. Somebody else changing which days you work is
+ *     precisely the thing you cannot find out by accident.
+ *   - Only a real change is announced. Marking somebody off on a day they
+ *     already do not work changes nothing, and saying so trains people to
+ *     ignore the ones that matter.
+ *
+ * Marking somebody off a day they are booked on is allowed and reported
+ * back, not refused. The cleaner's own app refuses it — they have to
+ * decline the job, where the consequence is in front of them — but the
+ * manager is the person who resolves that, and a rule that leaves them
+ * unable to record what they have been told is a rule with nowhere to go.
+ */
 router.post('/:id/overrides', async (req, res) => {
   const { date, available } = req.body;
 
   if (!date) return res.status(400).json({ error: 'Date is required' });
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) {
+    return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  }
+  if (date < new Date().toISOString().slice(0, 10)) {
+    return res.status(400).json({ error: 'That day has already passed' });
+  }
 
-  // Upsert override
+  const cleaner = await getOne('SELECT id, name FROM cleaners WHERE id = $1', [req.params.id]);
+  if (!cleaner) return res.status(404).json({ error: 'Cleaner not found' });
+
+  const before = cleanerDayStatus(await loadAvailability([cleaner.id]), cleaner.id, date).available;
+
   const existing = await getOne(
     'SELECT * FROM cleaner_availability_overrides WHERE cleaner_id = $1 AND date = $2',
     [req.params.id, date]
@@ -864,8 +906,87 @@ router.post('/:id/overrides', async (req, res) => {
     );
   }
 
-  res.json({ date, available: !!available });
+  // What they are already down for that day. The manager needs it in
+  // front of them: taking somebody off a day does not take the job off
+  // them, and a clean nobody is coming to is how a guest arrives to an
+  // unmade bed.
+  const clashes = await liveJobsOn(cleaner.id, date);
+
+  await announceDayChange({ cleaner, date, before, after: !!available, clashes });
+
+  res.json({ date, available: !!available, jobs: clashes });
 });
+
+/**
+ * Put a day back to whatever their weekly pattern says.
+ *
+ * Toggling twice is not the same as undoing. An override wins outright,
+ * hours included — so a day switched off and on again reads as a blanket
+ * yes, and somebody who works Tuesday mornings would be offered a
+ * Tuesday afternoon turnover. This is how you actually take it back.
+ */
+router.delete('/:id/overrides', async (req, res) => {
+  const date = String(req.query.date || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  }
+
+  const cleaner = await getOne('SELECT id, name FROM cleaners WHERE id = $1', [req.params.id]);
+  if (!cleaner) return res.status(404).json({ error: 'Cleaner not found' });
+
+  const before = cleanerDayStatus(await loadAvailability([cleaner.id]), cleaner.id, date).available;
+
+  await run(
+    'DELETE FROM cleaner_availability_overrides WHERE cleaner_id = $1 AND date = $2',
+    [cleaner.id, date]
+  );
+
+  const after = cleanerDayStatus(await loadAvailability([cleaner.id]), cleaner.id, date).available;
+  const clashes = after ? [] : await liveJobsOn(cleaner.id, date);
+
+  await announceDayChange({ cleaner, date, before, after, clashes });
+
+  res.json({ date, available: after, cleared: true, jobs: clashes });
+});
+
+/** What that cleaner is still committed to on that date. */
+async function liveJobsOn(cleanerId, date) {
+  return getAll(
+    `SELECT cj.id, cj.start_time, cj.end_time, cj.status, p.name AS property_name
+       FROM cleaning_jobs cj JOIN properties p ON p.id = cj.property_id
+      WHERE cj.cleaner_id = $1 AND cj.cleaning_date = $2 AND ${STILL_ON_SQL.replace('status', 'cj.status')}
+      ORDER BY cj.start_time`,
+    [cleanerId, date]
+  );
+}
+
+/**
+ * Tell the cleaner, but only when the answer actually moved.
+ *
+ * Setting an override on a day somebody already does not work is a
+ * no-op dressed as a change. Sending "you are not available on Sunday"
+ * to somebody who has never worked a Sunday is the kind of message that
+ * teaches people to swipe the next one away too.
+ */
+async function announceDayChange({ cleaner, date, before, after, clashes }) {
+  if (before === after) return;
+  const when = prettyDate(date);
+  await notify({
+    event: 'availability_updated',
+    title: after ?
+    `You are down as available on ${when}` :
+    `You are down as not available on ${when}`,
+    body: [
+    'Your manager set this for you.',
+    after ? '' : clashes.length ?
+    `You are still booked to clean ${clashes.map((j) => j.property_name).join(' and ')} that day — tell them if that is wrong.` :
+    '',
+    'If that is not right, change it in your app or tell them.',
+    ].filter(Boolean).join(' '),
+    cleanerId: cleaner.id,
+    link: '/',
+  });
+}
 
 // Delete a date override
 router.delete('/:id/overrides/:overrideId', async (req, res) => {

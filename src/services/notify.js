@@ -106,6 +106,10 @@ const EVENTS = {
   // A clean that moved day. Nothing told the cleaner at all before: the
   // date simply changed underneath them.
   job_rescheduled: { severity: 'attention', audience: 'cleaner' },
+  // Their manager changed one of their days for them. Somebody else
+  // altering which days you work is the one thing you cannot find out by
+  // noticing it — so it reaches the phone, like a shift does.
+  availability_updated: { severity: 'attention', audience: 'cleaner' },
   job_reminder: { severity: 'attention', audience: 'cleaner' },
   job_upcoming: { severity: 'info', audience: 'cleaner' },
 };
