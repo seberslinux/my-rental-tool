@@ -70,6 +70,23 @@ import { loadAnalyticsData } from './data/analytics';
 // Tabs that scope their content to a single property. The Calendar has its
 // own property picker in CalendarHeader; More has nothing to scope.
 const SHOWS_PROPERTY_FILTER = new Set(['home', 'analytics']);
+
+/**
+ * The window the cleaning picture is loaded over.
+ *
+ * A week back and four months on: the grid's range, not the booking
+ * window's. Shared rather than written out twice, because a reload over
+ * a different range than the first load would silently drop days off
+ * the calendar.
+ */
+function cleaningRange(): [string, string] {
+  const from = new Date();
+  from.setDate(from.getDate() - 7);
+  const to = new Date();
+  to.setDate(to.getDate() + 120);
+  return [dateKey(from), dateKey(to)];
+}
+
 export function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [showNotifications, setShowNotifications] = useState(false);
@@ -194,11 +211,7 @@ export function App() {
   // range is the grid's range rather than the booking window's.
   useEffect(() => {
     if (!isLoggedIn || userRole === 'cleaner') return;
-    const from = new Date();
-    from.setDate(from.getDate() - 7);
-    const to = new Date();
-    to.setDate(to.getDate() + 120);
-    loadCleaningDays(dateKey(from), dateKey(to)).then(() => setCleaningVersion((v) => v + 1));
+    loadCleaningDays(...cleaningRange()).then(() => setCleaningVersion((v) => v + 1));
   }, [isLoggedIn, userRole, dashboardVersion]);
 
   // Filter bookings based on channel — use dataLoaded as dep to re-compute after fetch
@@ -538,6 +551,15 @@ export function App() {
           await loadCalendarData();
           setCleaningVersion((v) => v + 1);
           setDashboardVersion((v) => v + 1);
+        }}
+        /**
+         * Somebody's day changed. Same reasoning as a rate: you are
+         * still looking at the day, so the sheet stays open and the
+         * cleaning picture is re-read underneath it.
+         */
+        onAvailabilityChanged={async () => {
+          await loadCleaningDays(...cleaningRange());
+          setCleaningVersion((v) => v + 1);
         }} />
       }
 

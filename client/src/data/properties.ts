@@ -69,9 +69,14 @@ export let cleaners: Record<number, number[]> = {};
 
 /** One entry per date: who is free, what is scheduled, what is short. */
 export interface CleaningDay {
-  available: {id: number;name: string;reason: string;property_ids: number[];}[];
+  available: {id: number;name: string;reason: string;property_ids: number[];
+    override?: boolean;committed?: boolean;}[];
   /** Not free that day — still askable, since a job is a request. */
-  unavailable: {id: number;name: string;reason: string;property_ids: number[];}[];
+  unavailable: {id: number;name: string;reason: string;property_ids: number[];
+    /** This date was set for them, rather than coming from their pattern. */
+    override?: boolean;
+    /** Down to clean elsewhere: availability is not what is in the way. */
+    committed?: boolean;}[];
   jobs: {
     id: number;property_id: number;property_name: string;
     cleaner_id: number | null;cleaner_name: string | null;
