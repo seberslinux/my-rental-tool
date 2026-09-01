@@ -818,20 +818,81 @@ router.delete('/:id/properties/:propertyId', async (req, res) => {
   res.json({ removed: true });
 });
 
-// Set weekly availability for a cleaner (replaces all existing)
-router.put('/:id/availability', async (req, res) => {
-  const { schedule } = req.body;
-  // schedule: [{ day_of_week: 0-6, start_time: "09:00", end_time: "17:00" }, ...]
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+const DAY_NAME = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
-  if (!Array.isArray(schedule)) {
-    return res.status(400).json({ error: 'Schedule must be an array' });
+/**
+ * The days somebody usually works, checked before they are stored.
+ *
+ * The column has a CHECK on day_of_week and NOT NULL on both times, so
+ * anything malformed used to come back as a 500 out of Postgres rather
+ * than as a sentence about what was wrong. Refusing it here says which
+ * day and why.
+ *
+ * A slot that ends before it starts is refused rather than swapped. It is
+ * far more likely to be 09:00–17:00 typed into the wrong boxes than a
+ * genuine overnight shift, and quietly reversing somebody's hours is
+ * worse than asking.
+ */
+function validateSchedule(schedule) {
+  if (!Array.isArray(schedule)) return { error: 'Schedule must be an array' };
+
+  const slots = [];
+  const seen = new Set();
+  for (const slot of schedule) {
+    const dow = Number(slot && slot.day_of_week);
+    if (!Number.isInteger(dow) || dow < 0 || dow > 6) {
+      return { error: 'Each day must be 0 (Sunday) to 6 (Saturday)' };
+    }
+    if (seen.has(dow)) return { error: `${DAY_NAME[dow]} is listed twice` };
+    seen.add(dow);
+
+    const start = String(slot.start_time || '');
+    const end = String(slot.end_time || '');
+    if (!HHMM.test(start) || !HHMM.test(end)) {
+      return { error: `${DAY_NAME[dow]} needs a start and end time as HH:MM` };
+    }
+    if (end <= start) {
+      return { error: `${DAY_NAME[dow]} ends before it starts` };
+    }
+    slots.push({ day_of_week: dow, start_time: start, end_time: end });
   }
+  return { slots };
+}
+
+/**
+ * Set the days a cleaner usually works.
+ *
+ * The manager could already set a single date — that is what the
+ * overrides below are for — but not the pattern those dates are
+ * exceptions to. So a cleaner whose usual days changed needed an
+ * override on every date from now on, and one who does not use the app
+ * at all could never have a pattern set after the day they were added.
+ *
+ * It is also the number the detail sheet counts exceptions against. A
+ * pattern nobody can correct makes "3 days differ from that pattern"
+ * unfalsifiable.
+ *
+ * Replaces the whole week rather than merging: the screen sends the
+ * pattern it is showing, and a merge would leave a day switched off in
+ * the form still switched on in the database.
+ */
+router.put('/:id/availability', async (req, res) => {
+  const checked = validateSchedule(req.body && req.body.schedule);
+  if (checked.error) return res.status(400).json({ error: checked.error });
 
   const cleanerId = req.params.id;
+  const cleaner = await getOne('SELECT id, name FROM cleaners WHERE id = $1', [cleanerId]);
+  if (!cleaner) return res.status(404).json({ error: 'Cleaner not found' });
+
+  const before = await getAll(
+    'SELECT day_of_week, start_time, end_time FROM cleaner_availability WHERE cleaner_id = $1 ORDER BY day_of_week',
+    [cleanerId]
+  );
 
   await transaction(async (client) => {
     await client.query('DELETE FROM cleaner_availability WHERE cleaner_id = $1', [cleanerId]);
-    for (const slot of schedule) {
+    for (const slot of checked.slots) {
       await client.query(
         'INSERT INTO cleaner_availability (cleaner_id, day_of_week, start_time, end_time) VALUES ($1, $2, $3, $4)',
         [cleanerId, slot.day_of_week, slot.start_time, slot.end_time]
@@ -841,8 +902,32 @@ router.put('/:id/availability', async (req, res) => {
 
   const availability = await getAll(
     'SELECT * FROM cleaner_availability WHERE cleaner_id = $1 ORDER BY day_of_week ASC',
-    [req.params.id]
+    [cleanerId]
   );
+
+  /**
+   * Tell them their week changed.
+   *
+   * Somebody else deciding which days you work is the kind of thing you
+   * find out by turning up on a day you no longer work, unless you are
+   * told. Only when it actually changed — saving the same pattern back
+   * is not news.
+   */
+  const shape = (rows) =>
+  rows.map((r) => `${r.day_of_week}:${r.start_time}-${r.end_time}`).join(',');
+  if (shape(before) !== shape(availability)) {
+    const days = availability.length ?
+    availability.map((r) => DAY_NAME[r.day_of_week].slice(0, 3)).join(', ') :
+    'no days';
+    await notify({
+      event: 'availability_updated',
+      title: `Your usual days are now ${days}`,
+      body: 'Your manager set this for you. If that is not right, change it in your app or tell them.',
+      cleanerId: cleaner.id,
+      link: '/',
+    });
+  }
+
   res.json(availability);
 });
 

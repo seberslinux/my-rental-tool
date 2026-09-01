@@ -36,6 +36,18 @@ interface Job {
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+/**
+ * Monday first, because that is how a working week is read.
+ *
+ * The database keys days the way JavaScript does, Sunday at 0, and that
+ * stays the wire format — this is only the order they are shown in.
+ */
+const WEEK = [
+  { dow: 1, label: 'Mon' }, { dow: 2, label: 'Tue' }, { dow: 3, label: 'Wed' },
+  { dow: 4, label: 'Thu' }, { dow: 5, label: 'Fri' }, { dow: 6, label: 'Sat' },
+  { dow: 0, label: 'Sun' },
+];
+
 const pretty = (d: string) =>
 new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' });
 
@@ -54,6 +66,9 @@ export function CleanerDetailSheet({
   const [picked, setPicked] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  /** Whether the weekly pattern is being changed, and to what. */
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<Record<number, {on: boolean;start: string;end: string;}>>({});
 
   const load = React.useCallback(async () => {
     const from = new Date().toISOString().slice(0, 10);
@@ -102,6 +117,46 @@ export function CleanerDetailSheet({
     setPicked(null);
   };
 
+  /**
+   * Change the days they usually work.
+   *
+   * The pattern is what every day on the grid is measured against — a
+   * day is an exception only by differing from it — so leaving it
+   * read-only made the count above unfalsifiable. It also stranded
+   * anyone who does not use the app: their pattern could be set on the
+   * day they were added and never again, leaving the manager to override
+   * every single date instead.
+   *
+   * The whole week is sent, including the days switched off, because the
+   * server replaces rather than merges. Sending only the ticked days
+   * would be the same request.
+   */
+  const saveSchedule = async () => {
+    setSaving(true);
+    setError('');
+    const res = await fetch(`/api/cleaners/${cleanerId}/availability`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        schedule: WEEK.
+        filter((d) => draft[d.dow]?.on).
+        map((d) => ({
+          day_of_week: d.dow,
+          start_time: draft[d.dow].start,
+          end_time: draft[d.dow].end,
+        })),
+      }),
+    });
+    setSaving(false);
+    if (!res.ok) {
+      setError((await res.json().catch(() => ({}))).error || 'Could not save those days');
+      return;
+    }
+    await load();
+    setEditing(false);
+  };
+
   /** A Date as the key everything else here is keyed by. */
   const dateKey = (d: Date) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -137,12 +192,85 @@ export function CleanerDetailSheet({
         <div className="flex justify-between items-start mb-1">
           <div>
             <p className="text-[18px] font-semibold">{cleanerName}</p>
-            <p className="text-[13px] text-[#717171]">Usually works {usual}</p>
+            <p className="text-[13px] text-[#717171]">
+              Usually works {usual}
+              {/* Editable, because every day below is measured against
+                  it — and somebody who does not use the app has no other
+                  way for theirs to be set. */}
+              {' · '}
+              <button
+                onClick={() => {
+                  const next: Record<number, {on: boolean;start: string;end: string;}> = {};
+                  for (const d of WEEK) {
+                    const row = schedule.find((r) => r.day_of_week === d.dow);
+                    next[d.dow] = {
+                      on: Boolean(row),
+                      start: row ? row.start_time : '09:00',
+                      end: row ? row.end_time : '17:00',
+                    };
+                  }
+                  setDraft(next);
+                  setEditing(!editing);
+                  setError('');
+                }}
+                className="font-semibold text-[#FF385C]">
+                {editing ? 'Cancel' : 'Change'}
+              </button>
+            </p>
           </div>
           <button onClick={onClose} aria-label="Close" className="p-1 -mr-1">
             <X className="w-5 h-5 text-[#717171]" />
           </button>
         </div>
+
+        {editing &&
+        <div className="mt-3 border border-[#EBEBEB] rounded-[8px] p-3">
+            <p className="text-[12px] text-[#717171] mb-2">
+              The days they normally work. Individual dates are still set on the calendar below.
+            </p>
+            {WEEK.map((d) =>
+          <div key={d.dow} className="flex items-center gap-2 py-1">
+                <button
+              role="switch"
+              aria-checked={Boolean(draft[d.dow]?.on)}
+              aria-label={d.label}
+              onClick={() => setDraft({ ...draft, [d.dow]: { ...draft[d.dow], on: !draft[d.dow]?.on } })}
+              className={`w-[38px] h-[22px] shrink-0 rounded-full ${
+              draft[d.dow]?.on ? 'bg-[#0F6E56]' : 'bg-[#DDDDDD]'}`}>
+                  <span className={`block w-[16px] h-[16px] bg-white rounded-full transition-transform ${
+              draft[d.dow]?.on ? 'translate-x-[19px]' : 'translate-x-[3px]'}`} />
+                </button>
+                <span className="w-[34px] shrink-0 text-[13px]">{d.label}</span>
+                {draft[d.dow]?.on ?
+            <>
+                    <input
+                type="time" value={draft[d.dow].start}
+                aria-label={`${d.label} start`}
+                onChange={(e) => setDraft({ ...draft, [d.dow]: { ...draft[d.dow], start: e.target.value } })}
+                className="px-2 py-1 border border-[#DDDDDD] rounded-[6px] text-[13px]" />
+                    <span className="text-[12px] text-[#717171]">to</span>
+                    <input
+                type="time" value={draft[d.dow].end}
+                aria-label={`${d.label} end`}
+                onChange={(e) => setDraft({ ...draft, [d.dow]: { ...draft[d.dow], end: e.target.value } })}
+                className="px-2 py-1 border border-[#DDDDDD] rounded-[6px] text-[13px]" />
+                  </> :
+
+            <span className="text-[13px] text-[#B0B0B0]">not working</span>
+            }
+              </div>
+          )}
+            <button
+            onClick={saveSchedule}
+            disabled={saving}
+            className="mt-2 w-full h-[38px] rounded-[8px] bg-[#222222] text-white text-[13px] font-semibold disabled:opacity-50">
+              {saving ? 'Saving…' : 'Save their usual days'}
+            </button>
+            <p className="text-[12px] text-[#717171] mt-2">
+              They are told when you change this.
+            </p>
+          </div>
+        }
 
         {/* The point of the screen, said in a line. */}
         {exceptions.length > 0 &&
