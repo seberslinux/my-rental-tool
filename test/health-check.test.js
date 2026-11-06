@@ -201,12 +201,14 @@ test('nothing to check is green rather than undefined', () => {
 });
 
 test('a healthy listing has nothing to say', () => {
-  // Complete settings: a markup with no commission beside it is not a
-  // healthy listing, it is one nothing can check — which is its own
-  // finding now.
+  // Settings that are actually healthy, which takes all three: a
+  // markup, the commission it has to clear, and the VAT charged on that
+  // commission. Any one missing is its own finding, and a 25% markup
+  // over a 15% commission plus VAT clears break-even by half a point —
+  // true, and not what "healthy" should mean.
   const property = {
     ...lodge, price_ceiling: 6000,
-    guest_markup_booking: 25, commission_booking: 15, bank_charge_booking: 2.1,
+    guest_markup_booking: 25, commission_booking: 10, bank_charge_booking: 0, vat_rate: 15,
   };
   const r = checkProperty({ property, rates: priced(TARGET_DAYS, 3000), today: TODAY });
   assert.equal(r.status, 'green');
@@ -238,9 +240,13 @@ test('commission and bank charge together are what must be covered', () => {
   assert.equal(configuredTake(settings, 'booking'), 17.1);
 });
 
-test('25% over a 17.1% take is clear, and says nothing', () => {
-  const found = markupFindings(settings).filter((f) => f.key.includes('booking'));
-  assert.deepEqual(found, []);
+test('a markup well clear of the take says nothing', () => {
+  // VAT recorded, so there is nothing missing to report: a 10%
+  // commission plus 15% VAT is an 11.5% take, break-even 13%, and 25%
+  // clears it by twelve points.
+  const complete = { ...settings, commission_booking: 10, bank_charge_booking: 0, vat_rate: 15 };
+  assert.equal(configuredTake(complete, 'booking'), 11.5);
+  assert.deepEqual(markupFindings(complete).filter((f) => f.key.includes('booking')), []);
 });
 
 test('a markup below break-even is red, with what it actually returns', () => {
@@ -306,4 +312,106 @@ test('the settings are still checked on a morning Smoobu could not be read', () 
   assert.ok(r.findings.find((f) => f.key === 'fetch_failed'));
   assert.ok(r.findings.find((f) => f.key === 'markup_short_booking'),
     'the channel settings were checked anyway');
+});
+
+/* ---------------------------------------------------------------------- *
+ * VAT on the fee, which the channels do not advertise
+ *
+ * A 15% commission is quoted as 15% and charged as 15% plus VAT on it.
+ * Every rule below is resolved the way calcDeductions resolves it, on
+ * purpose: a second opinion here would report a take that the revenue
+ * figures disagree with.
+ * ---------------------------------------------------------------------- */
+
+const { effectiveVat } = require('../src/services/health-check');
+
+test('VAT is charged on the fees, not on the revenue', () => {
+  // 15% commission + 2.1% bank = 17.1% of the price sold. VAT at 15% on
+  // that is 19.7%. VAT on the revenue would read 32.1%, which is the
+  // mistake this pins against.
+  const fees = { commission_booking: 15, bank_charge_booking: 2.1 };
+  assert.equal(configuredTake(fees, 'booking'), 17.1);
+  assert.equal(configuredTake({ ...fees, vat_booking: 15 }, 'booking'), 19.7);
+});
+
+test('a per-channel VAT rate wins over the property rate', () => {
+  const p = { vat_booking: 9, vat_rate: 15 };
+  assert.deepEqual(effectiveVat(p, 'booking'), { rate: 9, source: 'channel' });
+  // And it is the rate actually applied, not just the one reported.
+  assert.equal(configuredTake({ commission_booking: 15, bank_charge_booking: 2.1, ...p }, 'booking'), 18.6);
+});
+
+test('the property rate is the fallback when a channel has none', () => {
+  // The Lodge's real shape: vat_booking unset, vat_rate 15. This is why
+  // its Booking.com take is 19.7% and not 17.1%.
+  const p = { vat_rate: 15 };
+  assert.deepEqual(effectiveVat(p, 'booking'), { rate: 15, source: 'property' });
+  assert.equal(effectiveVat({ vat_booking: 0, vat_rate: 15 }, 'booking').rate, 15);
+});
+
+test('no VAT anywhere resolves to none rather than to a guess', () => {
+  // The loft's real shape, and the reason its take is understated on
+  // every channel.
+  assert.deepEqual(effectiveVat({ vat_rate: 0, vat_booking: 0 }, 'booking'), { rate: 0, source: 'none' });
+  assert.deepEqual(effectiveVat({}, 'booking'), { rate: 0, source: 'none' });
+});
+
+test('a channel VAT of zero cannot say "no VAT here"', () => {
+  // Documented rather than fixed: the column has no way to express a
+  // deliberate zero, so the property rate overrides it. A property with
+  // one genuinely VAT-free channel has to clear the property rate.
+  assert.equal(effectiveVat({ vat_booking: 0, vat_rate: 15 }, 'booking').source, 'property');
+});
+
+test('VAT with no commission to tax changes nothing', () => {
+  // The Lodge's Airbnb: commission unset, so neither the commission nor
+  // its VAT is counted and the take reads 0%. VAT cannot rescue a
+  // missing commission, which is why that is its own finding.
+  assert.equal(configuredTake({ commission_airbnb: 0, vat_airbnb: 15 }, 'airbnb'), 0);
+  assert.equal(configuredTake({ commission_airbnb: 0, bank_charge_airbnb: 2.1, vat_airbnb: 15 }, 'airbnb'), 2.4);
+});
+
+test('a channel with no VAT on its fees is flagged', () => {
+  const found = markupFindings({
+    ...settings, vat_rate: 0, vat_booking: 0, guest_markup_booking: 25,
+  }).find((f) => f.key === 'no_vat_booking');
+  assert.equal(found.severity, 'amber');
+  assert.match(found.detail, /charged at 17\.1% here/);
+  assert.match(found.detail, /real take is higher/);
+});
+
+test('with VAT recorded, nothing is flagged', () => {
+  // The Lodge. Its property rate covers both channels, so there is no
+  // VAT finding to make.
+  const keys = markupFindings({ ...settings, vat_rate: 15 }).map((f) => f.key);
+  assert.equal(keys.filter((k) => k.startsWith('no_vat_')).length, 0);
+});
+
+test('a rate the property records elsewhere is offered as the comparison', () => {
+  // Booking.com has no VAT but Airbnb records 15, so the finding can
+  // say what the take would become instead of only that it is wrong.
+  const found = markupFindings({
+    ...settings, vat_rate: 0, vat_booking: 0, vat_airbnb: 15,
+  }).find((f) => f.key === 'no_vat_booking');
+  assert.match(found.detail, /At 15% it would be 19\.7%, needing a markup of 24\.5%/);
+});
+
+test('no rate anywhere means no invented number', () => {
+  // The loft. Nothing is recorded, so the absence is reported without
+  // asserting what South African VAT happens to be.
+  const found = markupFindings({
+    ...settings, vat_rate: 0, vat_booking: 0, vat_airbnb: 0, vat_vrbo: 0,
+  }).find((f) => f.key === 'no_vat_booking');
+  assert.ok(!/would be/.test(found.detail), found.detail);
+});
+
+test('a measured commission is not asked about VAT', () => {
+  // What the channel kept off the booking row already includes its VAT.
+  // Flagging it would be asking somebody to add a rate to a number that
+  // has it in already.
+  const keys = markupFindings(
+    { ...settings, vat_rate: 0, vat_booking: 0 },
+    { booking: { commission: 19.7, bookings: 5 } }
+  ).map((f) => f.key);
+  assert.equal(keys.includes('no_vat_booking'), false);
 });

@@ -96,6 +96,34 @@ function sellsOn(property, key) {
 }
 
 /**
+ * The VAT rate that will actually be applied to a channel's fees, and
+ * where it came from.
+ *
+ * Resolved exactly as `calcDeductions` resolves it, because a second
+ * opinion here would report a take the revenue figures disagree with:
+ * the per-channel rate when it is set, otherwise the property's own
+ * `vat_rate`.
+ *
+ * Worth knowing because the channels do not advertise it. A 15%
+ * commission is quoted as 15% and charged as 15% plus VAT on it, so a
+ * listing with no VAT recorded understates what every night really
+ * costs — and understates the markup needed to cover it.
+ *
+ * One ambiguity this cannot resolve: a per-channel zero means both "not
+ * set" and "this channel genuinely charges no VAT", and the fallback
+ * reads it as the first. A property that really has one VAT-free
+ * channel has to express that by clearing the property rate, which is a
+ * limitation of the column rather than of this function.
+ */
+function effectiveVat(property = {}, key) {
+  const channel = Number(property[`vat_${key}`]) || 0;
+  if (channel > 0) return { rate: channel, source: 'channel' };
+  const propertyRate = Number(property.vat_rate) || 0;
+  if (propertyRate > 0) return { rate: propertyRate, source: 'property' };
+  return { rate: 0, source: 'none' };
+}
+
+/**
  * What the fee settings say a channel takes out of the price sold.
  *
  * Through `netForChannel` so it is the same stack of commission, bank
@@ -248,6 +276,38 @@ function markupFindings(property, commissions = {}) {
         `Set to ${markup}% against a break-even of ${need}% (${c.label} keeps ${take}%, ${source}). ` +
         'A commission that moves a point puts it under water.'));
     }
+
+    /**
+     * VAT on the fee, which the channels do not advertise.
+     *
+     * A 15% commission is quoted as 15% and charged as 15% plus VAT on
+     * it. With no VAT recorded the take above is understated and so is
+     * the markup it demands — so a listing can read comfortable while
+     * paying out under its base.
+     *
+     * Only flagged where there is a fee for VAT to apply to, and only
+     * when the figure came from the settings: a commission measured off
+     * the booking rows is what the channel actually kept, VAT included.
+     */
+    const vat = effectiveVat(property, c.key);
+    if (vat.rate === 0 && source === 'from the fee settings') {
+      // Any rate this property records elsewhere is the best available
+      // guess at what this channel's would be. Where it records none,
+      // the absence is reported without inventing a number.
+      const elsewhere = CHANNELS
+        .map((other) => Number(property[`vat_${other.key}`]) || 0)
+        .find((r) => r > 0) || Number(property.vat_rate) || 0;
+      const ifApplied = elsewhere > 0 ?
+        (() => {
+          const withVat = Math.round(take * (1 + elsewhere / 100) * 10) / 10;
+          return ` At ${elsewhere}% it would be ${withVat}%, needing a markup of ${requiredMarkup(withVat)}%.`;
+        })() :
+        '';
+      findings.push(finding(`no_vat_${c.key}`, 'amber',
+        `No VAT recorded on ${c.label}'s fees at ${name}`,
+        `${c.label} is charged at ${take}% here, but a commission is quoted without the VAT added to it, ` +
+        `so the real take is higher.${ifApplied}`));
+    }
   }
 
   return findings;
@@ -386,7 +446,7 @@ function rollUp(results = []) {
 
 module.exports = {
   checkProperty, rollUp, horizonFrom, effectiveMarkups, readRates, statusOf, worse,
-  markupFindings, configuredTake, sellsOn, HEADROOM_POINTS,
+  markupFindings, configuredTake, effectiveVat, sellsOn, HEADROOM_POINTS,
   TARGET_DAYS, RED_DAYS,
 };
 
