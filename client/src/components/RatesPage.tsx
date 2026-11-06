@@ -108,6 +108,10 @@ export function RatesPage({ initialPropertyId = 0 }: {
   const [observed, setObserved] = useState<Record<string, {
     markup: number | null;bookings: number;nights: number;stale?: number;
     low: number | null;high: number | null;confident: boolean;
+    /** What the channel kept out of the price sold, as a percentage of it. */
+    keeps: number | null;keeps_bookings: number;
+    /** Whether the markup was measured against a price sold put back together from payout + commission. */
+    reconstructed: boolean;
   }>>({});
 
   const [from, setFrom] = useState(iso(new Date()));
@@ -423,6 +427,19 @@ export function RatesPage({ initialPropertyId = 0 }: {
                       </>
                 }
                   </span>
+                  {/* What the channel kept, measured rather than
+                      configured — the other half of the same
+                      transaction. The markup above reads 25% only
+                      because this was added back; before that the two
+                      were conflated and Booking.com showed +10.7%,
+                      which was its payout divided by the base and
+                      neither of the two numbers. */}
+                  {observed[ch.key].keeps != null &&
+              <span className="shrink-0 text-[12px] text-[#717171]">
+                      · keeps {observed[ch.key].keeps}%
+                      {observed[ch.key].keeps_bookings === 1 ? ' (1 booking)' : ` (${observed[ch.key].keeps_bookings} bookings)`}
+                    </span>
+              }
                   {observed[ch.key].confident && observed[ch.key].markup != null &&
               String(observed[ch.key].markup) !== markups[ch.key] &&
               <button

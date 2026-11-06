@@ -324,7 +324,7 @@ async function runHealthCheck({ today = new Date().toISOString().slice(0, 10), d
     try {
       const [bookings, rateRows] = await Promise.all([
         getAll(
-          `SELECT total_price, platform, check_in, check_out, status
+          `SELECT total_price, commission, platform, check_in, check_out, status
              FROM bookings WHERE property_id = $1 AND check_out >= $2`,
           [property.id, today]
         ),

@@ -558,7 +558,7 @@ router.get('/:id/observed-markup', async (req, res) => {
 
   const dates = Object.keys(rates).sort();
   const bookings = await getAll(
-    `SELECT check_in, check_out, total_price, platform, status FROM bookings
+    `SELECT check_in, check_out, total_price, commission, platform, status FROM bookings
       WHERE property_id = $1 AND status = 'confirmed'
         AND check_out > $2 AND check_in <= $3`,
     [req.params.id, dates[0], dates[dates.length - 1]]

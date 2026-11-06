@@ -185,3 +185,108 @@ test('a single booking is never enough to call it a setting', () => {
   assert.equal(out.airbnb.confident, false, 'one booking is an anecdote');
   assert.equal(out.airbnb.markup, 14);
 });
+
+/* ---------------------------------------------------------------------- *
+ * The price sold, not the money received
+ *
+ * Booking.com was reported at +10.7% against a setting of 25%. The gap
+ * was a commission: `total_price` is what the channel paid out, and
+ * `commission-included` is what it kept. A markup divides the price the
+ * guest was charged by the base; dividing the payout by the base
+ * measures neither the markup nor the commission.
+ * ---------------------------------------------------------------------- */
+
+const sold = (o) => ({ status: 'confirmed', platform: 'Booking.com', ...o });
+
+test('a 25% markup paid out net of commission still reads as 25%', () => {
+  // Two nights at R1,000. Sold at R2,500, Booking kept R286, paid R2,214.
+  // Before this, the same row read +10.7% — the exact number on the
+  // Rates page that started this.
+  const out = observedMarkup({
+    rates: rate('2026-09-01', 5, 1000),
+    bookings: [sold({ check_in: '2026-09-01', check_out: '2026-09-03', total_price: 2214, commission: 286 })],
+  });
+  assert.equal(out.booking.markup, 25);
+});
+
+test('what the channel kept is reported beside the markup', () => {
+  const out = observedMarkup({
+    rates: rate('2026-09-01', 5, 1000),
+    bookings: [sold({ check_in: '2026-09-01', check_out: '2026-09-03', total_price: 2214, commission: 286 })],
+  });
+  // As a percentage of the price sold, which is how a commission is
+  // quoted and what the commission_booking setting means.
+  assert.equal(out.booking.keeps, 11.4);
+  assert.equal(out.booking.keeps_bookings, 1);
+});
+
+test('the figure says when it was reconstructed', () => {
+  // The difference between a reading and a reading plus an assumption,
+  // which the screen has to be able to state.
+  const withCommission = observedMarkup({
+    rates: rate('2026-09-01', 5, 1000),
+    bookings: [sold({ check_in: '2026-09-01', check_out: '2026-09-03', total_price: 2214, commission: 286 })],
+  });
+  const without = observedMarkup({
+    rates: rate('2026-09-01', 5, 1000),
+    bookings: [sold({ check_in: '2026-09-01', check_out: '2026-09-03', total_price: 2500 })],
+  });
+  assert.equal(withCommission.booking.reconstructed, true);
+  assert.equal(without.booking.reconstructed, false);
+  // Same markup either way — one channel deducts its fee, the other adds
+  // it on the guest's side, and both sold the night for R2,500.
+  assert.equal(without.booking.markup, 25);
+});
+
+test('no commission reported changes nothing', () => {
+  // "Did not say" must not become "took nothing". A channel that adds
+  // its fee to the guest reports no commission and is measured exactly
+  // as before.
+  const out = observedMarkup({
+    rates: rate('2026-09-01', 5, 1000),
+    bookings: [sold({ check_in: '2026-09-01', check_out: '2026-09-03', total_price: 2410, commission: 0 })],
+  });
+  assert.equal(out.booking.markup, 20.5);
+  assert.equal(out.booking.keeps, null);
+  assert.equal(out.booking.keeps_bookings, 0);
+});
+
+test('a commission is never averaged in as a zero', () => {
+  // One booking reported a commission and one did not. The median must
+  // be of the one that did, not of 11.4 and 0.
+  const out = observedMarkup({
+    rates: rate('2026-09-01', 10, 1000),
+    bookings: [
+      sold({ check_in: '2026-09-01', check_out: '2026-09-03', total_price: 2214, commission: 286 }),
+      sold({ check_in: '2026-09-05', check_out: '2026-09-07', total_price: 2500 }),
+    ],
+  });
+  assert.equal(out.booking.keeps, 11.4);
+  assert.equal(out.booking.keeps_bookings, 1);
+  assert.equal(out.booking.bookings, 2, 'both still count towards the markup');
+});
+
+test('a reconstructed price sold is still subject to the stale guard', () => {
+  // The rate has since been raised far above what the night sold for.
+  // Adding the commission back does not rescue it, and it must still be
+  // discarded rather than reported as a negative markup.
+  const out = observedMarkup({
+    rates: rate('2026-09-01', 5, 5000),
+    bookings: [sold({ check_in: '2026-09-01', check_out: '2026-09-03', total_price: 2214, commission: 286 })],
+  });
+  assert.equal(out.booking.markup, null);
+  assert.equal(out.booking.stale, 1);
+  assert.equal(out.booking.reconstructed, false, 'nothing usable was reconstructed');
+});
+
+test('a channel with nothing to say still has every field', () => {
+  // The caller must never have to check whether a key exists.
+  const out = observedMarkup({
+    rates: rate('2026-09-01', 5, 5000),
+    bookings: [sold({ check_in: '2026-09-01', check_out: '2026-09-03', total_price: 100 })],
+  });
+  assert.deepEqual(Object.keys(out.booking).sort(), [
+    'bookings', 'confident', 'high', 'keeps', 'keeps_bookings',
+    'low', 'markup', 'nights', 'reconstructed', 'stale',
+  ]);
+});

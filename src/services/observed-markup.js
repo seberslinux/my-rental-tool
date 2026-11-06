@@ -12,6 +12,35 @@
  * number from memory into a field that then quietly governs every price
  * comparison on the Rates page.
  *
+ * ## The numerator is the price sold, not the money received
+ *
+ * This measured `total_price / base` and reported Booking.com at +10.7%
+ * against a setting of 25%. The gap is a commission: `total_price` is
+ * Smoobu's `price`, and for a channel that collects from the guest that
+ * is the payout, with `commission-included` recording what the channel
+ * kept. A markup is added to the base for the guest; a commission is
+ * taken out of what reaches you. Dividing the second by the base
+ * measures neither.
+ *
+ * So the price sold is reconstructed — payout plus commission — and that
+ * is what the ratio uses. Where no commission was reported the two are
+ * the same number and nothing changes, which is why every existing
+ * expectation still holds.
+ *
+ * ## Two numbers, because they are two facts
+ *
+ *   markup   sold / base - 1      what the channel adds for the guest
+ *   keeps    commission / sold    what the channel takes before paying
+ *
+ * The second is reported beside the first because it is the one that can
+ * be checked against the `commission_*` setting, and because a markup
+ * that suddenly looks wrong is usually a commission in disguise.
+ *
+ * Both are still Smoobu's account of the transaction. Neither is a bank
+ * statement: a payout net of payment-processing fees, currency
+ * conversion or withheld VAT is smaller again, and nothing here can see
+ * that.
+ *
  * ## What this is not
  *
  * An estimate, and it says so. It is offered as "this is what your last
@@ -64,6 +93,22 @@ function median(values) {
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+/**
+ * What the guest was charged, as best it can be reconstructed.
+ *
+ * `total_price` plus whatever commission the channel reported keeping
+ * out of it. A booking with no commission recorded returns `total_price`
+ * unchanged — which is right for a channel that adds its fee on the
+ * guest's side rather than deducting it, and is the only honest answer
+ * when the field is simply absent.
+ */
+function soldPrice(booking) {
+  const paid = Number(booking.total_price);
+  if (!Number.isFinite(paid) || paid <= 0) return null;
+  const kept = Number(booking.commission);
+  return paid + (Number.isFinite(kept) && kept > 0 ? kept : 0);
+}
+
 /** Every night of a stay, check-out exclusive. */
 function nightsOf(booking) {
   const out = [];
@@ -110,11 +155,17 @@ function observedMarkup({ bookings = [], rates = {} } = {}) {
     }
     if (!complete) continue;
 
-    const paid = Number(b.total_price);
-    if (!Number.isFinite(paid) || paid <= 0) continue;
+    const sold = soldPrice(b);
+    if (sold === null) continue;
 
+    const kept = Number(b.commission);
     (samples[key] = samples[key] || []).push({
-      ratio: paid / base,
+      ratio: sold / base,
+      sold,
+      // Null rather than zero: "took nothing" and "did not say" are
+      // different facts, and a median over zeros would report the first
+      // while meaning the second.
+      kept: Number.isFinite(kept) && kept > 0 ? kept : null,
       // Kept for the caller to reject: see below.
       nights: nights.length,
       from: nights[0],
@@ -147,12 +198,27 @@ function observedMarkup({ bookings = [], rates = {} } = {}) {
         nights: 0,
         low: null,
         high: null,
+        keeps: null,
+        keeps_bookings: 0,
+        reconstructed: false,
       };
       continue;
     }
 
     const ratios = usable.map((r) => r.ratio);
     const mid = median(ratios);
+
+    /**
+     * What the channel took before paying, as a percentage of the price
+     * sold — the other half of the same transaction.
+     *
+     * Only from bookings that reported a commission. A booking that did
+     * not is evidence of nothing here, and averaging it in as zero would
+     * report a channel taking less than it does, which is the mistake
+     * the markup was already making in the other direction.
+     */
+    const paying = usable.filter((r) => r.kept !== null);
+    const keeps = paying.length ? median(paying.map((r) => r.kept / r.sold)) : null;
     const low = Math.round((Math.min(...ratios) - 1) * 1000) / 10;
     const high = Math.round((Math.max(...ratios) - 1) * 1000) / 10;
     out[key] = {
@@ -181,9 +247,18 @@ function observedMarkup({ bookings = [], rates = {} } = {}) {
       // anybody should paste into a field.
       low,
       high,
+      // What the channel keeps out of the price sold, to be read against
+      // the `commission_*` setting: measured rather than configured.
+      keeps: keeps === null ? null : Math.round(keeps * 1000) / 10,
+      keeps_bookings: paying.length,
+      // Whether the markup above was measured against a reconstructed
+      // price sold rather than against `total_price` as stored. The
+      // screen says so, because it is the difference between a reading
+      // and a reading plus an assumption.
+      reconstructed: paying.length > 0,
     };
   }
   return out;
 }
 
-module.exports = { observedMarkup, nightsOf, median, KEY_FOR, SPREAD_LIMIT };
+module.exports = { observedMarkup, soldPrice, nightsOf, median, KEY_FOR, SPREAD_LIMIT };
