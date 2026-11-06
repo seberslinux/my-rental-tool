@@ -17,7 +17,7 @@ const { occupancyByProperty } = require('../services/dashboard-calc');
 const { viewsFor, channelList } = require('../services/channel-price');
 // What Smoobu's markup has been doing, read off the bookings it made.
 // Offered as a suggestion; Smoobu remains the authority.
-const { observedMarkup } = require('../services/observed-markup');
+const { observedMarkup, measuredCommission } = require('../services/observed-markup');
 const { getUpcomingHolidays } = require('../services/holidays-store');
 const { getUpcomingSchoolHolidays } = require('../services/school-holidays');
 const { getApiKeyForProperty } = require('../services/api-key-resolver');
@@ -558,13 +558,37 @@ router.get('/:id/observed-markup', async (req, res) => {
 
   const dates = Object.keys(rates).sort();
   const bookings = await getAll(
-    `SELECT check_in, check_out, total_price, platform, status FROM bookings
+    `SELECT check_in, check_out, total_price, commission, platform, status FROM bookings
       WHERE property_id = $1 AND status = 'confirmed'
         AND check_out > $2 AND check_in <= $3`,
     [req.params.id, dates[0], dates[dates.length - 1]]
   );
 
-  res.json({ observed: observedMarkup({ bookings, rates }), rated_nights: dates.length });
+  /**
+   * The commission is measured over every booking, not only the ones
+   * with a synced rate.
+   *
+   * The window above exists because the markup needs a base and
+   * `daily_rates` only runs 180 days forward. The commission needs no
+   * base — it is what the channel kept out of what the guest paid, both
+   * on the same row — so restricting it to that window would throw away
+   * most of the evidence for no reason.
+   */
+  const everyBooking = await getAll(
+    `SELECT total_price, commission, platform, status FROM bookings
+      WHERE property_id = $1 AND status = 'confirmed'`,
+    [req.params.id]
+  );
+
+  // Two figures, and only one of them is a measurement. The markup
+  // divides by today's rate, so a night repriced after it sold moves it;
+  // the commission is two numbers on the same booking row and cannot
+  // drift. The screen has to be able to say which is which.
+  res.json({
+    observed: observedMarkup({ bookings, rates }),
+    commissions: measuredCommission(everyBooking),
+    rated_nights: dates.length,
+  });
 });
 
 router.get('/:id/rate-strategies', async (req, res) => {
