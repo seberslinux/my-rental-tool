@@ -836,6 +836,34 @@ async function runMigrations() {
     )
   `);
 
+  /**
+   * Put the nights back on bookings that arrived by webhook.
+   *
+   * The webhook's insert never listed `length_of_stay` or
+   * `price_per_night`, so they took their column defaults of 1 and 0.
+   * Every booking that came in by push is recorded as a one-night stay
+   * whatever its dates — ten- and eleven-night stays among them — and
+   * `length_of_stay || 1` is the night count in seven places across
+   * analytics as well as in revenue's pro-rata split.
+   *
+   * Both are derived from columns that are already correct, so they can
+   * simply be recomputed. Only rows that disagree are touched, which
+   * makes this a no-op on every run after the first.
+   */
+  try {
+    const { rowCount } = await pool.query(`
+      UPDATE bookings SET
+        length_of_stay = GREATEST(1, (check_out::date - check_in::date)),
+        price_per_night = ROUND((total_price / GREATEST(1, (check_out::date - check_in::date)))::numeric, 2)
+      WHERE check_in ~ '^\\d{4}-\\d{2}-\\d{2}'
+        AND check_out ~ '^\\d{4}-\\d{2}-\\d{2}'
+        AND length_of_stay IS DISTINCT FROM GREATEST(1, (check_out::date - check_in::date))
+    `);
+    if (rowCount > 0) console.log(`Recomputed nights on ${rowCount} booking(s).`);
+  } catch (e) {
+    console.error(`Could not recompute booking nights: ${e.message}`);
+  }
+
   console.log('Database migrations complete.');
 }
 

@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const { getAll, getOne, run, transaction } = require('../db/database');
 const smoobu = require('../services/smoobu');
+// One mapping and one write for a booking, shared with the webhook.
+const { mapSmoobuBooking } = require('../services/smoobu-mapper');
+const { upsertBooking } = require('../services/booking-store');
 const { detectCurrency } = require('../services/currency-detect');
 const { bulkConvert, getDisplayCurrency } = require('../services/exchange-rates');
 const { scopeProperties, enforcePropertyScope, requireRole, denyIfOutOfScope } = require('../middleware/auth');
@@ -155,41 +158,13 @@ router.post('/reset-and-resync', requireRole('admin'), async (req, res) => {
     const { detectCurrency } = require('../services/currency-detect');
     await transaction(async (client) => {
       for (const b of allBookings) {
-        const platform = b['channel']?.name || b.channel || '';
-        const checkIn = b.arrival || b.arrivalDate;
-        const checkOut = b.departure || b.departureDate;
-        const createdAt = b['created-at'] || b.createdAt || '';
-        const modifiedAt = b['modified-at'] || b.modifiedAt || '';
-        const los = Math.max(1, Math.round((new Date(checkOut) - new Date(checkIn)) / (24 * 60 * 60 * 1000)));
-        const price = b.price || 0;
-        const ppn = los > 0 ? Math.round((price / los) * 100) / 100 : 0;
-        const leadTime = createdAt ? Math.max(0, Math.round((new Date(checkIn) - new Date(createdAt)) / (24 * 60 * 60 * 1000))) : 0;
-        const commission = b['commission-included'] || b.commissionIncluded || 0;
-        const language = b.language || '';
-        const children = b.children || 0;
-        const phone = b.phone || b['guest-phone'] || b.guestPhone || '';
-        const guestCountry = countryFromPhone(phone) || '';
-        const aptId = b['apartment']?.id || b.apartmentId;
-        const currency = detectCurrency(b) || propCurrencyMap[aptId] || 'ZAR';
-
-        await client.query(
-          `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, commission, language, children, guest_country, currency, modified_at)
-           VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-           ON CONFLICT(smoobu_id) DO UPDATE SET
-             guest_name = CASE WHEN EXCLUDED.guest_name = '' THEN bookings.guest_name ELSE EXCLUDED.guest_name END,
-             check_in = EXCLUDED.check_in, check_out = EXCLUDED.check_out,
-             platform = EXCLUDED.platform, total_price = EXCLUDED.total_price,
-             status = EXCLUDED.status, num_guests = EXCLUDED.num_guests,
-             created_at = EXCLUDED.created_at, lead_time_days = EXCLUDED.lead_time_days,
-             length_of_stay = EXCLUDED.length_of_stay, price_per_night = EXCLUDED.price_per_night,
-             commission = EXCLUDED.commission, language = EXCLUDED.language,
-             children = EXCLUDED.children, guest_country = EXCLUDED.guest_country,
-             currency = EXCLUDED.currency, modified_at = EXCLUDED.modified_at`,
-          [b.id, aptId, b['guest-name'] || b.guestName || '', checkIn, checkOut, platform, price,
-           b.type === 'cancellation' ? 'cancelled' : 'confirmed',
-           b['adults'] || b.adults || 1, createdAt, leadTime, los, ppn,
-           commission, language, children, guestCountry, currency, modifiedAt]
-        );
+        // Through the mapper and the shared write. These two paths
+        // each carried their own copy of the mapping, and neither
+        // wrote raw_payload — while reset-and-resync opens with
+        // DELETE FROM bookings, so a resync erased every verbatim
+        // payload the webhook had stored. That is the one field that
+        // cannot be recovered later: Smoobu serves a limited window.
+        await upsertBooking((sql, params) => client.query(sql, params), mapSmoobuBooking(b, { propertyCurrencyBySmoobuId: propCurrencyMap }));
       }
     });
 
@@ -221,50 +196,13 @@ router.post('/sync-history', async (req, res) => {
 
     await transaction(async (client) => {
       for (const b of allBookings) {
-        const platform = b['channel']?.name || b.channel || '';
-        const checkIn = b.arrival || b.arrivalDate;
-        const checkOut = b.departure || b.departureDate;
-        const createdAt = b['created-at'] || b.createdAt || '';
-        const modifiedAt = b['modified-at'] || b.modifiedAt || '';
-        const los = Math.max(1, Math.round((new Date(checkOut) - new Date(checkIn)) / (24 * 60 * 60 * 1000)));
-        const price = b.price || 0;
-        const ppn = los > 0 ? Math.round((price / los) * 100) / 100 : 0;
-        const leadTime = createdAt ? Math.max(0, Math.round((new Date(checkIn) - new Date(createdAt)) / (24 * 60 * 60 * 1000))) : 0;
-
-        // New fields
-        const commission = b['commission-included'] || b.commissionIncluded || 0;
-        const language = b.language || '';
-        const children = b.children || 0;
-        const phone = b.phone || b['guest-phone'] || b.guestPhone || '';
-        const guestCountry = countryFromPhone(phone) || '';
-        const aptId = b['apartment']?.id || b.apartmentId;
-        const currency = detectCurrency(b) || propCurrencyMap[aptId] || 'ZAR';
-
-        await client.query(
-          `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status, num_guests, created_at, lead_time_days, length_of_stay, price_per_night, commission, language, children, guest_country, currency, modified_at)
-           VALUES ($1, (SELECT id FROM properties WHERE smoobu_id = $2), $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
-           ON CONFLICT(smoobu_id) DO UPDATE SET
-             guest_name = CASE WHEN EXCLUDED.guest_name = '' THEN bookings.guest_name ELSE EXCLUDED.guest_name END, check_in = EXCLUDED.check_in,
-             check_out = EXCLUDED.check_out, platform = EXCLUDED.platform,
-             total_price = EXCLUDED.total_price, status = EXCLUDED.status,
-             num_guests = EXCLUDED.num_guests, created_at = EXCLUDED.created_at,
-             lead_time_days = EXCLUDED.lead_time_days, length_of_stay = EXCLUDED.length_of_stay,
-             price_per_night = EXCLUDED.price_per_night, commission = EXCLUDED.commission,
-             language = EXCLUDED.language, children = EXCLUDED.children,
-             guest_country = EXCLUDED.guest_country, currency = EXCLUDED.currency,
-             modified_at = EXCLUDED.modified_at`,
-          [
-            b.id,
-            aptId,
-            b['guest-name'] || b.guestName || '',
-            checkIn, checkOut, platform, price,
-            b.type === 'cancellation' ? 'cancelled' : 'confirmed',
-            b['adults'] || b.adults || 1,
-            createdAt, leadTime, los, ppn,
-            commission, language, children, guestCountry, currency,
-            modifiedAt
-          ]
-        );
+        // Through the mapper and the shared write. These two paths
+        // each carried their own copy of the mapping, and neither
+        // wrote raw_payload — while reset-and-resync opens with
+        // DELETE FROM bookings, so a resync erased every verbatim
+        // payload the webhook had stored. That is the one field that
+        // cannot be recovered later: Smoobu serves a limited window.
+        await upsertBooking((sql, params) => client.query(sql, params), mapSmoobuBooking(b, { propertyCurrencyBySmoobuId: propCurrencyMap }));
       }
     });
 
