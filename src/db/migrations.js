@@ -604,6 +604,22 @@ async function runMigrations() {
     ['guest_markup_airbnb', 'REAL DEFAULT 0'],
     ['guest_markup_booking', 'REAL DEFAULT 0'],
     ['guest_markup_vrbo', 'REAL DEFAULT 0'],
+    /**
+     * The nightly rate this listing must never go under, and never go
+     * over, in rand.
+     *
+     * Not a price and not a strategy — a pair of tripwires for the
+     * health check. A base of R90 on The loft sold Booking.com nights
+     * for R113 for four months and nothing anywhere said so, because
+     * nothing knew what "too cheap" meant for that flat. This is where
+     * somebody says.
+     *
+     * Zero means not set, which the check reports as unchecked rather
+     * than as passing. A default floor would be a number nobody chose
+     * governing an alert they would learn to ignore.
+     */
+    ['price_floor', 'REAL DEFAULT 0'],
+    ['price_ceiling', 'REAL DEFAULT 0'],
     ['bank_charge_airbnb', 'REAL DEFAULT 0'],
     ['bank_charge_booking', 'REAL DEFAULT 2.1'],
     ['bank_charge_vrbo', 'REAL DEFAULT 0'],
@@ -801,6 +817,24 @@ async function runMigrations() {
   } catch (e) {
     console.error(`Could not enforce one live job per cleaner per day: ${e.message}`);
   }
+
+  /**
+   * The last health check per listing.
+   *
+   * One row per property, overwritten each run. There is no history
+   * here on purpose: the question is "is anything wrong now", and a
+   * table of every morning's answer for two flats would be a log nobody
+   * reads growing forever. If a trend ever matters it can be built from
+   * the notifications, which are kept.
+   */
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS channel_health (
+      property_id INTEGER PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
+      ran_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      status TEXT NOT NULL,
+      report JSONB NOT NULL
+    )
+  `);
 
   console.log('Database migrations complete.');
 }
