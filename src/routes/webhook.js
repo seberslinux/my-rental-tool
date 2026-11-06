@@ -116,7 +116,11 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
         title: `New booking — ${d.where}`,
         body: `${d.who}, ${d.line}.`,
         propertyId: property.id,
-        link: '/',
+        // Straight to the stay it is about. This was '/', so tapping
+        // "New booking" opened the app at Home and left you to go and
+        // find the thing it had just told you about. Smoobu's id,
+        // because the local row id is not stable across a resync.
+        link: `/booking/${booking.smoobu_id}`,
       });
 
     } else if (action === 'cancelReservation' || action === 'cancel') {
@@ -144,6 +148,9 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
           title: `Booking cancelled — ${d.where}`,
           body: `${d.who}, ${d.line}. Those nights are free again.`,
           propertyId: property.id,
+          // Home, not the booking: a cancelled stay is filtered out of
+          // the calendar, so a link to it would open the app on a sheet
+          // that cannot be drawn.
           link: '/',
         });
       }
@@ -170,7 +177,7 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
           title: `Booking changed — ${d.where}`,
           body: `${d.who}, now ${d.line}.`,
           propertyId: property.id,
-          link: '/',
+          link: `/booking/${smoobuId}`,
         });
       }
     }
