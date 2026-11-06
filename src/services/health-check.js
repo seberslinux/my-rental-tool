@@ -240,9 +240,33 @@ function markupFindings(property, commissions = {}) {
 
     const markup = Number(property[`guest_markup_${c.key}`]) || 0;
     const seen = commissions[c.key];
-    const take = seen && seen.commission > 0 ? seen.commission : configuredTake(property, c.key);
-    const source = seen && seen.commission > 0 ?
-      `measured from ${seen.bookings} booking${seen.bookings === 1 ? '' : 's'}` :
+
+    /**
+     * A measured commission replaces the commission, not the whole take.
+     *
+     * Smoobu's `commission-included` is the commission on its own. The
+     * channel's invoice then adds a payments service fee and charges VAT
+     * on the two together, so the commission is about three quarters of
+     * what actually leaves:
+     *
+     *   room sales            9,904.50
+     *   commission  15.00%    1,485.68
+     *   payments fee 2.10%      207.99
+     *   VAT 15% on the two      254.05
+     *   total               = 1,947.72   = 19.67% of sales
+     *
+     * Reading the measured 15% as the take would put break-even at
+     * 17.6% instead of 24.5% and call a 25% markup comfortable when it
+     * is half a point clear. So the measurement is substituted for the
+     * commission rate and the same fee stack composes on top of it —
+     * which reproduces the invoice above to the cent.
+     */
+    const measured = seen && seen.commission > 0;
+    const take = measured ?
+      configuredTake({ ...property, [`commission_${c.key}`]: seen.commission }, c.key) :
+      configuredTake(property, c.key);
+    const source = measured ?
+      `commission measured from ${seen.bookings} booking${seen.bookings === 1 ? '' : 's'}, fee and VAT from settings` :
       'from the fee settings';
 
     if (!(take > 0)) {
@@ -285,12 +309,13 @@ function markupFindings(property, commissions = {}) {
      * the markup it demands — so a listing can read comfortable while
      * paying out under its base.
      *
-     * Only flagged where there is a fee for VAT to apply to, and only
-     * when the figure came from the settings: a commission measured off
-     * the booking rows is what the channel actually kept, VAT included.
+     * Flagged whether or not the commission was measured. Smoobu's
+     * figure is the commission alone — the invoice carries VAT as its
+     * own line, on the commission and the payments fee together — so a
+     * measurement never has VAT inside it to find.
      */
     const vat = effectiveVat(property, c.key);
-    if (vat.rate === 0 && source === 'from the fee settings') {
+    if (vat.rate === 0) {
       // Any rate this property records elsewhere is the best available
       // guess at what this channel's would be. Where it records none,
       // the absence is reported without inventing a number.

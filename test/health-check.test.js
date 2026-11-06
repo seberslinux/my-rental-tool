@@ -269,13 +269,18 @@ test('a markup only just clearing it is amber', () => {
   assert.match(found.detail, /break-even of 20\.6%/);
 });
 
-test('a measured commission beats the settings, and says so', () => {
-  // Measured off real booking rows, which cannot be bent by a reprice.
+test('a measured commission replaces the rate, not the whole take', () => {
+  // Smoobu's commission-included is the commission alone. The invoice
+  // then adds a payments fee and charges VAT on the two together, so
+  // reading the measurement as the take understates it by about a
+  // quarter. 25% measured plus the 2.1% fee is a 27.1% take, which
+  // needs 37.2% — not the 33.3% the bare figure would ask for.
   const found = markupFindings(settings, { booking: { commission: 25, bookings: 4 } })
     .find((f) => f.key === 'markup_short_booking');
   assert.equal(found.severity, 'red');
-  assert.match(found.detail, /keeps 25% \(measured from 4 bookings\)/);
-  assert.match(found.detail, /needs a markup of 33\.3%/);
+  assert.match(found.detail, /keeps 27\.1%/);
+  assert.match(found.detail, /commission measured from 4 bookings, fee and VAT from settings/);
+  assert.match(found.detail, /needs a markup of 37\.2%/);
 });
 
 test('a channel with no commission recorded is reported, not passed', () => {
@@ -405,13 +410,76 @@ test('no rate anywhere means no invented number', () => {
   assert.ok(!/would be/.test(found.detail), found.detail);
 });
 
-test('a measured commission is not asked about VAT', () => {
-  // What the channel kept off the booking row already includes its VAT.
-  // Flagging it would be asking somebody to add a rate to a number that
-  // has it in already.
+test('a measured commission is still asked about VAT', () => {
+  // Smoobu's figure is the commission on its own — the channel's
+  // invoice carries VAT as a separate line, on the commission and the
+  // payments fee together — so a measurement never has VAT inside it to
+  // find, and a missing rate still understates the take.
   const keys = markupFindings(
     { ...settings, vat_rate: 0, vat_booking: 0 },
-    { booking: { commission: 19.7, bookings: 5 } }
+    { booking: { commission: 15, bookings: 5 } }
   ).map((f) => f.key);
-  assert.equal(keys.includes('no_vat_booking'), false);
+  assert.equal(keys.includes('no_vat_booking'), true);
+});
+
+/* ---------------------------------------------------------------------- *
+ * Against the real invoices
+ *
+ * Two Booking.com invoices, reproduced from room sales. Everything
+ * above is arithmetic about a model; this is the model against what the
+ * channel actually billed. If these drift, the model is wrong and not
+ * the invoice.
+ * ---------------------------------------------------------------------- */
+
+/** Booking.com's own figures, to the cent. */
+const INVOICES = [
+  {
+    who: 'The loft, September 2026', sales: 9904.50,
+    commission: 1485.68, fee: 207.99, vat: 254.05, total: 1947.72,
+    commission_pct: 15, fee_pct: 2.1,
+  },
+  {
+    who: 'Hill Top Lodge, October 2026', sales: 5198.88,
+    commission: 779.83, fee: 138.81, vat: 137.79, total: 1056.43,
+    commission_pct: 15, fee_pct: 2.67,
+  },
+];
+
+for (const inv of INVOICES) {
+  test(`the fee model reproduces the invoice for ${inv.who}`, () => {
+    const property = {
+      commission_booking: inv.commission_pct,
+      bank_charge_booking: inv.fee_pct,
+      vat_rate: 15,
+    };
+    const take = configuredTake(property, 'booking');
+    const billed = inv.total / inv.sales * 100;
+    // Within a tenth of a point: configuredTake reports to one decimal
+    // and the invoice's own lines are rounded to the cent.
+    assert.ok(Math.abs(take - billed) < 0.1,
+      `model says ${take}% of sales, the invoice billed ${billed.toFixed(2)}%`);
+  });
+}
+
+test('VAT is charged on the commission and the payments fee together', () => {
+  // Straight off the invoice: "15% VAT on 918.64 ZAR", and 918.64 is
+  // 779.83 + 138.81. Not on room sales, which is the reading that would
+  // have made the take look like 32%.
+  const inv = INVOICES[1];
+  assert.equal(Math.round((inv.commission + inv.fee) * 100) / 100, 918.64);
+  assert.ok(Math.abs((inv.commission + inv.fee) * 0.15 - inv.vat) < 0.01);
+  assert.ok(Math.abs(inv.commission + inv.fee + inv.vat - inv.total) < 0.01);
+});
+
+test('a 25% markup is under water at the Lodge\'s billed rate', () => {
+  // The invoice took 20.32% of room sales, which needs 25.5%. This is
+  // the case the check exists for, and it is not hypothetical.
+  const inv = INVOICES[1];
+  const property = {
+    name: 'Hill Top Lodge', guest_markup_booking: 25,
+    commission_booking: inv.commission_pct, bank_charge_booking: inv.fee_pct, vat_rate: 15,
+  };
+  const found = markupFindings(property).find((f) => f.key === 'markup_short_booking');
+  assert.equal(found.severity, 'red');
+  assert.match(found.detail, /comes back at 99\.6% of base/);
 });
