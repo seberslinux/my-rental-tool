@@ -42,7 +42,8 @@
  */
 
 const { addDays, daysBetween } = require('./dashboard-calc');
-const { guestPrice, CHANNELS } = require('./channel-price');
+const { guestPrice, netForChannel, CHANNELS } = require('./channel-price');
+const { requiredMarkup } = require('./observed-markup');
 const { normalizeRate } = require('./rate-sync');
 
 /**
@@ -61,7 +62,52 @@ const RED_DAYS = 300;
 /** How many example dates a finding carries. The count is the fact; the dates are so somebody can go and look. */
 const EXAMPLES = 5;
 
+/**
+ * A notional base to derive percentages from, and the headroom a markup
+ * should have over break-even.
+ *
+ * The probe is large because `netForChannel` rounds to the rand, and a
+ * probe of 100 would turn rounding into a tenth of a percent.
+ *
+ * Two points of headroom, not zero. A markup exactly at break-even
+ * returns the base and nothing for the cleaning, the booking fee or a
+ * commission that moves a little — and channel commissions do move.
+ */
+const BASE_PROBE = 100000;
+const HEADROOM_POINTS = 2;
+
 const SEVERITY_ORDER = { green: 0, amber: 1, red: 2 };
+
+/**
+ * Where a property records its listing on each channel. The Booking.com
+ * id column is `booking_id_ext`, not `booking_id`, which is why this is
+ * a table rather than a string built from the key.
+ */
+const LISTING_COLUMNS = {
+  airbnb: ['airbnb_url', 'airbnb_id'],
+  booking: ['booking_url', 'booking_id_ext'],
+  vrbo: ['vrbo_url', 'vrbo_id'],
+};
+
+/** Whether this property sells on a channel at all. */
+function sellsOn(property, key) {
+  if (Number(property[`guest_markup_${key}`]) > 0) return true;
+  return (LISTING_COLUMNS[key] || []).some((col) => String(property[col] || '').trim() !== '');
+}
+
+/**
+ * What the fee settings say a channel takes out of the price sold.
+ *
+ * Through `netForChannel` so it is the same stack of commission, bank
+ * charge and VAT that every net revenue figure in the app uses — one
+ * definition, not a second one that can disagree with it.
+ */
+function configuredTake(property, key) {
+  const sold = guestPrice(BASE_PROBE, 100);
+  const payout = netForChannel(sold, property, key);
+  if (!(sold > 0)) return 0;
+  return Math.round((1 - payout / sold) * 1000) / 10;
+}
 
 /** The worse of two colours, so a roll-up cannot be greener than its parts. */
 function worse(a, b) {
@@ -143,6 +189,70 @@ function effectiveMarkups(property = {}, observed = {}) {
   return out;
 }
 
+/**
+ * Whether each channel's markup covers what that channel takes.
+ *
+ * The one check here that needs no rates and no Smoobu call, so it runs
+ * even on a morning when the fetch failed. It is also the sharpest,
+ * because it is not an estimate: given a commission, the markup that
+ * returns the base is arithmetic.
+ *
+ * The commission is measured from real bookings where there are any —
+ * `commission / total_price` on the same row, which has no base in it
+ * to go stale — and falls back to what the fee settings model. Which of
+ * the two was used is said out loud, because a check against a number
+ * somebody typed is a weaker check than one against the bookings.
+ */
+function markupFindings(property, commissions = {}) {
+  const findings = [];
+  const name = property.name || `Property ${property.id}`;
+
+  for (const c of CHANNELS) {
+    if (!sellsOn(property, c.key)) continue;
+
+    const markup = Number(property[`guest_markup_${c.key}`]) || 0;
+    const seen = commissions[c.key];
+    const take = seen && seen.commission > 0 ? seen.commission : configuredTake(property, c.key);
+    const source = seen && seen.commission > 0 ?
+      `measured from ${seen.bookings} booking${seen.bookings === 1 ? '' : 's'}` :
+      'from the fee settings';
+
+    if (!(take > 0)) {
+      // Nothing to clear, so nothing to check. Said rather than passed:
+      // a channel recorded as taking nothing is almost always a channel
+      // nobody has told the app about, and Airbnb really does charge.
+      findings.push(finding(`no_commission_${c.key}`, 'amber',
+        `No commission recorded for ${c.label} at ${name}`,
+        `Without it nothing can say whether the ${markup}% markup covers what ${c.label} keeps.`));
+      continue;
+    }
+
+    const need = requiredMarkup(take);
+    if (need === null) continue;
+
+    if (markup <= 0) {
+      findings.push(finding(`no_markup_${c.key}`, 'amber',
+        `No markup recorded for ${c.label} at ${name}`,
+        `${c.label} keeps ${take}% (${source}), so the markup needs to be at least ${need}% for the payout to reach your base.`));
+      continue;
+    }
+
+    if (markup < need) {
+      findings.push(finding(`markup_short_${c.key}`, 'red',
+        `${c.label} pays out under your base at ${name}`,
+        `${c.label} keeps ${take}% (${source}), which needs a markup of ${need}%. It is set to ${markup}%, ` +
+        `so every night comes back at ${Math.round(((1 + markup / 100) * (1 - take / 100)) * 1000) / 10}% of base.`));
+    } else if (markup - need < HEADROOM_POINTS) {
+      findings.push(finding(`markup_tight_${c.key}`, 'amber',
+        `${c.label} barely covers its commission at ${name}`,
+        `Set to ${markup}% against a break-even of ${need}% (${c.label} keeps ${take}%, ${source}). ` +
+        'A commission that moves a point puts it under water.'));
+    }
+  }
+
+  return findings;
+}
+
 /** A finding, with its examples trimmed and its count kept whole. */
 function finding(key, severity, title, detail, dates = []) {
   return {
@@ -162,8 +272,12 @@ function finding(key, severity, title, detail, dates = []) {
  * `observedMarkup`'s output for this property, and `today` is passed in
  * rather than read from the clock so the result is a calculation.
  */
-function checkProperty({ property, rates, observed = {}, today, days = TARGET_DAYS, error = null }) {
+function checkProperty({ property, rates, observed = {}, commissions = {}, today, days = TARGET_DAYS, error = null }) {
   const name = property.name || `Property ${property.id}`;
+
+  // Needs no rates, so it survives a failed fetch — and it is the check
+  // most likely to be the reason money is going missing.
+  const margins = markupFindings(property, commissions);
 
   // A failed fetch is a red, never a green with nothing in it. Rates
   // failed silently for months behind a sync that reported success, and
@@ -171,13 +285,14 @@ function checkProperty({ property, rates, observed = {}, today, days = TARGET_DA
   if (error) {
     const f = finding('fetch_failed', 'red',
       `Could not read ${name}'s rates from Smoobu`,
-      `${error}. Nothing below has been checked.`);
-    return { property_id: property.id, property: name, status: 'red', horizon: null, findings: [f] };
+      `${error}. No prices could be checked — the channel settings below still were.`);
+    const all = [f, ...margins];
+    return { property_id: property.id, property: name, status: statusOf(all), horizon: null, findings: all };
   }
 
   const byDate = readRates(rates);
   const horizon = horizonFrom(byDate, today, days);
-  const findings = [];
+  const findings = [...margins];
 
   if (horizon.days < RED_DAYS) {
     findings.push(finding('horizon', 'red',
@@ -271,6 +386,7 @@ function rollUp(results = []) {
 
 module.exports = {
   checkProperty, rollUp, horizonFrom, effectiveMarkups, readRates, statusOf, worse,
+  markupFindings, configuredTake, sellsOn, HEADROOM_POINTS,
   TARGET_DAYS, RED_DAYS,
 };
 
@@ -286,7 +402,7 @@ module.exports = {
 const smoobu = require('./smoobu');
 const { getAll, getOne, run } = require('../db/database');
 const { getApiKeyForProperty } = require('./api-key-resolver');
-const { observedMarkup } = require('./observed-markup');
+const { observedMarkup, measuredCommission } = require('./observed-markup');
 const { notify } = require('./notify');
 
 /**
@@ -321,10 +437,11 @@ async function runHealthCheck({ today = new Date().toISOString().slice(0, 10), d
     // listing with no synced rates has nothing to observe, and that is
     // not a reason to fail the check.
     let observed = {};
+    let commissions = {};
     try {
       const [bookings, rateRows] = await Promise.all([
         getAll(
-          `SELECT total_price, platform, check_in, check_out, status
+          `SELECT total_price, commission, platform, check_in, check_out, status
              FROM bookings WHERE property_id = $1 AND check_out >= $2`,
           [property.id, today]
         ),
@@ -333,11 +450,12 @@ async function runHealthCheck({ today = new Date().toISOString().slice(0, 10), d
       const byDate = {};
       for (const r of rateRows) byDate[String(r.date).slice(0, 10)] = Number(r.price);
       observed = observedMarkup({ bookings, rates: byDate });
+      commissions = measuredCommission(bookings);
     } catch (err) {
       console.error(`Observed markup unavailable for ${property.name}: ${err.message}`);
     }
 
-    const result = checkProperty({ property, rates, observed, today, days, error });
+    const result = checkProperty({ property, rates, observed, commissions, today, days, error });
     results.push(result);
 
     await run(

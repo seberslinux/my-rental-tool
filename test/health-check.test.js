@@ -171,13 +171,21 @@ test('with no markup to use, the channel is simply not checked', () => {
 
 // --- failure is not health ----------------------------------------------
 
-test('a fetch that failed is red, and says nothing else was checked', () => {
+test('a fetch that failed is red, and no price is judged without prices', () => {
   // Rates failed silently for months behind a sync reporting success. A
   // health check that returns green on no data is the same bug.
+  //
+  // The channel settings are checked anyway — they need no rates — so
+  // what this pins is that nothing requiring a price was judged, and
+  // that the failure itself is red.
   const r = checkProperty({ property: lodge, rates: null, today: TODAY, error: '401 Unauthorized' });
   assert.equal(r.status, 'red');
-  assert.equal(r.findings.length, 1);
-  assert.match(r.findings[0].detail, /Nothing below has been checked/);
+  const fetch = r.findings.find((f) => f.key === 'fetch_failed');
+  assert.equal(fetch.severity, 'red');
+  assert.match(fetch.detail, /No prices could be checked/);
+  for (const key of ['horizon', 'below_floor', 'above_ceiling']) {
+    assert.equal(r.findings.find((f) => f.key === key), undefined, `${key} was not judged`);
+  }
 });
 
 // --- the roll-up ---------------------------------------------------------
@@ -193,8 +201,109 @@ test('nothing to check is green rather than undefined', () => {
 });
 
 test('a healthy listing has nothing to say', () => {
-  const property = { ...lodge, price_ceiling: 6000, guest_markup_booking: 25 };
+  // Complete settings: a markup with no commission beside it is not a
+  // healthy listing, it is one nothing can check — which is its own
+  // finding now.
+  const property = {
+    ...lodge, price_ceiling: 6000,
+    guest_markup_booking: 25, commission_booking: 15, bank_charge_booking: 2.1,
+  };
   const r = checkProperty({ property, rates: priced(TARGET_DAYS, 3000), today: TODAY });
   assert.equal(r.status, 'green');
   assert.deepEqual(r.findings, []);
+});
+
+/* ---------------------------------------------------------------------- *
+ * Does the markup cover what the channel takes
+ *
+ * The only check here that needs no rates, and the only one that is
+ * arithmetic rather than inference: given a commission, the markup that
+ * returns your base is not a matter of opinion.
+ * ---------------------------------------------------------------------- */
+
+const { markupFindings, configuredTake } = require('../src/services/health-check');
+
+/** The Lodge's real settings. */
+const settings = {
+  id: 1, name: 'Hill Top Lodge',
+  guest_markup_airbnb: 20.5, guest_markup_booking: 25, guest_markup_vrbo: 0,
+  commission_airbnb: 12, commission_booking: 15, commission_vrbo: 8,
+  bank_charge_booking: 2.1,
+};
+
+test('commission and bank charge together are what must be covered', () => {
+  // 15% commission plus a 2.1% bank charge is 17.08%, not 15%. Checking
+  // the markup against the commission alone would pass a listing that
+  // pays out under its base once the bank takes its cut.
+  assert.equal(configuredTake(settings, 'booking'), 17.1);
+});
+
+test('25% over a 17.1% take is clear, and says nothing', () => {
+  const found = markupFindings(settings).filter((f) => f.key.includes('booking'));
+  assert.deepEqual(found, []);
+});
+
+test('a markup below break-even is red, with what it actually returns', () => {
+  // The intuitive mistake: markup set equal to the commission. 17% on
+  // top of a 17.1% take pays out 97% of base — every single night.
+  const found = markupFindings({ ...settings, guest_markup_booking: 17 })
+    .find((f) => f.key === 'markup_short_booking');
+  assert.equal(found.severity, 'red');
+  assert.match(found.title, /Booking\.com pays out under your base/);
+  assert.match(found.detail, /needs a markup of 20\.6%/);
+  assert.match(found.detail, /comes back at 97% of base/);
+});
+
+test('a markup only just clearing it is amber', () => {
+  // Break-even is 20.6%. At 21% a commission moving one point puts it
+  // under water, and channel commissions move.
+  const found = markupFindings({ ...settings, guest_markup_booking: 21 })
+    .find((f) => f.key === 'markup_tight_booking');
+  assert.equal(found.severity, 'amber');
+  assert.match(found.detail, /break-even of 20\.6%/);
+});
+
+test('a measured commission beats the settings, and says so', () => {
+  // Measured off real booking rows, which cannot be bent by a reprice.
+  const found = markupFindings(settings, { booking: { commission: 25, bookings: 4 } })
+    .find((f) => f.key === 'markup_short_booking');
+  assert.equal(found.severity, 'red');
+  assert.match(found.detail, /keeps 25% \(measured from 4 bookings\)/);
+  assert.match(found.detail, /needs a markup of 33\.3%/);
+});
+
+test('a channel with no commission recorded is reported, not passed', () => {
+  // The Lodge really does have commission_airbnb = 0 in production,
+  // while the loft records 18. One of the two is wrong and neither says.
+  const found = markupFindings({ ...settings, commission_airbnb: 0 })
+    .find((f) => f.key === 'no_commission_airbnb');
+  assert.equal(found.severity, 'amber');
+  assert.match(found.detail, /whether the 20\.5% markup covers/);
+});
+
+test('a channel the property does not sell on is not mentioned', () => {
+  // VRBO has no markup and no listing on either property. A permanent
+  // amber about a channel nobody uses is how a card gets ignored.
+  const keys = markupFindings(settings).map((f) => f.key);
+  assert.equal(keys.filter((k) => k.includes('vrbo')).length, 0);
+});
+
+test('a channel with a listing but no markup is mentioned', () => {
+  const found = markupFindings({ ...settings, vrbo_url: 'https://vrbo.example/123' })
+    .find((f) => f.key === 'no_markup_vrbo');
+  assert.equal(found.severity, 'amber');
+  assert.match(found.detail, /at least 8\.7%/);
+});
+
+test('the settings are still checked on a morning Smoobu could not be read', () => {
+  // It needs no rates, and it is the check most likely to be the reason
+  // money is going missing. A failed fetch must not hide it.
+  const r = checkProperty({
+    property: { ...settings, guest_markup_booking: 17, price_floor: 1500 },
+    rates: null, today: TODAY, error: '401 Unauthorized',
+  });
+  assert.equal(r.status, 'red');
+  assert.ok(r.findings.find((f) => f.key === 'fetch_failed'));
+  assert.ok(r.findings.find((f) => f.key === 'markup_short_booking'),
+    'the channel settings were checked anyway');
 });
