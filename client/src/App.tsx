@@ -57,6 +57,24 @@ const tabForPath = (pathname: string) => {
   const hit = Object.keys(TAB_PATHS).find((tab) => TAB_PATHS[tab] === pathname);
   return hit || 'home';
 };
+
+/**
+ * A link to one booking.
+ *
+ * `/booking/12345`, where the number is Smoobu's id — the one every
+ * other table keys on, and the only id the webhook has at the moment it
+ * sends the notification. The local row id is not stable: the sync
+ * deletes and re-inserts.
+ *
+ * The point of a notification over a message is that it lands you where
+ * you can act on it. "New booking — Hill Top Lodge" used to link to
+ * `/`, so it opened the app at Home and left you to go and find the
+ * thing it had just told you about.
+ */
+const bookingIdForPath = (pathname: string): number | null => {
+  const m = pathname.match(/^\/booking\/(\d+)$/);
+  return m ? Number(m[1]) : null;
+};
 import { SmoobuConnectionPage } from './components/SmoobuConnectionPage';
 import { CleaningDaySheet } from './components/CleaningDaySheet';
 import { UserX, UserCheck, TriangleAlert, Check } from 'lucide-react';
@@ -127,6 +145,16 @@ export function App() {
   const [authChecked, setAuthChecked] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
   const [activeTab, setActiveTab] = useState(() => tabForPath(window.location.pathname));
+  /**
+   * A booking the URL asked for, until the data arrives to resolve it.
+   *
+   * The bookings are fetched after boot, so a link cannot be acted on
+   * at the moment it is read — it is held here and spent once there is
+   * something to look it up in.
+   */
+  const [pendingBookingId, setPendingBookingId] = useState<number | null>(
+    () => bookingIdForPath(window.location.pathname)
+  );
   // Calendar state (existing)
   const [mode, setMode] = useState<'single' | 'multi'>('single');
   const [propertyId, setPropertyId] = useState<number>(0);
@@ -171,9 +199,22 @@ export function App() {
   // Load API data once authenticated
   const loadData = useCallback(async () => {
     await Promise.all([loadCalendarData(), loadDashboardData(), loadAnalyticsData()]);
-    // Default to first property
-    if (properties.length > 0 && propertyId === 0) {
-      setPropertyId(properties[0].id);
+    /**
+     * Default to the first property, and only while there is no choice.
+     *
+     * `propertyId` was read from the closure, and this callback has an
+     * empty dependency list, so it was captured as 0 at mount and never
+     * changed. The guard was therefore always true and every later call
+     * reset the calendar to the first property — which this runs twice
+     * on sign-in alone, because the effect that calls it depends on
+     * both isLoggedIn and userRole and those arrive one after the
+     * other. Pressing Refresh did it too.
+     *
+     * Read through the setter, which sees the current value rather than
+     * the one from mount.
+     */
+    if (properties.length > 0) {
+      setPropertyId((current) => current === 0 ? properties[0].id : current);
     }
     setDataLoaded(true);
     setSyncedAt(lastSyncedAt);
@@ -239,11 +280,36 @@ export function App() {
    */
   useEffect(() => {
     if (inviteToken) return;
+    // A /booking/123 link is not a tab, and rewriting it to the tab path
+    // before the data has arrived would throw the link away unread.
+    if (pendingBookingId !== null) return;
     const path = TAB_PATHS[activeTab] || '/';
     if (window.location.pathname !== path) {
       window.history.replaceState(null, '', path);
     }
-  }, [activeTab, inviteToken]);
+  }, [activeTab, inviteToken, pendingBookingId]);
+
+  /**
+   * Spend the link once there is data to spend it on.
+   *
+   * Opens the booking's own sheet over the calendar at its property,
+   * which is the screen somebody who tapped "New booking" wants: the
+   * stay, and the days around it.
+   *
+   * A booking that cannot be found — cancelled, or belonging to a
+   * property this account cannot see — clears the link and leaves the
+   * app where it is rather than holding a sheet open over nothing.
+   */
+  useEffect(() => {
+    if (pendingBookingId === null || !dataLoaded) return;
+    const hit = bookings.find((b) => b.smoobuId === pendingBookingId);
+    if (hit) {
+      setPropertyId(hit.propId);
+      setActiveTab('calendar');
+      setSelectedBooking(hit);
+    }
+    setPendingBookingId(null);
+  }, [pendingBookingId, dataLoaded]);
 
   const getPageTitle = () => {
     switch (activeTab) {
