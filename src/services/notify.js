@@ -96,6 +96,11 @@ const EVENTS = {
   // Half a sync is not a sync. Rates failed silently for months behind a
   // "Synced 1d ago" that was telling the truth about bookings only.
   sync_incomplete: { severity: 'attention' },
+  // A listing is selling nights under its floor, or has run out of
+  // prices before next season. Both were found by auditing by hand,
+  // months after they started costing money — which is the whole reason
+  // this one interrupts rather than waiting on the dashboard.
+  channel_health_red: { severity: 'attention' },
 
   // The cleaner's own. Each of these replaces a bare whatsapp.sendMessage
   // that reported nothing and was recorded nowhere — which is how every

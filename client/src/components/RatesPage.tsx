@@ -95,6 +95,14 @@ export function RatesPage({ initialPropertyId = 0 }: {
   const [plan, setPlan] = useState<Record<string, Rule>>({});
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [markups, setMarkups] = useState<Record<string, string>>({});
+  /**
+   * The two numbers the morning health check measures against.
+   *
+   * Empty means not set, which the check reports as unchecked rather
+   * than as passing — see services/health-check for why a default floor
+   * would be the same mistake it exists to catch.
+   */
+  const [limits, setLimits] = useState<{floor: string;ceiling: string;}>({ floor: '', ceiling: '' });
   const [catalogue, setCatalogue] = useState<Strategy[]>([]);
   const [config, setConfig] = useState<Record<string, Entry>>({});
   const [observed, setObserved] = useState<Record<string, {
@@ -159,6 +167,10 @@ export function RatesPage({ initialPropertyId = 0 }: {
           airbnb: String(prop.guest_markup_airbnb ?? 0),
           booking: String(prop.guest_markup_booking ?? 0),
           vrbo: String(prop.guest_markup_vrbo ?? 0),
+        });
+        setLimits({
+          floor: Number(prop.price_floor) > 0 ? String(Math.round(prop.price_floor)) : '',
+          ceiling: Number(prop.price_ceiling) > 0 ? String(Math.round(prop.price_ceiling)) : '',
         });
         setDone('');
         setFailed(false);
@@ -241,6 +253,8 @@ export function RatesPage({ initialPropertyId = 0 }: {
           guest_markup_airbnb: Number(markups.airbnb) || 0,
           guest_markup_booking: Number(markups.booking) || 0,
           guest_markup_vrbo: Number(markups.vrbo) || 0,
+          price_floor: Number(limits.floor) || 0,
+          price_ceiling: Number(limits.ceiling) || 0,
         }),
       }),
     ];
@@ -421,6 +435,60 @@ export function RatesPage({ initialPropertyId = 0 }: {
             }
             </div>
           )}
+        </div>
+
+        {/* 2b. The two numbers the morning check measures against.
+
+               Here rather than on a settings page because this is the
+               screen where somebody is already thinking about what a
+               night is worth. A floor set nowhere is a check that
+               cannot run, and the loft sold Booking.com nights at R113
+               for four months because nothing knew what too cheap
+               meant for it. */}
+        <div className={SECTION}>Limits</div>
+        <div className={`${CARD} p-4 mb-6`}>
+          <p className="text-[13px] text-[#717171] mb-3">
+            Not prices — tripwires. Every morning this app checks the next year of nights against them, in your rate and
+            in what each channel charges the guest, and tells you if anything is outside.
+          </p>
+          <div className="flex items-center gap-3 py-2">
+            <div className="flex-1 min-w-0">
+              <div className="text-[15px] font-medium">Never under</div>
+              <div className="text-[13px] text-[#717171]">
+                {Number(limits.floor) > 0 ?
+                'A night below this, on your rate or on any channel, is an alert' :
+                'Not set — nothing is being checked'}
+              </div>
+            </div>
+            <span className="shrink-0 flex items-center gap-1.5">
+              <span className="text-[12px] text-[#717171]">R</span>
+              <input
+                type="number" inputMode="numeric" placeholder="none"
+                value={limits.floor}
+                onChange={(e) => { setLimits((l) => ({ ...l, floor: e.target.value })); setDone(''); }}
+                aria-label="Price floor"
+                className="w-[92px] h-[38px] px-2 border border-[#DDDDDD] rounded-[8px] text-[14px] text-right tabular-nums" />
+            </span>
+          </div>
+          <div className="flex items-center gap-3 py-2 border-t border-[#F0F0F0]">
+            <div className="flex-1 min-w-0">
+              <div className="text-[15px] font-medium">Never over</div>
+              <div className="text-[13px] text-[#717171]">
+                {Number(limits.ceiling) > 0 ?
+                'Catches a layer applied twice, or dynamic pricing left behind' :
+                'Not set — nothing is being checked'}
+              </div>
+            </div>
+            <span className="shrink-0 flex items-center gap-1.5">
+              <span className="text-[12px] text-[#717171]">R</span>
+              <input
+                type="number" inputMode="numeric" placeholder="none"
+                value={limits.ceiling}
+                onChange={(e) => { setLimits((l) => ({ ...l, ceiling: e.target.value })); setDone(''); }}
+                aria-label="Price ceiling"
+                className="w-[92px] h-[38px] px-2 border border-[#DDDDDD] rounded-[8px] text-[14px] text-right tabular-nums" />
+            </span>
+          </div>
         </div>
 
         {/* 3. The rules that read the diary. */}

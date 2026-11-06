@@ -28,6 +28,8 @@ let bookingsQueue = [];   // array of pages returned in order
 let propertiesFixture = [];
 let propertyDetailsFixture = {};
 let failWith = null;       // { name?: 'getBookings', error: Error } — throws when set
+// { [apartmentId]: { 'YYYY-MM-DD': { price, available } } } — what getRates answers.
+let dailyRatesFixture = {};
 
 // Every mocked side-effectful call is appended here so tests can assert on
 // what was invoked. Reset per test via `mockSmoobu.reset()`.
@@ -43,6 +45,7 @@ function reset() {
   bookingsQueue = [];
   propertiesFixture = [];
   propertyDetailsFixture = {};
+  dailyRatesFixture = {};
   failWith = null;
   calls.setRates.length = 0;
   calls.setRatesForDates.length = 0;
@@ -71,7 +74,13 @@ function reset() {
     if (failWith && (!failWith.name || failWith.name === 'getPropertyDetails')) throw failWith.error;
     return propertyDetailsFixture[id] || null;
   };
-  smoobu.getRates = async () => ({});
+  smoobu.getRates = async (apartmentId) => {
+    if (failWith && (!failWith.name || failWith.name === 'getRates')) throw failWith.error;
+    // Nested under `data`, which is the shape the real client returns for
+    // this endpoint. A fixture keyed at the top level would let a reader
+    // that only handles one shape pass.
+    return { data: { [apartmentId]: dailyRatesFixture[apartmentId] || {} } };
+  };
   smoobu.setRatesForDates = async (apartmentId, dates, price, apiKey, minStay = null) => {
     calls.setRatesForDates.push({ apartmentId, dates, price, minStay });
     return { ok: true };
@@ -107,6 +116,17 @@ function setBookings(pages) {
   }
 }
 
+/**
+ * What getRates answers, per apartment: `{ apartmentId: { date: {price} } }`.
+ *
+ * Separate from `calls.setRates`, which records writes. This is the read
+ * side — the nightly rates Smoobu holds — and the two were easy to
+ * confuse by name alone.
+ */
+function setDailyRates(map) {
+  dailyRatesFixture = map || {};
+}
+
 function setProperties(apartments) {
   propertiesFixture = apartments;
 }
@@ -138,6 +158,7 @@ reset();
 module.exports = {
   reset,
   setBookings,
+  setDailyRates,
   setProperties,
   setPropertyDetails,
   makeFail,

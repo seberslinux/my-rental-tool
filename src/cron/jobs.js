@@ -3,6 +3,9 @@ const { sendCheckinMessages, sendCheckoutMessages } = require('../services/messa
 const { runAssignmentForAllCheckouts } = require('../services/cleaner-assignment');
 const { getAll, getOne, run } = require('../db/database');
 const { notify } = require('../services/notify');
+// Whether the listings are still priced and still on sale — see that
+// module for why this runs before anybody is awake.
+const { runHealthCheck } = require('../services/health-check');
 // Dates as somebody would say them, and one definition of YYYY-MM-DD.
 const { prettyDate, ymd } = require('../services/availability');
 const { STILL_TO_DO_SQL } = require('../services/job-life');
@@ -258,6 +261,25 @@ cron.schedule('0 7 * * *', async () => {
     if (waiting.length) console.log(`Chased ${waiting.length} unanswered request(s).`);
   } catch (err) {
     console.error('Unanswered-request cron error:', err.message);
+  }
+});
+
+/**
+ * Ask every morning whether the settings are still right.
+ *
+ * 06:00 SAST, before anybody looks at the dashboard, so the card is
+ * already answered when they open it. Only red is sent — see
+ * `health-check` for why an amber alert every day is how the channel
+ * gets muted before the red one arrives.
+ *
+ * Reads only. It never writes a rate.
+ */
+cron.schedule('0 4 * * *', async () => {
+  try {
+    const { status, results } = await runHealthCheck();
+    console.log(`Channel health: ${status} across ${results.length} propert${results.length === 1 ? 'y' : 'ies'}.`);
+  } catch (err) {
+    console.error(`Channel health cron error: ${err.message}`);
   }
 });
 
