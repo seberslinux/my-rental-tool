@@ -10,6 +10,8 @@ const {
 const smoobu = require('../services/smoobu');
 // Shared with both sync paths so the three cannot drift apart again.
 const { mapSmoobuBooking } = require('../services/smoobu-mapper');
+// One statement writes a booking, whichever path got there first.
+const { upsertBooking } = require('../services/booking-store');
 const { notify } = require('../services/notify');
 
 // Smoobu has no HMAC/signature support in its webhook config — the only
@@ -86,27 +88,12 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
 
     if (action === 'newReservation' || action === 'new') {
       const row = mapSmoobuBooking(bookingData);
-      // Upsert booking
-      await run(
-        `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out,
-           platform, total_price, status, num_guests, commission, children,
-           language, guest_country, raw_payload)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'confirmed', $8, $9, $10, $11, $12, $13)
-         ON CONFLICT(smoobu_id) DO UPDATE SET
-           guest_name = CASE WHEN EXCLUDED.guest_name = '' THEN bookings.guest_name ELSE EXCLUDED.guest_name END,
-           check_in = EXCLUDED.check_in,
-           check_out = EXCLUDED.check_out, platform = EXCLUDED.platform,
-           total_price = EXCLUDED.total_price, status = 'confirmed',
-           num_guests = EXCLUDED.num_guests, commission = EXCLUDED.commission,
-           children = EXCLUDED.children, language = EXCLUDED.language,
-           guest_country = EXCLUDED.guest_country,
-           raw_payload = EXCLUDED.raw_payload`,
-        [
-          row.smoobu_id, property.id, row.guest_name, row.check_in, row.check_out,
-          row.platform, row.total_price, row.num_guests, row.commission,
-          row.children, row.language, row.guest_country, row.raw_payload,
-        ]
-      );
+      // Every column the mapper fills. This used to list fourteen of
+      // them, so length_of_stay and price_per_night fell to their
+      // defaults of 1 and 0 and a ten-night stay was stored as one
+      // night. `length_of_stay || 1` is the night count in seven places
+      // across analytics and in revenue's pro-rata split.
+      await upsertBooking(run, row, { propertyId: property.id, status: 'confirmed' });
 
       const booking = await getOne('SELECT * FROM bookings WHERE smoobu_id = $1', [smoobuId]);
 
@@ -163,18 +150,12 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
 
     } else if (action === 'modifyReservation' || action === 'modify') {
       const row = mapSmoobuBooking(bookingData);
-      await run(
-        `UPDATE bookings SET
-           guest_name = $1, check_in = $2, check_out = $3, total_price = $4,
-           num_guests = $5, children = $6, commission = $7, language = $8,
-           guest_country = $9, raw_payload = $10
-         WHERE smoobu_id = $11`,
-        [
-          row.guest_name, row.check_in, row.check_out, row.total_price,
-          row.num_guests, row.children, row.commission, row.language,
-          row.guest_country, row.raw_payload, smoobuId,
-        ]
-      );
+      // The same write as every other path. This was an UPDATE of ten
+      // columns, so a stay whose dates moved kept its old night count
+      // and its old nightly price — the bug above, in the branch next
+      // to it. An upsert also means a modification for a booking we
+      // never saw creates it rather than silently doing nothing.
+      await upsertBooking(run, row, { propertyId: property.id });
 
       const booking = await getOne('SELECT * FROM bookings WHERE smoobu_id = $1', [smoobuId]);
       if (booking) {
