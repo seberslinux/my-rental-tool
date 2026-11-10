@@ -84,6 +84,9 @@ import { setUnauthorizedHandler } from './data/session';
 import { AddToHomeScreen } from './components/AddToHomeScreen';
 import { relativeTime } from './data/time';
 import { loadAnalyticsData } from './data/analytics';
+// A device re-asserts its push subscription on every load — see that
+// module for the silence this ends.
+import { resyncPush } from './data/push';
 
 // Tabs that scope their content to a single property. The Calendar has its
 // own property picker in CalendarHeader; More has nothing to scope.
@@ -244,6 +247,23 @@ export function App() {
       loadData();
     }
   }, [isLoggedIn, userRole, loadData]);
+
+  /**
+   * Tell the server what this device's subscription actually is.
+   *
+   * For everybody signed in, cleaners included — a cleaner who stops
+   * being told about their shifts is the worst version of this.
+   *
+   * The server's copy can drift out of step with the browser's, and
+   * when it does the push service still accepts every message while the
+   * handset silently drops it: `sent: 1`, "ready" on the settings
+   * screen, and nothing arriving for weeks. Re-asserting it on load is
+   * what makes those agree again.
+   */
+  useEffect(() => {
+    if (!isLoggedIn) return;
+    resyncPush();
+  }, [isLoggedIn]);
 
   // The cleaning picture — who is free and which checkouts are short.
   //
