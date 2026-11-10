@@ -101,6 +101,9 @@ const EVENTS = {
   // months after they started costing money — which is the whole reason
   // this one interrupts rather than waiting on the dashboard.
   channel_health_red: { severity: 'attention' },
+  // A guest wrote. Somebody is waiting on an answer, often about getting
+  // in, so it reaches the phone.
+  guest_message: { severity: 'attention' },
 
   // The cleaner's own. Each of these replaces a bare whatsapp.sendMessage
   // that reported nothing and was recorded nowhere — which is how every

@@ -155,13 +155,21 @@ test('the names this used to guess at still work', async () => {
 // --- the quiet ones ------------------------------------------------------
 
 test('a guest message is acknowledged without a property lookup', async () => {
+  // Written when nothing read messages, and asserted `handled: false`.
+  // Messages are handled now; what this still pins is the bug it was for —
+  // a message carries no apartment, and it must not die on the lookup
+  // that assumed one. A host's own message is acknowledged and announced
+  // to nobody.
   const { app } = await setup();
   const res = await post(app, {
     action: 'newMessage', user: 971234,
     data: { id: 807596893, sender: 'host', booking: { id: 162785440 } },
   });
-  assert.equal(res.body.handled, false);
+  assert.equal(res.body.received, true);
   assert.equal(res.body.action, 'newMessage');
+  assert.notEqual(res.body.action, 'unknown property');
+  const { rows } = await pool.query("SELECT * FROM notifications WHERE event = 'guest_message'");
+  assert.equal(rows.length, 0);
 });
 
 test('an action nobody handles says so rather than looking successful', async () => {
