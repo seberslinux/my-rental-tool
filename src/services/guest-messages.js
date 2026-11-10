@@ -48,12 +48,25 @@ function textOf(m = {}) {
 
 /** One message as the screen wants it. */
 function normaliseMessage(m) {
+  const text = textOf(m);
   return {
     id: Number(m.id),
     // 1 is the inbox — written by the guest. 2 is the outbox — by you.
     from: Number(m.type) === 1 ? 'guest' : 'you',
     subject: m.subject || '',
-    text: textOf(m),
+    text,
+    // Not in Smoobu's documentation, but on every message the API sends:
+    // "YYYY-MM-DD HH:MM:SS".
+    at: m.createdAt || m.created_at || null,
+    /**
+     * Sent, but with no words the API will give.
+     *
+     * A guest's photo arrives this way — empty text, and no attachment
+     * field at all, since Smoobu exposes none. It was
+     * dropped, which made a guest look as if they had sent nothing. It is
+     * kept and shown as something to open in the channel instead.
+     */
+    empty: !text,
   };
 }
 
@@ -72,9 +85,9 @@ async function conversation(bookingSmoobuId, apiKey, { maxPages = 10 } = {}) {
     const pages = Number(data && data.page_count) || 1;
     if (page >= pages || rows.length === 0) break;
   }
-  // Ids increase as messages are written, and Smoobu gives no per-message
-  // time, so the id is the order.
-  return out.filter((m) => m.text).sort((a, b) => a.id - b.id);
+  // By when it was written, then by id for anything sent in the same second.
+  return out.sort((a, b) =>
+    String(a.at || '').localeCompare(String(b.at || '')) || a.id - b.id);
 }
 
 /**

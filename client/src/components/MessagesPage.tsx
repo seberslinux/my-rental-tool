@@ -24,10 +24,12 @@ interface Thread {
   unread: boolean;
 }
 
-interface Message {id: number;from: 'guest' | 'you';subject: string;text: string;}
+interface Message {id: number;from: 'guest' | 'you';subject: string;text: string;at?: string | null;empty?: boolean;}
 
 interface Conversation {
-  booking: {smoobu_id: number;guest_name: string;property: string;check_in: string;check_out: string;platform: string;};
+  booking: {smoobu_id: number;guest_name: string;property: string;check_in: string;check_out: string;platform: string;
+    /** The conversation on the channel's own site, where photos still are. */
+    channel_link?: {label: string;url: string;} | null;};
   messages: Message[];
 }
 
@@ -44,6 +46,16 @@ function when(at: string | null): string {
   const days = Math.round((today.getTime() - d.getTime()) / 86400000);
   if (days < 7) return d.toLocaleDateString('en-ZA', { weekday: 'short' });
   return d.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
+}
+
+/** Under a message: the time today, otherwise the date with it. */
+function stamp(at: string | null | undefined): string {
+  if (!at) return '';
+  const d = new Date(at.replace(' ', 'T'));
+  if (Number.isNaN(d.getTime())) return '';
+  const time = d.toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === new Date().toDateString()) return time;
+  return `${d.toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' })}, ${time}`;
 }
 
 const stay = (b: Conversation['booking']) => {
@@ -182,12 +194,21 @@ function ConversationView({ bookingId, onBack }: {bookingId: number;onBack: () =
         <button onClick={onBack} aria-label="Back to messages" className="p-1 -ml-1">
           <ArrowLeft className="w-5 h-5 text-[#222222]" />
         </button>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="text-[16px] font-semibold text-[#222222] leading-snug">
             {convo ? convo.booking.guest_name : 'Conversation'}
           </div>
           {convo && <div className="text-[12px] text-[#717171]">{stay(convo.booking)} · {convo.booking.platform}</div>}
         </div>
+        {convo?.booking.channel_link &&
+        <a
+          href={convo.booking.channel_link.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 text-[13px] font-semibold text-[#FF385C]">
+            Open in {convo.booking.channel_link.label}
+          </a>
+        }
       </div>
 
       <div className="flex-1 px-4 py-4 space-y-2 lg:max-w-[860px] w-full">
@@ -202,12 +223,26 @@ function ConversationView({ bookingId, onBack }: {bookingId: number;onBack: () =
         <p className="text-[13px] text-[#717171] text-center py-6">No messages yet. Say hello.</p>
         }
         {convo && convo.messages.map((m) =>
-        <div key={m.id} className={`flex ${m.from === 'you' ? 'justify-end' : 'justify-start'}`}>
+        <div key={m.id} className={`flex flex-col ${m.from === 'you' ? 'items-end' : 'items-start'}`}>
             <div className={`max-w-[82%] rounded-[16px] px-3.5 py-2.5 text-[14px] leading-snug whitespace-pre-wrap break-words ${
           m.from === 'you' ? 'bg-[#222222] text-white rounded-br-[4px]' : 'bg-white text-[#222222] rounded-bl-[4px] shadow-[0_0_0_1px_rgba(0,0,0,0.06)]'}`}>
               {m.subject && m.from === 'you' && <div className="text-[11px] opacity-70 mb-0.5">{m.subject}</div>}
-              {m.text}
+              {/* A photo or file: Smoobu sends it with no text and no
+                  attachment, so say there is something rather than
+                  showing nothing — or dropping it, which made a guest
+                  look as if they had sent nothing at all. */}
+              {m.empty ? (
+            convo.booking.channel_link ?
+            <a href={convo.booking.channel_link.url} target="_blank" rel="noopener noreferrer"
+            className="italic underline opacity-80">
+                    Sent a photo or file — open it in {convo.booking.channel_link.label}
+                  </a> :
+            <span className="italic opacity-70">
+                    Sent a photo or file — open it in {convo.booking.platform || 'the channel'} to see it
+                  </span>) :
+            m.text}
             </div>
+            {m.at && <span className="text-[11px] text-[#B0B0B0] mt-0.5 px-1 tabular-nums">{stamp(m.at)}</span>}
           </div>
         )}
         <div ref={endRef} />

@@ -221,15 +221,19 @@ async function getThreads({ page = 1, pageSize = 50, apartments = [] } = {}, api
 }
 
 /**
- * One booking's conversation. `type` 1 is from the guest, 2 from you.
+ * One booking's conversation, both sides. `type` 1 is from the guest,
+ * 2 from you.
  *
- * `onlyRelatedToGuest` keeps it to the guest conversation rather than
- * every system message Smoobu attaches to a booking.
+ * `onlyRelatedToGuest` is false. Set to true it reads as "the guest
+ * conversation, without system messages" and means "only what the
+ * guest wrote": every reply — yours, Francesca's, a template Smoobu sent
+ * — was left out, so a conversation showed four guest messages in a row
+ * answering somebody who was not on the screen.
  */
 async function getMessages(reservationId, { page = 1 } = {}, apiKey) {
   const client = getClient(apiKey);
   const res = await client.get(`/reservations/${reservationId}/messages`, {
-    params: { page, onlyRelatedToGuest: true },
+    params: { page, onlyRelatedToGuest: false },
   });
   return res.data;
 }

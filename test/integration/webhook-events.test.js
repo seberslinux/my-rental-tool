@@ -35,11 +35,11 @@ async function setup() {
 
 const post = (app, body) => request(app).post(`/webhook/${SECRET}`).send(body).expect(200);
 
-function reservation(action, { id = 162785440, apartmentId, arrival, departure, price = 9000 }) {
+function reservation(action, { id = 900001, apartmentId, arrival, departure, price = 9000 }) {
   return {
     action, user: 971234,
     data: {
-      id, 'reference-id': 'HMDP2H28PP', type: 'reservation',
+      id, 'reference-id': 'TESTREF001', type: 'reservation',
       arrival, departure, 'created-at': daysAgo(2), 'guest-name': 'Dana Petersen',
       price, adults: 2, channel: { name: 'Booking.com' }, apartment: { id: apartmentId },
     },
@@ -129,7 +129,7 @@ test('updateReservation is picked up, which is the name Smoobu sends', async () 
     apartmentId: property.smoobu_id, arrival: inDays(20), departure: inDays(27), price: 15000,
   }));
 
-  const { rows } = await pool.query('SELECT * FROM bookings WHERE smoobu_id = 162785440');
+  const { rows } = await pool.query('SELECT * FROM bookings WHERE smoobu_id = 900001');
   assert.equal(rows[0].check_out, inDays(27), 'the new departure landed');
   assert.equal(rows[0].length_of_stay, 7);
 
@@ -148,7 +148,7 @@ test('the names this used to guess at still work', async () => {
     apartmentId: property.smoobu_id, arrival: inDays(20), departure: inDays(25),
   }));
 
-  const { rows } = await pool.query('SELECT check_out FROM bookings WHERE smoobu_id = 162785440');
+  const { rows } = await pool.query('SELECT check_out FROM bookings WHERE smoobu_id = 900001');
   assert.equal(rows[0].check_out, inDays(25));
 });
 
@@ -163,7 +163,7 @@ test('a guest message is acknowledged without a property lookup', async () => {
   const { app } = await setup();
   const res = await post(app, {
     action: 'newMessage', user: 971234,
-    data: { id: 807596893, sender: 'host', booking: { id: 162785440 } },
+    data: { id: 101, sender: 'host', booking: { id: 900001 } },
   });
   assert.equal(res.body.received, true);
   assert.equal(res.body.action, 'newMessage');

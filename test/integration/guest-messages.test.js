@@ -19,13 +19,13 @@ test.beforeEach(async () => { await resetDb(); mockSmoobu.reset(); });
 test.after(() => closePool());
 
 const SECRET = process.env.WEBHOOK_SECRET || 'test-webhook-secret';
-const BOOKING = 162785440;
+const BOOKING = 900001;
 
 async function setup() {
   const user = await seedUser({ role: 'property_manager' });
   const loft = await seedProperty({ owner: user, name: 'The loft', smoobu_id: 2297844 });
   await seedBooking({
-    property: loft, smoobu_id: BOOKING, guest_name: 'Reto Bolliger',
+    property: loft, smoobu_id: BOOKING, guest_name: 'Sam Guest',
     check_in: inDays(18), check_out: inDays(20), platform: 'Booking.com',
   });
   mockSmoobu.setMessages({
@@ -35,7 +35,7 @@ async function setup() {
     ],
   });
   mockSmoobu.setThreads([{
-    booking: { id: BOOKING, guest_name: 'Reto Bolliger' },
+    booking: { id: BOOKING, guest_name: 'Sam Guest' },
     apartment: { id: 2297844, name: 'Scarborough Loft' },
     latest_message: { id: 12, subject: '', text_content: '', html_content: '<p>Hi! What time can we check in?</p>', created_at: '2026-11-10 09:14:00' },
   }]);
@@ -50,7 +50,7 @@ test('the inbox lists the conversation with its latest words', async () => {
   const { agent } = await setup();
   const { body } = await agent.get('/api/messages/threads').expect(200);
   assert.equal(body.threads.length, 1);
-  assert.equal(body.threads[0].guest_name, 'Reto Bolliger');
+  assert.equal(body.threads[0].guest_name, 'Sam Guest');
   assert.equal(body.threads[0].property, 'The loft', 'named the way this app names it');
   assert.equal(body.threads[0].latest.text, 'Hi! What time can we check in?');
   assert.equal(body.threads[0].latest.at, '2026-11-10 09:14:00');
@@ -60,7 +60,7 @@ test('a conversation reads oldest first, who said what', async () => {
   const { agent } = await setup();
   const { body } = await agent.get(`/api/messages/${BOOKING}`).expect(200);
   assert.deepEqual(body.messages.map((m) => m.from), ['you', 'guest']);
-  assert.equal(body.booking.guest_name, 'Reto Bolliger');
+  assert.equal(body.booking.guest_name, 'Sam Guest');
 });
 
 test("a guest's HTML is shown as text, never as markup", async () => {
@@ -100,7 +100,7 @@ test('a guest writing makes the conversation unread and tells somebody', async (
 
   const { rows } = await pool.query("SELECT * FROM notifications WHERE event = 'guest_message'");
   assert.equal(rows.length, 1);
-  assert.match(rows[0].title, /Reto Bolliger sent a message/);
+  assert.match(rows[0].title, /Sam Guest sent a message/);
   assert.match(rows[0].body, /What time can we check in/, 'the words, not only who');
   assert.equal(rows[0].link, `/messages/${BOOKING}`, 'tapping it opens the conversation');
 });
@@ -180,4 +180,83 @@ test('signed out, no messages', async () => {
   const app = await getApp();
   await request(app).get('/api/messages/threads').expect(401);
   await request(app).post(`/api/messages/${BOOKING}`).send({ text: 'x' }).expect(401);
+});
+
+// --- the real shape ----------------------------------------------------------
+
+test('every reply is in the conversation, in the order it was written', async () => {
+  // onlyRelatedToGuest true had left every reply out.
+  // The order is the timestamp, which the API sends though its docs do not.
+  const { agent } = await setup();
+  mockSmoobu.setMessages({
+    [BOOKING]: [
+      { id: 105, type: 2, message: 'Sorry, we do not allow pets.', htmlMessage: '', createdAt: '2026-11-10 08:05:00' },
+      { id: 101, type: 1, message: 'Can we bring a pet?', htmlMessage: '', createdAt: '2026-11-10 08:00:00' },
+      { id: 107, type: 2, message: 'There is a small fee per night.', htmlMessage: '', createdAt: '2026-11-10 09:00:00' },
+      { id: 104, type: 1, message: 'Is there an extra charge?', htmlMessage: '', createdAt: '2026-11-10 08:30:00' },
+    ],
+  });
+  const { body } = await agent.get(`/api/messages/${BOOKING}`).expect(200);
+  assert.deepEqual(body.messages.map((m) => m.from), ['guest', 'you', 'guest', 'you']);
+  assert.equal(body.messages[1].at, '2026-11-10 08:05:00');
+});
+
+test('a message with no words is kept and flagged, not dropped', async () => {
+  // A guest's photo: Smoobu sends it with empty text and no attachment
+  // field. Dropping it made the guest look as if they had sent nothing.
+  const { agent } = await setup();
+  mockSmoobu.setMessages({
+    [BOOKING]: [
+      { id: 103, type: 1, subject: '', message: '', htmlMessage: '', createdAt: '2026-11-10 08:29:00' },
+      { id: 104, type: 1, message: 'Here is a photo of it', htmlMessage: '', createdAt: '2026-11-10 08:30:00' },
+    ],
+  });
+  const { body } = await agent.get(`/api/messages/${BOOKING}`).expect(200);
+  assert.equal(body.messages.length, 2);
+  assert.equal(body.messages[0].empty, true);
+  assert.equal(body.messages[1].empty, false);
+});
+
+test("Smoobu's real field name for the HTML body is read", async () => {
+  // The docs' example says messageHtml; the API sends htmlMessage.
+  const { agent } = await setup();
+  mockSmoobu.setMessages({
+    [BOOKING]: [{ id: 1, type: 1, message: '', htmlMessage: '<p>Only in HTML</p>', createdAt: '2026-11-10 08:00:00' }],
+  });
+  const { body } = await agent.get(`/api/messages/${BOOKING}`).expect(200);
+  assert.equal(body.messages[0].text, 'Only in HTML');
+});
+
+// --- where the photo is -------------------------------------------------------
+
+test('an Airbnb conversation links to the stay on Airbnb, where photos still are', async () => {
+  // Airbnb gives Smoobu the message without its photo. The confirmation
+  // code is how Airbnb finds the stay.
+  const { agent } = await setup();
+  await pool.query(
+    `UPDATE bookings SET platform = 'Airbnb', raw_payload = $1 WHERE smoobu_id = $2`,
+    [JSON.stringify({ 'reference-id': 'TESTREF001' }), BOOKING]
+  );
+  const { body } = await agent.get(`/api/messages/${BOOKING}`).expect(200);
+  assert.deepEqual(body.booking.channel_link, {
+    label: 'Airbnb', url: 'https://www.airbnb.com/hosting/reservations/details/TESTREF001',
+  });
+  assert.equal(body.booking.raw_payload, undefined, 'the payload itself is not sent to the screen');
+});
+
+test('no link where there is nothing safe to link to', async () => {
+  const { agent } = await setup();
+  // Booking.com: its extranet needs a session token this app does not hold.
+  await pool.query(
+    `UPDATE bookings SET platform = 'Booking.com', raw_payload = $1 WHERE smoobu_id = $2`,
+    [JSON.stringify({ 'reference-id': '4512345678' }), BOOKING]
+  );
+  assert.equal((await agent.get(`/api/messages/${BOOKING}`).expect(200)).body.booking.channel_link, null);
+
+  // An Airbnb code that does not look like one is not put into a URL.
+  await pool.query(
+    `UPDATE bookings SET platform = 'Airbnb', raw_payload = $1 WHERE smoobu_id = $2`,
+    [JSON.stringify({ 'reference-id': '../../evil' }), BOOKING]
+  );
+  assert.equal((await agent.get(`/api/messages/${BOOKING}`).expect(200)).body.booking.channel_link, null);
 });
