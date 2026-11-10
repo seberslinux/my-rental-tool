@@ -47,6 +47,39 @@ function normalizeRate(info) {
 }
 
 /**
+ * Write a day's rates for one property.
+ *
+ * Shared with the webhook, which receives exactly this shape the moment
+ * a price changes in Smoobu — `{ 'YYYY-MM-DD': { price, … } }` keyed by
+ * apartment. Two statements writing the same table from two paths is
+ * how `raw_payload` came to exist on some bookings and not others.
+ *
+ * `exec` takes `(sql, params)`: `run`, or a transaction client's query.
+ */
+async function upsertDailyRates(exec, propertyId, byDate) {
+  let written = 0;
+  for (const [date, info] of Object.entries(byDate || {})) {
+    // Dates arrive as object keys and go into a TEXT column, so a key
+    // that is not a date would sit there matching no lookup — the same
+    // failure the cleaner overrides had.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) continue;
+    const { price, minStay, available } = normalizeRate(info);
+    await exec(
+      `INSERT INTO daily_rates (property_id, date, price, min_stay, available)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT(property_id, date) DO UPDATE SET
+         price = EXCLUDED.price,
+         min_stay = EXCLUDED.min_stay,
+         available = EXCLUDED.available,
+         fetched_at = NOW()`,
+      [propertyId, date, price, minStay, available]
+    );
+    written++;
+  }
+  return written;
+}
+
+/**
  * Pull rates for every property into `daily_rates`.
  *
  * `apiKeyForProperty(property)` resolves the key to use — the two callers
@@ -71,20 +104,7 @@ async function syncRates({ apiKeyForProperty, days = SYNC_DAYS, today = new Date
       const byDate = ratesForApartment(payload, p.smoobu_id);
 
       await transaction(async (client) => {
-        for (const [date, info] of Object.entries(byDate)) {
-          const { price, minStay, available } = normalizeRate(info);
-          await client.query(
-            `INSERT INTO daily_rates (property_id, date, price, min_stay, available)
-             VALUES ($1, $2, $3, $4, $5)
-             ON CONFLICT(property_id, date) DO UPDATE SET
-               price = EXCLUDED.price,
-               min_stay = EXCLUDED.min_stay,
-               available = EXCLUDED.available,
-               fetched_at = NOW()`,
-            [p.id, date, price, minStay, available]
-          );
-          synced++;
-        }
+        synced += await upsertDailyRates((sql, params) => client.query(sql, params), p.id, byDate);
       });
     } catch (err) {
       console.error(`Rate sync failed for ${p.name}: ${err.message}`);
@@ -95,4 +115,4 @@ async function syncRates({ apiKeyForProperty, days = SYNC_DAYS, today = new Date
   return { synced, failures };
 }
 
-module.exports = { syncRates, ratesForApartment, normalizeRate, SYNC_DAYS };
+module.exports = { syncRates, upsertDailyRates, ratesForApartment, normalizeRate, SYNC_DAYS };
