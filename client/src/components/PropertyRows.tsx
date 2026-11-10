@@ -49,7 +49,7 @@ const rand = (n?: number) => (n == null ? '' : `R ${Math.round(n).toLocaleString
 /**
  * Who is there, and what it is worth.
  *
- * This was one run-on line — "Occupied · Hunter Tamryn until Thu, 12 Nov
+ * This was one run-on line — "Occupied · <guest> until Thu, 12 Nov
  * · Francesca cleans Thu, 12 Nov" — which reads as three facts with no
  * verbs and left you to work out which date belonged to what. It is two
  * sentences now: the stay, with what it leaves after fees, and the clean.
