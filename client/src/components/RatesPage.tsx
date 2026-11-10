@@ -105,6 +105,15 @@ export function RatesPage({ initialPropertyId = 0 }: {
   const [limits, setLimits] = useState<{floor: string;ceiling: string;}>({ floor: '', ceiling: '' });
   const [catalogue, setCatalogue] = useState<Strategy[]>([]);
   const [config, setConfig] = useState<Record<string, Entry>>({});
+  /**
+   * What each channel actually kept, measured off the booking rows.
+   *
+   * The reliable half of the same endpoint: no base in the ratio, so
+   * nothing in it can go stale the way the markup above does.
+   */
+  const [commissions, setCommissions] = useState<Record<string, {
+    commission: number;bookings: number;low: number;high: number;required_markup: number | null;
+  }>>({});
   const [observed, setObserved] = useState<Record<string, {
     markup: number | null;bookings: number;nights: number;stale?: number;
     low: number | null;high: number | null;confident: boolean;
@@ -176,9 +185,9 @@ export function RatesPage({ initialPropertyId = 0 }: {
         setFailed(false);
 
         // Best effort: a property with no synced rates has nothing to say.
-        apiGet<{observed: any;}>(`/api/properties/${propertyId}/observed-markup`).
-        then((o) => setObserved(o.observed || {})).
-        catch(() => setObserved({}));
+        apiGet<{observed: any;commissions: any;}>(`/api/properties/${propertyId}/observed-markup`).
+        then((o) => { setObserved(o.observed || {}); setCommissions(o.commissions || {}); }).
+        catch(() => { setObserved({}); setCommissions({}); });
       } catch (e) {
         if (!(e instanceof Unauthorized)) setFailed(true);
       }
@@ -300,11 +309,6 @@ export function RatesPage({ initialPropertyId = 0 }: {
     runPreview();
   };
 
-  const useObserved = (channelKey: string, markup: number) => {
-    setMarkups((m) => ({ ...m, [channelKey]: String(markup) }));
-    setDone('');
-  };
-
   const changing = preview ? preview.rows.filter((r) => r.changes) : [];
   const shownPrice = (r: Row, which: 'current' | 'new') => {
     if (view === 'base') return which === 'new' ? r.new_price : r.current_price;
@@ -406,33 +410,55 @@ export function RatesPage({ initialPropertyId = 0 }: {
                   markup was printed as though it were a measurement
                   rather than proof the rate had moved since. */}
               {observed[ch.key] &&
-            <div className="mt-1.5 flex items-center gap-2">
-                  <span className="text-[12px] text-[#717171] flex-1">
-                    {observed[ch.key].markup == null ?
-                <>Nothing to measure it against — the rate for those nights has changed since{observed[ch.key].stale ? ` (${observed[ch.key].stale} booking${observed[ch.key].stale === 1 ? '' : 's'} skipped)` : ''}</> :
+            <div className="mt-1.5 text-[12px] text-[#717171]">
+                  {/* Said plainly, and no longer offered.
+
+                      This read "your last 4 bookings imply +23.9%" on a
+                      channel set to 20.5%, with a Use it button beside
+                      it. Both of those bookings sold at R2,469 a night,
+                      which is R2,048.96 at 20.5% — the rate those nights
+                      were listed at. Today they are R2,000. The markup
+                      was exactly right and the rate moved underneath it.
+
+                      The ratio divides by what a night costs *now*,
+                      because Smoobu keeps one price per date and forgets
+                      the last one, so every reprice since a booking bends
+                      it. That is not a measurement of a markup and must
+                      not be offered as one. */}
+                  {observed[ch.key].markup == null ?
+                <>Nothing to compare — the rate for those nights has changed since they sold{observed[ch.key].stale ? ` (${observed[ch.key].stale} booking${observed[ch.key].stale === 1 ? '' : 's'} skipped)` : ''}</> :
                 <>
                         Your last {observed[ch.key].bookings}{' '}
-                        {observed[ch.key].bookings === 1 ? 'booking implies' : 'bookings imply'}
+                        {observed[ch.key].bookings === 1 ? 'booking came to' : 'bookings came to'}
                         {' '}<span className="font-medium text-[#222222]">
                           +{observed[ch.key].markup}%
                         </span>
-                        {!observed[ch.key].confident && (
-                  observed[ch.key].bookings === 1 ?
-                  ' — one booking, so treat it as a hint' :
-                  ' — too varied to trust, check it in Smoobu')}
+                        {' '}of what those nights cost today
+                        {observed[ch.key].low !== observed[ch.key].high &&
+                  <> ({observed[ch.key].low}–{observed[ch.key].high}%)</>}
+                        . A rate changed since a booking sold moves this, so it is not the markup.
                       </>
                 }
-                  </span>
-                  {observed[ch.key].confident && observed[ch.key].markup != null &&
-              String(observed[ch.key].markup) !== markups[ch.key] &&
-              <button
-                onClick={() => useObserved(ch.key, observed[ch.key].markup as number)}
-                className="shrink-0 text-[12px] font-semibold text-[#FF385C]">
-                      Use it
-                    </button>
-              }
                 </div>
             }
+
+            {/* What the channel actually kept, which is a measurement.
+
+                Two numbers on the same booking row — what the guest paid
+                and what the channel took out of it — so there is no base
+                to go stale. This is the figure the morning check uses,
+                and the one worth acting on. */}
+            {commissions[ch.key] &&
+          <div className="mt-1 text-[12px] text-[#717171]">
+                  {ch.label} kept{' '}
+                  <span className="font-medium text-[#222222]">{commissions[ch.key].commission}%</span>
+                  {' '}on your last {commissions[ch.key].bookings}{' '}
+                  {commissions[ch.key].bookings === 1 ? 'booking' : 'bookings'}
+                  {commissions[ch.key].low !== commissions[ch.key].high &&
+            <> ({commissions[ch.key].low}–{commissions[ch.key].high}%)</>}
+                  . Before VAT, so the markup needs to clear more than that.
+                </div>
+          }
             </div>
           )}
         </div>
