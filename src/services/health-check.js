@@ -564,12 +564,21 @@ async function runHealthCheck({ today = new Date().toISOString().slice(0, 10), d
    * channel gets muted before the red one arrives.
    */
   if (announce) {
+    // Reds somebody has already read and decided to live with. Telling
+    // them again every morning is how the alert that matters gets muted.
+    const seen = new Set(
+      (await getAll("SELECT key FROM dismissed_needs WHERE severity = 'red'").catch(() => [])).map((r) => r.key)
+    );
     for (const r of results.filter((r) => r.status === 'red')) {
-      const worst = r.findings.find((f) => f.severity === 'red');
+      const fresh = r.findings.filter(
+        (f) => f.severity === 'red' && !seen.has(`health:${r.property_id}:${f.key}`)
+      );
+      if (fresh.length === 0) continue;
+      const worst = fresh[0];
       await notify({
         event: 'channel_health_red',
         title: worst ? worst.title : `Something is wrong with ${r.property}`,
-        body: r.findings.filter((f) => f.severity === 'red').map((f) => `${f.title}. ${f.detail}`).join('\n'),
+        body: fresh.map((f) => `${f.title}. ${f.detail}`).join('\n'),
         propertyId: r.property_id,
         link: '/rates',
       });
@@ -596,10 +605,24 @@ async function latestHealth(propertyIds = null) {
     propertyIds === null ? [] : [propertyIds]
   );
 
-  const results = rows.map((r) => ({
-    ...(typeof r.report === 'string' ? JSON.parse(r.report) : r.report),
-    ran_at: r.ran_at,
-  }));
+  // What has been put away, so the card can count what is left rather
+  // than every finding it has ever made. A finding comes back if it gets
+  // worse than it was when it was put away.
+  const RANK = { amber: 1, attention: 1, red: 2 };
+  const put = new Map(
+    (await getAll('SELECT key, severity FROM dismissed_needs').catch(() => [])).map((d) => [d.key, d.severity])
+  );
+  const results = rows.map((r) => {
+    const report = typeof r.report === 'string' ? JSON.parse(r.report) : r.report;
+    return {
+      ...report,
+      findings: (report.findings || []).map((f) => {
+        const k = `health:${report.property_id}:${f.key}`;
+        return { ...f, dismiss_key: k, dismissed: put.has(k) && RANK[f.severity] <= RANK[put.get(k)] };
+      }),
+      ran_at: r.ran_at,
+    };
+  });
 
   return {
     status: rollUp(results),

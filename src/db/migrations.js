@@ -864,6 +864,25 @@ async function runMigrations() {
     console.error(`Could not recompute booking nights: ${e.message}`);
   }
 
+  /**
+   * What somebody has taken off the front page.
+   *
+   * One row per item, shared by everybody who runs these properties —
+   * a leak Stephan has read is not news to Patti either, and a finding
+   * he has decided to live with should not reach her phone each morning.
+   *
+   * `severity` is what it was when put away. A finding that later gets
+   * worse is a different fact and comes back.
+   */
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dismissed_needs (
+      key TEXT PRIMARY KEY,
+      severity TEXT NOT NULL DEFAULT 'attention',
+      dismissed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+      dismissed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
   console.log('Database migrations complete.');
 }
 

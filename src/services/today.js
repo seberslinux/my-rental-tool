@@ -21,9 +21,36 @@
  * because that is the order somebody would deal with them in.
  */
 
-const { isBlockedPlatform } = require('./analytics-calc');
-const { occupancyByProperty, addDays } = require('./dashboard-calc');
+const { isBlockedPlatform, normalizePlatform } = require('./analytics-calc');
+// What a stay is worth to the owner after the channel's cut — the same
+// fee stack every net revenue figure in the app uses.
+const { netForChannel } = require('./channel-price');
+const { occupancyByProperty, addDays, daysBetween } = require('./dashboard-calc');
 const { needsCleanBefore, propertyStatus, ymd } = require('./cleaning-status');
+
+/** The channel key `netForChannel` expects, from Smoobu's platform name. */
+const CHANNEL_KEY = { 'Airbnb': 'airbnb', 'Booking.com': 'booking', 'VRBO': 'vrbo' };
+
+/**
+ * What a stay leaves in your account: the price less commission, bank
+ * charge and the VAT on both, from the property's own fee settings.
+ *
+ * A channel this app has no fees for — direct, or one it does not know —
+ * is counted at its full price rather than guessed at.
+ */
+function keptFrom(stay, property) {
+  const gross = Number(stay.total_price) || 0;
+  const key = CHANNEL_KEY[normalizePlatform(stay.platform)];
+  if (!key || !property) return Math.round(gross);
+  return netForChannel(gross, property, key);
+}
+
+/** Nights in a stay, check-out exclusive. */
+function nightsIn(stay) {
+  const a = Date.parse(`${ymd(stay.check_in)}T00:00:00Z`);
+  const b = Date.parse(`${ymd(stay.check_out)}T00:00:00Z`);
+  return Number.isFinite(a) && Number.isFinite(b) ? Math.max(1, Math.round((b - a) / 86400000)) : 1;
+}
 
 /** Whole days from today, for ordering and for saying "tomorrow". */
 function daysOut(date, today) {
@@ -53,6 +80,20 @@ function buildToday({
   // not what counts.
   supplies = [],
   isFree = () => true, today, now = null, holidays = [],
+  /**
+   * The last morning check, one result per property.
+   *
+   * Its reds belong here: "Airbnb pays out under your base" is something
+   * to act on, and it sat in a card at the bottom of the page under a
+   * count that did not match what the card listed.
+   */
+  healthResults = [],
+  /**
+   * What somebody has already said they have seen: key → the severity it
+   * was at. A finding stays hidden until it gets worse, so acknowledging
+   * an amber does not silence the red it later becomes.
+   */
+  dismissed = new Map(),
   // How far the forward list looks. Seven days is a planning window.
   horizonDays = 7,
   // How far "needs you" looks. Two, because that list is about what is
@@ -117,6 +158,12 @@ function buildToday({
         property: propertyName(s.property_id),
         property_id: s.property_id,
         cleaner: cover ? { name: cover.cleaner_name, status: cover.status } : null,
+        // A time, because "leaves in 2 days" does not tell a cleaner when
+        // to turn up; and the booking, so a row can open it.
+        time: (properties_.find((p) => p.id === s.property_id) || {}).check_out_time || '10:00',
+        smoobu_id: s.smoobu_id,
+        nights: nightsIn(s),
+        guests: (Number(s.num_guests) || 0) + (Number(s.children) || 0) || null,
       });
     }
     if (inIn >= 0 && inIn <= horizonDays) {
@@ -130,6 +177,10 @@ function buildToday({
         property: propertyName(s.property_id),
         property_id: s.property_id,
         cleaner: null,
+        time: (properties_.find((p) => p.id === s.property_id) || {}).check_in_time || '15:00',
+        smoobu_id: s.smoobu_id,
+        nights: nightsIn(s),
+        guests: (Number(s.num_guests) || 0) + (Number(s.children) || 0) || null,
       });
     }
   });
@@ -221,6 +272,32 @@ function buildToday({
       title: `${i.title} at ${propertyName(i.property_id)}`,
       subtitle: 'Reported by the cleaner',
       action: { label: 'View', kind: 'issue', property_id: i.property_id },
+      /**
+       * Information, not a task with a deadline. Somebody who has read it
+       * can take it off the front page and leave it open in To do — it
+       * used to sit at the top every day until it was fixed, and a leak
+       * the plumber is coming for on Monday is not news on Thursday.
+       */
+      dismissible: true,
+      severity: 'attention',
+    });
+  });
+
+  // The morning check's reds, beside everything else that needs doing.
+  healthResults.forEach((r) => {
+    (r.findings || []).filter((f) => f.severity === 'red').forEach((f) => {
+      add({
+        key: `health:${r.property_id}:${f.key}`,
+        sortAt: 0,
+        // The finding's own title already names the property, which is
+        // what lets a row be read on its own.
+        title: f.title,
+        subtitle: 'From the morning check',
+        detail: f.detail,
+        action: { label: 'Rates', kind: 'rates', property_id: r.property_id },
+        dismissible: true,
+        severity: 'red',
+      });
     });
   });
 
@@ -283,14 +360,19 @@ function buildToday({
       detail: state.detail,
       guest: guest ?
       { name: guest.guest_name || 'Guest', until: ymd(guest.check_out),
-        leaving_today: ymd(guest.check_out) === day } :
+        leaving_today: ymd(guest.check_out) === day,
+        // So the row can open the booking and say what it is worth.
+        smoobu_id: guest.smoobu_id, nights: nightsIn(guest),
+        kept: keptFrom(guest, property), platform: guest.platform || '' } :
       null,
       cleaner: nextJob ?
       { name: nextJob.cleaner_name || null, date: ymd(nextJob.cleaning_date),
         status: nextJob.status } :
       null,
       next_arrival: nextArrival ?
-      { name: nextArrival.guest_name || 'Guest', date: ymd(nextArrival.check_in) } :
+      { name: nextArrival.guest_name || 'Guest', date: ymd(nextArrival.check_in),
+        smoobu_id: nextArrival.smoobu_id, nights: nightsIn(nextArrival),
+        kept: keptFrom(nextArrival, property), platform: nextArrival.platform || '' } :
       null,
       blocks: blocks.
       filter((b) => b.property_id === property.id && !b.released_at).
@@ -325,12 +407,39 @@ function buildToday({
     const sold30 = sold(30);
     const sold14 = sold(14);
 
+    /**
+     * Nights taken off sale, counted separately.
+     *
+     * They are not sold — the test beside this pins that a block is not
+     * a sale — but nor can they be sold, so "21 open" over-promised by
+     * every blocked night. Reported alongside rather than folded in, so
+     * the open count keeps its meaning and the screen can say both.
+     */
+    // Counted here rather than through occupancyByProperty, which skips
+    // blocks by design — it answers "how much was sold".
+    const blockStays = stays.filter(
+      (s) => s.status === 'confirmed' && isBlockedPlatform(s.platform) && ids.includes(s.property_id)
+    );
+    const blocked = (days) => {
+      const end = ymd(addDays(day, days));
+      return blockStays.reduce((n, b) => {
+        const from = ymd(b.check_in) > day ? ymd(b.check_in) : day;
+        const to = ymd(b.check_out) < end ? ymd(b.check_out) : end;
+        return n + Math.max(0, daysBetween(from, to));
+      }, 0);
+    };
+
     // Money already promised by guests arriving in the window. Counted on
     // arrival rather than spread per night, because that is the figure a
     // booking actually commits.
-    const booked30 = guestStays.
-    filter((v) => ymd(v.check_in) >= day && ymd(v.check_in) < ymd(addDays(day, 30))).
-    reduce((sum, v) => sum + (Number(v.total_price) || 0), 0);
+    const arriving30 = guestStays.
+    filter((v) => ymd(v.check_in) >= day && ymd(v.check_in) < ymd(addDays(day, 30)));
+    const booked30 = arriving30.reduce((sum, v) => sum + (Number(v.total_price) || 0), 0);
+    // What those arrivals leave after fees — the number worth leading
+    // with, since the gross one is mostly the channels' money.
+    const kept30 = arriving30.reduce(
+      (sum, v) => sum + keptFrom(v, properties.find((p) => p.id === v.property_id)), 0
+    );
 
     // Why those nights might sell. A holiday inside the window is the
     // reason to look at a price before it passes, which is the only
@@ -353,6 +462,9 @@ function buildToday({
       open_nights_14: Math.max(0, capacity14 - sold14),
       capacity_14: capacity14,
       booked_revenue_30: Math.round(booked30),
+      kept_30: Math.round(kept30),
+      blocked_nights_30: blocked(30),
+      blocked_nights_14: blocked(14),
     };
   })();
 
@@ -382,8 +494,21 @@ function buildToday({
     asked: s.created_at ? whenLabel(daysOut(s.created_at, day)) : '',
   }));
 
+  /**
+   * Hidden until it gets worse.
+   *
+   * An issue put away stays away; a red finding comes back only if it
+   * becomes something different, because a person who has decided to
+   * live with a 25% markup does not want to be told so every morning.
+   */
+  const RANK = { info: 0, amber: 1, attention: 1, red: 2 };
+  const shown = needs.filter((n) => {
+    if (!n.dismissible || !dismissed.has(n.key)) return true;
+    return RANK[n.severity] > RANK[dismissed.get(n.key)];
+  });
+
   return {
-    needs: needs.sort((a, b) => a.sortAt - b.sortAt),
+    needs: shown.sort((a, b) => a.sortAt - b.sortAt),
     money,
     supplies: suppliesRows,
     properties: propertyRows,
