@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { AlertCircle, AlertTriangle, Check, RefreshCw, ArrowRight } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Check, RefreshCw, ArrowRight, X } from 'lucide-react';
 import { apiGet, Unauthorized } from '../data/session';
 
 /**
@@ -34,6 +34,9 @@ interface Finding {
   detail: string;
   count: number;
   examples: string[];
+  /** The key it is put away under, and whether it has been. */
+  dismiss_key?: string;
+  dismissed?: boolean;
 }
 
 interface Result {
@@ -55,9 +58,11 @@ const ago = (iso: string | null) => {
   return days === 1 ? 'yesterday' : `${days}d ago`;
 };
 
-export function ChannelHealthCard({ onNavigate }: {
+export function ChannelHealthCard({ onNavigate, propertyId = 0 }: {
   /** Somewhere to send somebody who wants to fix a price. */
   onNavigate?: (tab: string) => void;
+  /** The property picked at the top of Home, so this agrees with the rest of the page. */
+  propertyId?: number;
 }) {
   const [results, setResults] = useState<Result[]>([]);
   const [status, setStatus] = useState<'red' | 'amber' | 'green'>('green');
@@ -99,19 +104,49 @@ export function ChannelHealthCard({ onNavigate }: {
     if ((data.status || 'green') !== 'green') setOpen(true);
   };
 
-  const problems = results.flatMap((r) => r.findings.filter((f) => f.severity !== 'green'));
-  const checked = results.length > 0;
+  const mine = propertyId ? results.filter((r) => r.property_id === propertyId) : results;
 
-  // One line that says whether to care, before anything is expanded.
+  /**
+   * What is left once somebody has put things away.
+   *
+   * The headline said "2 things need fixing now" over a list of four —
+   * it counted the reds and listed the ambers too. Both are counted now,
+   * and named separately, and anything put away is out of both.
+   */
+  const problems = mine.flatMap((r) => r.findings.filter((f) => f.severity !== 'green' && !f.dismissed));
+  const reds = problems.filter((f) => f.severity === 'red').length;
+  const ambers = problems.length - reds;
+  const checked = mine.length > 0;
+  const shownStatus: 'red' | 'amber' | 'green' = reds ? 'red' : ambers ? 'amber' : 'green';
+
   const headline =
     failed ? 'Could not read the last check' :
     !checked ? 'Not checked yet' :
-    status === 'red' ? `${problems.filter((f) => f.severity === 'red').length} thing${problems.filter((f) => f.severity === 'red').length === 1 ? '' : 's'} need fixing now` :
-    status === 'amber' ? `${problems.length} thing${problems.length === 1 ? '' : 's'} to look at` :
-    'Prices and horizons look right';
+    !problems.length ? 'Prices and horizons look right' :
+    [reds ? `${reds} to fix` : '', ambers ? `${ambers} to look at` : ''].filter(Boolean).join(' · ');
 
-  const Icon = failed || status === 'red' ? AlertCircle : !checked || status === 'amber' ? AlertTriangle : Check;
-  const tone = failed || status === 'red' ? 'text-[#D93900]' : !checked || status === 'amber' ? 'text-[#B45309]' : 'text-[#0F6E56]';
+  /** Put a finding away. It comes back if it gets worse. */
+  const putAway = async (f: Finding) => {
+    if (!f.dismiss_key) return;
+    setError('');
+    const res = await fetch('/api/dashboard/dismiss', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ key: f.dismiss_key, severity: f.severity }),
+    });
+    if (!res.ok) {
+      setError((await res.json().catch(() => ({}))).error || 'Could not put that away');
+      return;
+    }
+    setResults((list) => list.map((r) => ({
+      ...r,
+      findings: r.findings.map((x) => x.dismiss_key === f.dismiss_key ? { ...x, dismissed: true } : x),
+    })));
+  };
+
+  const Icon = failed || shownStatus === 'red' ? AlertCircle : !checked || shownStatus === 'amber' ? AlertTriangle : Check;
+  const tone = failed || shownStatus === 'red' ? 'text-[#D93900]' : !checked || shownStatus === 'amber' ? 'text-[#B45309]' : 'text-[#0F6E56]';
 
   return (
     <div className="mb-6">
@@ -131,7 +166,7 @@ export function ChannelHealthCard({ onNavigate }: {
             <div className="text-[15px] font-medium text-[#222222] truncate">{headline}</div>
             <div className="text-[13px] text-[#717171] truncate">
               {checked ?
-              `${results.length} listing${results.length === 1 ? '' : 's'} · checked ${ago(ranAt)}` :
+              `${mine.length} listing${mine.length === 1 ? '' : 's'} · checked ${ago(ranAt)}` :
               'Nothing has looked at your prices or how far ahead you are on sale'}
             </div>
           </button>
@@ -148,7 +183,7 @@ export function ChannelHealthCard({ onNavigate }: {
         <div className="border-t border-[#F0F0F0]">
             {problems.length === 0 ?
           <div className="px-4 py-3 text-[13px] text-[#717171]">
-                {results.map((r) =>
+                {mine.map((r) =>
             <div key={r.property_id}>
                     {r.property}: on sale {r.horizon ? `${r.horizon.days} of ${r.horizon.target} days` : 'unknown'}, nothing outside your limits.
                   </div>
@@ -161,7 +196,18 @@ export function ChannelHealthCard({ onNavigate }: {
                     <span className={`mt-[6px] shrink-0 w-[6px] h-[6px] rounded-full ${
             f.severity === 'red' ? 'bg-[#D93900]' : 'bg-[#C9A227]'}`} />
                     <div className="flex-1 min-w-0">
-                      <div className="text-[14px] font-medium text-[#222222]">{f.title}</div>
+                      <div className="text-[14px] font-medium text-[#222222] flex items-start gap-2">
+                        <span className="flex-1">{f.title}</span>
+                        {f.dismiss_key &&
+                  <button
+                    onClick={() => putAway(f)}
+                    aria-label={`Hide "${f.title}"`}
+                    title="Hide — it comes back if it gets worse"
+                    className="shrink-0 p-0.5 text-[#B0B0B0] hover:text-[#717171]">
+                            <X className="w-4 h-4" />
+                          </button>
+                  }
+                      </div>
                       <div className="text-[13px] text-[#717171]">{f.detail}</div>
                       {/* The dates, so somebody can go and look rather
                           than take the count on trust. */}

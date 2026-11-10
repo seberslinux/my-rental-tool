@@ -199,6 +199,34 @@ export function App() {
       .finally(() => setAuthChecked(true));
   }, []);
 
+  /**
+   * Sync with Smoobu on opening the app, if the last full sync is stale.
+   *
+   * "Synced 4h ago" meant the last time somebody pressed the button —
+   * opening the app never synced, so the label aged all day. Ten minutes
+   * is the threshold: often enough that what you open is current, rare
+   * enough that switching back and forth does not hammer Smoobu. Admin
+   * only, because the sync endpoint is.
+   */
+  const [autoSynced, setAutoSynced] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  useEffect(() => {
+    if (!dataLoaded || autoSynced || userRole !== 'admin') return;
+    setAutoSynced(true);
+    const age = syncedAt ? Date.now() - new Date(syncedAt).getTime() : Infinity;
+    if (age < 10 * 60 * 1000) return;
+    setSyncing(true);
+    fetch('/api/sync/bookings', { method: 'POST', credentials: 'same-origin' })
+      .then(async (res) => {
+        if (!res.ok) { setSyncFailed(true); return; }
+        setSyncFailed(false);
+        await loadData();
+        setDashboardVersion((v) => v + 1);
+      })
+      .catch(() => setSyncFailed(true))
+      .finally(() => setSyncing(false));
+  }, [dataLoaded, autoSynced, userRole, syncedAt]);
+
   // Load API data once authenticated
   const loadData = useCallback(async () => {
     await Promise.all([loadCalendarData(), loadDashboardData(), loadAnalyticsData()]);
@@ -229,11 +257,25 @@ export function App() {
   useEffect(() => {
     if (!isLoggedIn || userRole === 'cleaner') return;
     let alive = true;
-    const read = () =>
-    fetch('/api/notifications', { credentials: 'same-origin' })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (alive && d) setUnread(d.unread || 0); })
-      .catch(() => {});
+    const read = () => {
+      fetch('/api/notifications', { credentials: 'same-origin' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (alive && d) setUnread(d.unread || 0); })
+        .catch(() => {});
+      /**
+       * The Home tab's badge, for every property, on the same minute.
+       *
+       * It was set only by the Home page itself, so it froze at whatever
+       * Home last saw: assign a cleaner from the calendar and the badge
+       * still counted that checkout as needing you until Home was opened
+       * again. And once Home could be narrowed to one property, a badge
+       * fed from Home would have shrunk to that property's count.
+       */
+      fetch('/api/dashboard/today', { credentials: 'same-origin' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (alive && d && Array.isArray(d.needs)) setNeedsCount(d.needs.length); })
+        .catch(() => {});
+    };
     read();
     const t = setInterval(read, 60000);
     return () => { alive = false; clearInterval(t); };
@@ -371,7 +413,9 @@ export function App() {
    * to run again — and the header kept the timestamp it drew on load.
    * Pressing Sync appeared to do nothing at all.
    */
-  const syncedLabel = syncFailed ?
+  const syncedLabel = syncing ?
+  'Syncing…' :
+  syncFailed ?
   'Sync failed — tap to retry' :
   syncedAt ? `Synced ${relativeTime(syncedAt)}` : 'Not synced yet';
 
@@ -490,6 +534,12 @@ export function App() {
           key={dashboardVersion}
           onNavigate={setActiveTab}
           onNeedsChange={setNeedsCount}
+          propertyId={globalPropertyFilter}
+          onOpenBooking={(smoobuId) => {
+            // The sheet sits above every tab, so Home can open it in place.
+            const hit = bookings.find((b) => b.smoobuId === smoobuId);
+            if (hit) setSelectedBooking(hit);
+          }}
           onGoToDay={(pid, date) => {
             // Straight to the day the item is about, with the sheet open.
             // "Assign" used to drop you on a tab and leave you to find it.
@@ -649,7 +699,10 @@ export function App() {
         }} />
       }
 
-      {activeTab === 'calendar' &&
+      {/* Home opens bookings too — a property row and a "coming up" row
+          are both about a stay. The sheet was drawn on the calendar only,
+          so tapping one on Home did nothing visible at all. */}
+      {(activeTab === 'calendar' || activeTab === 'home') &&
       <BookingDetailSheet
         booking={selectedBooking}
         onClose={() => setSelectedBooking(null)}
@@ -657,6 +710,9 @@ export function App() {
           setSelectedBooking(null);
           setPickedFor({ propertyId: pid, reason });
           setPickedDay(date);
+          // The cleaning sheet lives on the calendar; from Home, go there.
+          setPropertyId(pid);
+          setActiveTab('calendar');
         }} />
 
       }

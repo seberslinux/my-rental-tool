@@ -278,13 +278,25 @@ router.post('/sync/bookings', requireRole('admin'), async (req, res) => {
 router.get('/dashboard/today', scopeProperties, async (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const since = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
-  const horizon = new Date(Date.now() + 21 * 86400000).toISOString().slice(0, 10);
+  /**
+   * Thirty-one days ahead, not twenty-one.
+   *
+   * "Still to sell" counts thirty nights, and the bookings were loaded
+   * only three weeks out — so nights 22 to 30 always read as open and
+   * arrivals in that stretch were missing from the money. The numbers
+   * looked plausible and were wrong by about a third of the window.
+   */
+  const horizon = new Date(Date.now() + 31 * 86400000).toISOString().slice(0, 10);
 
   const scoped = req.accessiblePropertyIds;
-  const properties = await getAll(
+  let properties = await getAll(
     scoped === null ? 'SELECT * FROM properties ORDER BY name' : 'SELECT * FROM properties WHERE id = ANY($1) ORDER BY name',
     scoped === null ? [] : [scoped]
   );
+  // The property picker on Home. It was drawn and never sent, so choosing
+  // The loft changed nothing on the page — the money least of all.
+  const only = Number(req.query.property_id) || 0;
+  if (only) properties = properties.filter((p) => p.id === only);
   if (properties.length === 0) return res.json({ needs: [], board: [] });
   const ids = properties.map((p) => p.id);
 
@@ -358,7 +370,69 @@ router.get('/dashboard/today', scopeProperties, async (req, res) => {
     console.error('Holiday lookup failed for /dashboard/today:', err.message);
   }
 
-  res.json(buildToday({ properties, stays, jobs, issues, blocks, supplies, isFree, today, now, holidays }));
+  // The morning check's last answer, and what has already been seen.
+  const [healthRows, dismissedRows] = await Promise.all([
+    getAll(
+      `SELECT ch.report FROM channel_health ch WHERE ch.property_id = ANY($1)`,
+      [ids]
+    ).catch(() => []),
+    getAll('SELECT key, severity FROM dismissed_needs').catch(() => []),
+  ]);
+  const healthResults = healthRows.map((r) => (typeof r.report === 'string' ? JSON.parse(r.report) : r.report));
+  const dismissed = new Map(dismissedRows.map((r) => [r.key, r.severity]));
+
+  res.json(buildToday({
+    properties, stays, jobs, issues, blocks, supplies, isFree, today, now, holidays,
+    healthResults, dismissed,
+  }));
+});
+
+/**
+ * Take an item off the front page, or put it back.
+ *
+ * Only the two kinds that are information rather than a task with a
+ * deadline: an issue a cleaner reported, and a finding from the morning
+ * check. A clean nobody is doing cannot be dismissed — it is solved by
+ * sending somebody, and hiding it is how a property goes uncleaned.
+ *
+ * The key names the property, so the same scoping that guards the page
+ * guards this: you cannot put away somebody else's finding.
+ */
+const DISMISSIBLE = /^(issue:(\d+)|health:(\d+):[a-z_]+)$/;
+
+async function propertyOfNeed(key) {
+  const m = DISMISSIBLE.exec(key);
+  if (!m) return null;
+  if (m[3]) return Number(m[3]);
+  const issue = await getOne('SELECT property_id FROM maintenance_issues WHERE id = $1', [m[2]]);
+  return issue ? issue.property_id : null;
+}
+
+router.post('/dashboard/dismiss', scopeProperties, async (req, res) => {
+  const { key, severity } = req.body || {};
+  if (!key || !DISMISSIBLE.test(String(key))) {
+    return res.status(400).json({ error: 'That item cannot be put away' });
+  }
+  const propertyId = await propertyOfNeed(String(key));
+  if (!propertyId) return res.status(404).json({ error: 'Nothing like that to put away' });
+  if (denyIfOutOfScope(req, res, propertyId)) return;
+
+  await run(
+    `INSERT INTO dismissed_needs (key, severity, dismissed_by) VALUES ($1, $2, $3)
+     ON CONFLICT (key) DO UPDATE SET
+       severity = EXCLUDED.severity, dismissed_by = EXCLUDED.dismissed_by, dismissed_at = NOW()`,
+    [String(key), ['red', 'amber', 'attention'].includes(severity) ? severity : 'attention', req.user ? req.user.id : null]
+  );
+  res.json({ ok: true });
+});
+
+router.delete('/dashboard/dismiss', scopeProperties, async (req, res) => {
+  const key = String((req.body && req.body.key) || req.query.key || '');
+  const propertyId = await propertyOfNeed(key);
+  if (!propertyId) return res.status(404).json({ error: 'Nothing like that to bring back' });
+  if (denyIfOutOfScope(req, res, propertyId)) return;
+  await run('DELETE FROM dismissed_needs WHERE key = $1', [key]);
+  res.json({ ok: true });
 });
 
 /**

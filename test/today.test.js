@@ -388,3 +388,143 @@ test('nothing asked for means an empty list, which the screen does not draw', ()
   const out = buildToday({ properties: props, today: TODAY });
   assert.deepEqual(out.supplies, []);
 });
+
+/* ---------------------------------------------------------------------- *
+ * From the home-page review
+ * ---------------------------------------------------------------------- */
+
+test('blocked nights are reported beside the open ones, not hidden in them', () => {
+  // "21 open" over-promised by every blocked night. The open count keeps
+  // its meaning — a block is not a sale — and the block is said as well.
+  const properties = [{ id: 1, name: 'The loft', check_out_time: '10:00' }];
+  const stays = [{
+    smoobu_id: 'b', property_id: 1, status: 'confirmed', platform: 'Blocked channel',
+    guest_name: '', check_in: '2026-08-12', check_out: '2026-08-15', total_price: 0,
+  }];
+  const { money } = buildToday({ properties, stays, today: '2026-08-10' });
+  assert.equal(money.open_nights_14, 14, 'still unsold');
+  assert.equal(money.blocked_nights_14, 3, 'and three of them cannot be sold');
+  assert.equal(money.blocked_nights_30, 3);
+});
+
+test('the money leads with what you keep, after the channel takes its cut', () => {
+  // R4,000 on Booking.com at 15% commission and 2.1% bank charge, with
+  // VAT on both: the gross is mostly the channel's business.
+  const properties = [{
+    id: 1, name: 'The loft', check_out_time: '10:00',
+    commission_booking: 15, bank_charge_booking: 2.1, vat_rate: 15,
+  }];
+  const stays = [{
+    smoobu_id: 'a', property_id: 1, status: 'confirmed', platform: 'Booking.com',
+    guest_name: 'G', check_in: '2026-08-12', check_out: '2026-08-16', total_price: 4000,
+  }];
+  const { money } = buildToday({ properties, stays, today: '2026-08-10' });
+  assert.equal(money.booked_revenue_30, 4000, 'gross, as before');
+  assert.equal(money.kept_30, 3213, '4000 less 19.66%');
+});
+
+test('a stay on a channel with no fees on file is counted at its price', () => {
+  const properties = [{ id: 1, name: 'The loft', check_out_time: '10:00' }];
+  const stays = [{
+    smoobu_id: 'a', property_id: 1, status: 'confirmed', platform: 'Direct booking',
+    guest_name: 'G', check_in: '2026-08-12', check_out: '2026-08-14', total_price: 3000,
+  }];
+  const { money } = buildToday({ properties, stays, today: '2026-08-10' });
+  assert.equal(money.kept_30, 3000, 'not guessed at');
+});
+
+test('the forward list says when, for how long, and which booking', () => {
+  const properties = [{ id: 1, name: 'The loft', check_in_time: '15:00', check_out_time: '11:00' }];
+  const stays = [{
+    smoobu_id: 77, property_id: 1, status: 'confirmed', platform: 'Airbnb',
+    guest_name: 'Siyanda', check_in: '2026-08-11', check_out: '2026-08-13',
+    num_guests: 2, children: 1,
+  }];
+  const { upcoming } = buildToday({ properties, stays, today: '2026-08-10' });
+  const inRow = upcoming.find((u) => u.kind === 'in');
+  const outRow = upcoming.find((u) => u.kind === 'out');
+  assert.equal(inRow.time, '15:00');
+  assert.equal(outRow.time, '11:00', "the property's own checkout time");
+  assert.equal(inRow.smoobu_id, 77, 'so a row can open the booking');
+  assert.equal(inRow.nights, 2);
+  assert.equal(inRow.guests, 3, 'children are guests too');
+});
+
+test('a property row knows its booking and what it is worth', () => {
+  const properties = [{
+    id: 1, name: 'Hill Top Lodge', check_out_time: '10:00',
+    commission_airbnb: 15, vat_rate: 15,
+  }];
+  const stays = [{
+    smoobu_id: 501, property_id: 1, status: 'confirmed', platform: 'Airbnb',
+    guest_name: 'Hunter', check_in: '2026-08-09', check_out: '2026-08-12', total_price: 6000,
+  }];
+  const { properties: rows } = buildToday({ properties, stays, today: '2026-08-10' });
+  assert.equal(rows[0].guest.smoobu_id, 501);
+  assert.equal(rows[0].guest.nights, 3);
+  assert.equal(rows[0].guest.kept, 4965, '6000 less 15% and the VAT on it');
+});
+
+// --- needs you: the morning check, and putting things away --------------
+
+const loft = [{ id: 1, name: 'The loft', check_out_time: '10:00' }];
+const health = [{
+  property_id: 1, property: 'The loft', status: 'red',
+  findings: [
+    { key: 'markup_short_airbnb', severity: 'red', title: 'Airbnb pays out under your base at The loft', detail: '95.8% of base.' },
+    { key: 'markup_tight_booking', severity: 'amber', title: 'Booking.com barely covers its commission at The loft', detail: '' },
+  ],
+}];
+
+test("the morning check's reds are in needs you, and its ambers are not", () => {
+  const { needs } = buildToday({ properties: loft, healthResults: health, today: '2026-08-10' });
+  const keys = needs.map((n) => n.key);
+  assert.ok(keys.includes('health:1:markup_short_airbnb'));
+  assert.ok(!keys.includes('health:1:markup_tight_booking'), 'worth a look, not a task');
+  assert.match(needs.find((n) => n.key === 'health:1:markup_short_airbnb').title, /The loft/);
+});
+
+test('an issue that has been put away is off the front page', () => {
+  const issues = [{ id: 7, property_id: 1, title: 'Leak at kitchen sink' }];
+  const shown = buildToday({ properties: loft, issues, today: '2026-08-10' }).needs;
+  assert.equal(shown.length, 1);
+  assert.equal(shown[0].dismissible, true);
+
+  const hidden = buildToday({
+    properties: loft, issues, today: '2026-08-10',
+    dismissed: new Map([['issue:7', 'attention']]),
+  }).needs;
+  assert.equal(hidden.length, 0);
+});
+
+test('a finding put away as amber comes back when it turns red', () => {
+  // Living with a tight markup is not agreeing to pay out under base.
+  const { needs } = buildToday({
+    properties: loft, healthResults: health, today: '2026-08-10',
+    dismissed: new Map([['health:1:markup_short_airbnb', 'amber']]),
+  });
+  assert.ok(needs.find((n) => n.key === 'health:1:markup_short_airbnb'));
+});
+
+test('a red put away as red stays away', () => {
+  const { needs } = buildToday({
+    properties: loft, healthResults: health, today: '2026-08-10',
+    dismissed: new Map([['health:1:markup_short_airbnb', 'red']]),
+  });
+  assert.equal(needs.find((n) => n.key === 'health:1:markup_short_airbnb'), undefined);
+});
+
+test('a clean nobody is doing cannot be put away', () => {
+  // Solved by sending somebody. Hiding it is how a property goes uncleaned.
+  const properties = [{ id: 1, name: 'The loft', check_out_time: '10:00' }];
+  const stays = [{
+    smoobu_id: 'a', property_id: 1, status: 'confirmed', platform: 'Airbnb',
+    guest_name: 'G', check_in: '2026-08-08', check_out: '2026-08-11',
+  }];
+  const { needs } = buildToday({ properties, stays, today: '2026-08-10' });
+  needs.forEach((n) => {
+    if (!n.key.startsWith('issue:') && !n.key.startsWith('health:')) {
+      assert.notEqual(n.dismissible, true, `${n.key} must stay until somebody acts`);
+    }
+  });
+});

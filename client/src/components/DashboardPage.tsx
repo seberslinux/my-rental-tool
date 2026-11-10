@@ -24,8 +24,12 @@ import { ChannelHealthCard } from './ChannelHealthCard';
  * once — the tab badge showing 1 beside a list of 4 was the last of it.
  * Home no longer reads any of it.
  */
-export function DashboardPage({ onNavigate, onGoToDay, onNeedsChange }: {
+export function DashboardPage({ onNavigate, onGoToDay, onNeedsChange, propertyId = 0, onOpenBooking }: {
   onNavigate?: (tab: string) => void;
+  /** The property picked at the top of Home. */
+  propertyId?: number;
+  /** Open a booking's sheet, by Smoobu id. */
+  onOpenBooking?: (smoobuId: number) => void;
   /** Open the calendar on a specific day, with its sheet up. */
   onGoToDay?: (propertyId: number, date: string) => void;
   /** How many things need somebody — passed up for the tab badge. */
@@ -34,8 +38,10 @@ export function DashboardPage({ onNavigate, onGoToDay, onNeedsChange }: {
   return (
     <div className="p-4 lg:px-8 lg:py-6 bg-[#F7F7F7] min-h-full">
       <div className="lg:max-w-[860px]">
-        <TodayPanel onGoToDay={onGoToDay} onNeedsChange={onNeedsChange} onNavigate={onNavigate} />
-        <ChannelHealthCard onNavigate={onNavigate} />
+        <TodayPanel
+          onGoToDay={onGoToDay} onNeedsChange={onNeedsChange} onNavigate={onNavigate}
+          propertyId={propertyId} onOpenBooking={onOpenBooking} />
+        <ChannelHealthCard onNavigate={onNavigate} propertyId={propertyId} />
       </div>
     </div>);
 
