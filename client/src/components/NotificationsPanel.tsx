@@ -38,6 +38,28 @@ const ago = (iso: string) => {
   return days === 1 ? 'yesterday' : `${days}d ago`;
 };
 
+/**
+ * Why a send did not land, in words somebody can act on.
+ *
+ * Providers describe failures to developers: an object id, a
+ * permissions clause and a link to their API docs. None of that belongs
+ * in a feed whose job is to say a guest has booked. What the reader
+ * needs is which channel went quiet and whether it is theirs to fix —
+ * the detail stays on the title attribute.
+ */
+function undeliveredReason(error: string): string {
+  const e = error.toLowerCase();
+  if (e.includes('delivered by push')) return 'Sent to your phone. WhatsApp is not connected.';
+  if (e.includes('does not exist') || e.includes('permission') || e.includes('oauth') || e.includes('token')) {
+    return 'Not sent to WhatsApp — it is not connected.';
+  }
+  if (e.includes('session has expired') || e.includes('24h') || e.includes('24-hour')) {
+    return 'Not sent to WhatsApp — outside its messaging window.';
+  }
+  if (e.includes('not in allowed list')) return 'Not sent to WhatsApp — this number is not allowed.';
+  return 'Not sent to WhatsApp.';
+}
+
 export function NotificationsPanel({ onClose, onRead, onOpenLink }: {
   onClose: () => void;
   onRead: () => void;
@@ -273,11 +295,27 @@ export function NotificationsPanel({ onClose, onRead, onOpenLink }: {
                     {n.property_name ? ` · ${n.property_name}` : ''}
                   </p>
 
-                  {/* A send that did not land is worth knowing about — this
-                      is the app admitting it, rather than staying quiet. */}
+                  {/* A send that did not land is worth knowing about —
+                      in a sentence, not in the provider's own words.
+
+                      This printed delivery_error verbatim, so every
+                      notification since WhatsApp's credential expired
+                      carried "Unsupported post request. Object with ID
+                      '990160614186502' does not exist, cannot be loaded
+                      due to missing permissions, or does not support
+                      this operation. Please read the Graph API
+                      documentation at https://developers.facebook.com/
+                      docs/graph-api" — four lines of Facebook, longer
+                      than the notification, on all 134 of them. The feed
+                      became unreadable and the thing it was telling you
+                      got lost behind an error you cannot act on from
+                      here.
+
+                      The full text is kept on the title attribute for
+                      whoever is fixing it. */}
                   {n.delivery === 'failed' && n.delivery_error &&
-                <p className="text-[11px] text-[#991B1B] mt-1">
-                      Not delivered: {n.delivery_error}
+                <p className="text-[11px] text-[#991B1B] mt-1" title={n.delivery_error}>
+                      {undeliveredReason(n.delivery_error)}
                     </p>
                 }
 
