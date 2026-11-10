@@ -12,6 +12,8 @@ const smoobu = require('../services/smoobu');
 const { mapSmoobuBooking } = require('../services/smoobu-mapper');
 // One statement writes a booking, whichever path got there first.
 const { upsertBooking } = require('../services/booking-store');
+// One statement writes a day's rate, shared with the periodic sync.
+const { upsertDailyRates } = require('../services/rate-sync');
 const { notify } = require('../services/notify');
 
 // Smoobu has no HMAC/signature support in its webhook config — the only
@@ -63,6 +65,9 @@ function describe(booking, propertyName) {
   };
 }
 
+/** What Smoobu calls a changed booking, plus the names this once guessed. */
+const UPDATED = new Set(['updateReservation', 'modifyReservation', 'modify', 'update']);
+
 router.post('/:secret', verifyWebhookSecret, async (req, res) => {
   const event = req.body;
   console.log('Webhook received:', JSON.stringify(event).substring(0, 200));
@@ -75,6 +80,41 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
       return res.status(200).json({ received: true, action: 'no data' });
     }
 
+    /**
+     * Not every event is about a booking.
+     *
+     * The property was looked up here, from `data.apartment.id`, before
+     * anything branched on the action. Smoobu's rate and message events
+     * carry no apartment on the payload, so every one of them ended at
+     * "Property not found for apartment undefined" and returned 200 —
+     * telling Smoobu it had been handled. Production had thirteen
+     * messages and four rate changes dropped that way.
+     */
+    if (action === 'updateRates') {
+      // `{ "2297844": { "2026-11-28": { price, min_length_of_stay,
+      // available } } }` — keyed by apartment, which is the shape
+      // `daily_rates` wants and the reason a rate change can be applied
+      // here rather than waited for.
+      let written = 0;
+      for (const [smoobuApartmentId, byDate] of Object.entries(bookingData)) {
+        const prop = await getOne('SELECT id, name FROM properties WHERE smoobu_id = $1', [smoobuApartmentId]);
+        if (!prop) {
+          console.log(`Webhook: rates for unknown apartment ${smoobuApartmentId}`);
+          continue;
+        }
+        const n = await upsertDailyRates(run, prop.id, byDate);
+        written += n;
+        console.log(`Webhook: ${n} night(s) repriced at ${prop.name}`);
+      }
+      return res.status(200).json({ received: true, action, nights: written });
+    }
+
+    if (action === 'newMessage') {
+      // Nothing reads guest messages yet. Acknowledged rather than run
+      // through a property lookup that was never going to find one.
+      return res.status(200).json({ received: true, action, handled: false });
+    }
+
     const smoobuId = bookingData.id || bookingData.reservationId;
     const apartmentId = bookingData['apartment']?.id || bookingData.apartmentId;
 
@@ -82,7 +122,7 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
     const property = await getOne('SELECT * FROM properties WHERE smoobu_id = $1', [apartmentId]);
 
     if (!property) {
-      console.log(`Webhook: Property not found for apartment ${apartmentId}`);
+      console.log(`Webhook: Property not found for apartment ${apartmentId} (action ${action})`);
       return res.status(200).json({ received: true, action: 'unknown property' });
     }
 
@@ -155,7 +195,19 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
         });
       }
 
-    } else if (action === 'modifyReservation' || action === 'modify') {
+    } else if (UPDATED.has(action)) {
+      /**
+       * `updateReservation` is the one Smoobu sends.
+       *
+       * This branch matched `modifyReservation` and `modify`, neither
+       * of which Smoobu has ever sent — every other action it sends is
+       * verb+Noun (`newReservation`, `cancelReservation`, `updateRates`,
+       * `newMessage`). So a changed booking fell through to nothing and
+       * waited for the periodic sync, which is what "the webhook does
+       * not pick up changes instantly" was. The old names are kept as
+       * aliases: accepting a name Smoobu does not send costs nothing,
+       * and guessing wrong cost this.
+       */
       const row = mapSmoobuBooking(bookingData);
       // The same write as every other path. This was an UPDATE of ten
       // columns, so a stay whose dates moved kept its old night count
@@ -180,6 +232,12 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
           link: `/booking/${smoobuId}`,
         });
       }
+    } else {
+      // Said out loud. An action nobody handles used to look exactly
+      // like one that worked, which is how four rate changes and
+      // thirteen messages went by unnoticed.
+      console.log(`Webhook: nothing handles action "${action}"`);
+      return res.status(200).json({ received: true, action, handled: false });
     }
 
     res.status(200).json({ received: true, action });
