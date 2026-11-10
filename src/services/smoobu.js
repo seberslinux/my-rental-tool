@@ -205,6 +205,53 @@ async function unblockDates(reservationId, apiKey) {
   return res.data;
 }
 
+/**
+ * Every conversation, newest activity first as Smoobu returns it.
+ *
+ * One thread per booking, carrying its latest message and when it was
+ * written — the only timestamp the messaging API gives. `apartments`
+ * filters to Smoobu apartment ids.
+ */
+async function getThreads({ page = 1, pageSize = 50, apartments = [] } = {}, apiKey) {
+  const client = getClient(apiKey);
+  const params = { page_number: page, page_size: pageSize };
+  if (apartments.length) params.apartments = apartments;
+  const res = await client.get('/threads', { params });
+  return res.data;
+}
+
+/**
+ * One booking's conversation. `type` 1 is from the guest, 2 from you.
+ *
+ * `onlyRelatedToGuest` keeps it to the guest conversation rather than
+ * every system message Smoobu attaches to a booking.
+ */
+async function getMessages(reservationId, { page = 1 } = {}, apiKey) {
+  const client = getClient(apiKey);
+  const res = await client.get(`/reservations/${reservationId}/messages`, {
+    params: { page, onlyRelatedToGuest: true },
+  });
+  return res.data;
+}
+
+/**
+ * Reply to a guest, through whichever channel they booked on.
+ *
+ * The documented send path. `sendGuestMessage` below posts to
+ * `/reservations/{id}/messages`, which is the path for *reading* a
+ * conversation; it is left exactly as it is because the check-in and
+ * check-out crons depend on it, and correcting it could start sending
+ * their default text to every arriving guest.
+ */
+async function sendMessageToGuest(reservationId, { subject = '', messageBody }, apiKey) {
+  const client = getClient(apiKey);
+  const res = await client.post(
+    `/reservations/${reservationId}/messages/send-message-to-guest`,
+    { subject, messageBody }
+  );
+  return res.data;
+}
+
 // Send a message to a guest via Smoobu
 async function sendGuestMessage(reservationId, subject, messageBody, apiKey) {
   const client = getClient(apiKey);
@@ -227,4 +274,7 @@ module.exports = {
   blockDates,
   unblockDates,
   sendGuestMessage,
+  getThreads,
+  getMessages,
+  sendMessageToGuest,
 };

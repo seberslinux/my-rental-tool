@@ -4,14 +4,17 @@ import {
   Calendar,
   BrushCleaning,
   BarChart2,
+  MessageCircle,
   MoreHorizontal } from
 'lucide-react';
 interface TabBarProps {
   activeTab: string;
   onTabChange: (tab: string) => void;
   homeBadge?: number;
+  /** Conversations with a guest message nobody has opened. */
+  messagesBadge?: number;
 }
-export function TabBar({ activeTab, onTabChange, homeBadge = 0 }: TabBarProps) {
+export function TabBar({ activeTab, onTabChange, homeBadge = 0, messagesBadge = 0 }: TabBarProps) {
   const tabs = [
   {
     id: 'home',
@@ -23,6 +26,14 @@ export function TabBar({ activeTab, onTabChange, homeBadge = 0 }: TabBarProps) {
     id: 'calendar',
     label: 'Calendar',
     icon: Calendar
+  },
+  {
+    // Beside the calendar because it is read as often: a guest asking
+    // how to get in is waiting on you now, not at the end of the week.
+    id: 'messages',
+    label: 'Messages',
+    icon: MessageCircle,
+    badge: messagesBadge
   },
   {
     id: 'cleaners',

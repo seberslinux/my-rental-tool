@@ -4,6 +4,7 @@ import {
   Calendar,
   Sparkles,
   BarChart2,
+  MessageCircle,
   MoreHorizontal,
   RefreshCw,
   Bell,
@@ -41,6 +42,7 @@ export function TopNav({ activeTab, onTabChange, onRefresh, hasNotifications, on
   const tabs = [
     { id: 'home', label: 'Home', icon: Home },
     { id: 'calendar', label: 'Calendar', icon: Calendar },
+    { id: 'messages', label: 'Messages', icon: MessageCircle },
     { id: 'cleaners', label: 'Cleaners', icon: Sparkles },
     { id: 'analytics', label: 'Analytics', icon: BarChart2 },
     { id: 'more', label: 'More', icon: MoreHorizontal }];

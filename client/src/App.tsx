@@ -18,6 +18,7 @@ import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
 import { TodoPage } from './components/TodoPage';
 import { RatesPage } from './components/RatesPage';
+import { MessagesPage } from './components/MessagesPage';
 
 /**
  * Which screen a URL means.
@@ -36,6 +37,7 @@ import { RatesPage } from './components/RatesPage';
 const TAB_PATHS: Record<string, string> = {
   home: '/',
   calendar: '/calendar',
+  messages: '/messages',
   cleaners: '/cleaners',
   analytics: '/analytics',
   properties: '/properties',
@@ -71,6 +73,15 @@ const tabForPath = (pathname: string) => {
  * `/`, so it opened the app at Home and left you to go and find the
  * thing it had just told you about.
  */
+/**
+ * A link to one guest conversation — where a "sent a message" push lands.
+ * The number is the Smoobu booking id the conversation hangs off.
+ */
+const messageIdForPath = (pathname: string): number | null => {
+  const m = pathname.match(/^\/messages\/(\d+)$/);
+  return m ? Number(m[1]) : null;
+};
+
 const bookingIdForPath = (pathname: string): number | null => {
   const m = pathname.match(/^\/booking\/(\d+)$/);
   return m ? Number(m[1]) : null;
@@ -90,7 +101,7 @@ import { resyncPush } from './data/push';
 
 // Tabs that scope their content to a single property. The Calendar has its
 // own property picker in CalendarHeader; More has nothing to scope.
-const SHOWS_PROPERTY_FILTER = new Set(['home', 'analytics']);
+const SHOWS_PROPERTY_FILTER = new Set(['home', 'analytics', 'messages']);
 
 /**
  * The window the cleaning picture is loaded over.
@@ -147,7 +158,11 @@ export function App() {
   const [cleaningVersion, setCleaningVersion] = useState(0);
   const [authChecked, setAuthChecked] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
-  const [activeTab, setActiveTab] = useState(() => tabForPath(window.location.pathname));
+  const [activeTab, setActiveTab] = useState(() =>
+  messageIdForPath(window.location.pathname) ? 'messages' : tabForPath(window.location.pathname));
+  /** Which conversation to open, from a push link or the booking sheet. */
+  const [openMessageId, setOpenMessageId] = useState<number | null>(() => messageIdForPath(window.location.pathname));
+  const [messagesUnread, setMessagesUnread] = useState(0);
   /**
    * A booking the URL asked for, until the data arrives to resolve it.
    *
@@ -271,6 +286,12 @@ export function App() {
        * again. And once Home could be narrowed to one property, a badge
        * fed from Home would have shrunk to that property's count.
        */
+      // Conversations waiting on an answer — from this app's own record,
+      // so polling it costs Smoobu nothing.
+      fetch('/api/messages/unread', { credentials: 'same-origin' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (alive && d) setMessagesUnread(d.unread || 0); })
+        .catch(() => {});
       fetch('/api/dashboard/today', { credentials: 'same-origin' })
         .then((r) => (r.ok ? r.json() : null))
         .then((d) => { if (alive && d && Array.isArray(d.needs)) setNeedsCount(d.needs.length); })
@@ -391,6 +412,8 @@ export function App() {
         return 'To do';
       case 'rates':
         return 'Rates';
+      case 'messages':
+        return 'Messages';
       case 'more':
         return 'More';
       default:
@@ -648,12 +671,18 @@ export function App() {
         {activeTab === 'users' && <UsersPage />}
         {activeTab === 'todo' && <TodoPage propertyId={globalPropertyFilter} />}
         {activeTab === 'rates' && <RatesPage initialPropertyId={ratesProperty} />}
+        {activeTab === 'messages' &&
+        <MessagesPage
+          initialBookingId={openMessageId}
+          onUnreadChange={setMessagesUnread}
+          propertyId={globalPropertyFilter} />
+        }
         {activeTab === 'smoobu' && <SmoobuConnectionPage isAdmin={userRole === 'admin'} />}
         {activeTab === 'more' && <MorePage onNavigate={setActiveTab} onLogout={() => { setIsLoggedIn(false); setDataLoaded(false); }} />}
         </div>
       </main>
 
-      <TabBar activeTab={activeTab} onTabChange={setActiveTab} homeBadge={attentionCount} />
+      <TabBar activeTab={activeTab} onTabChange={setActiveTab} homeBadge={attentionCount} messagesBadge={messagesUnread} />
       <AddToHomeScreen />
 
       {activeTab === 'calendar' && pickedDay &&
@@ -706,6 +735,11 @@ export function App() {
       <BookingDetailSheet
         booking={selectedBooking}
         onClose={() => setSelectedBooking(null)}
+        onMessageGuest={(smoobuId) => {
+          setSelectedBooking(null);
+          setOpenMessageId(smoobuId);
+          setActiveTab('messages');
+        }}
         onRequestCleaner={(date, pid, reason) => {
           setSelectedBooking(null);
           setPickedFor({ propertyId: pid, reason });

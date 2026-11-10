@@ -883,6 +883,25 @@ async function runMigrations() {
     )
   `);
 
+  /**
+   * Which conversations have a message nobody here has read.
+   *
+   * Smoobu reports one unread total for the whole account and nothing
+   * per thread, so the per-conversation answer is kept here: the
+   * newMessage webhook records the latest guest message, and opening the
+   * conversation records how far it has been read.
+   */
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS guest_message_state (
+      booking_smoobu_id BIGINT PRIMARY KEY,
+      property_id INTEGER REFERENCES properties(id) ON DELETE CASCADE,
+      last_guest_message_id BIGINT,
+      last_guest_at TIMESTAMPTZ,
+      read_through_id BIGINT,
+      read_at TIMESTAMPTZ
+    )
+  `);
+
   console.log('Database migrations complete.');
 }
 

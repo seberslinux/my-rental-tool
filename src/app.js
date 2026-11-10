@@ -126,6 +126,7 @@ function buildApp({
   app.use('/api/inventory', require('./routes/inventory'));
   app.use('/api/settings', require('./routes/settings'));
   app.use('/api/health', require('./routes/health'));
+  app.use('/api/messages', require('./routes/messages'));
   app.use('/api/admin', require('./routes/admin'));
 
   // SPA fallback — non-API GETs return index.html so React Router owns them.

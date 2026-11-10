@@ -14,6 +14,9 @@ const { mapSmoobuBooking } = require('../services/smoobu-mapper');
 const { upsertBooking } = require('../services/booking-store');
 // One statement writes a day's rate, shared with the periodic sync.
 const { upsertDailyRates } = require('../services/rate-sync');
+// Who wrote, and whether anybody here has read it.
+const { conversation, recordGuestMessage, markRead } = require('../services/guest-messages');
+const { getApiKeyForProperty } = require('../services/api-key-resolver');
 const { notify } = require('../services/notify');
 
 // Smoobu has no HMAC/signature support in its webhook config — the only
@@ -110,9 +113,52 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
     }
 
     if (action === 'newMessage') {
-      // Nothing reads guest messages yet. Acknowledged rather than run
-      // through a property lookup that was never going to find one.
-      return res.status(200).json({ received: true, action, handled: false });
+      // `{ id, sender: 'guest'|'host', booking: { id } }` — no text and no
+      // apartment, so the booking is how this finds its property.
+      const messageId = Number(bookingData.id) || null;
+      const bookingSmoobuId = Number(bookingData.booking && bookingData.booking.id) || null;
+      if (!bookingSmoobuId) return res.status(200).json({ received: true, action, handled: false });
+
+      const booking = await getOne(
+        `SELECT b.smoobu_id, b.guest_name, b.property_id, p.name AS property
+           FROM bookings b JOIN properties p ON p.id = b.property_id WHERE b.smoobu_id = $1`,
+        [bookingSmoobuId]
+      );
+
+      if (bookingData.sender === 'host') {
+        // Answered — from here, from Smoobu, or from the channel's own app.
+        // A conversation somebody has replied to is not waiting on them.
+        await markRead(bookingSmoobuId, messageId, booking && booking.property_id);
+        return res.status(200).json({ received: true, action });
+      }
+
+      await recordGuestMessage(bookingSmoobuId, messageId, booking && booking.property_id);
+
+      /**
+       * The words, on the lock screen.
+       *
+       * The webhook carries none, so the conversation is read once to
+       * find them. Best effort: a push saying who wrote is still worth
+       * sending when Smoobu cannot be reached for what they said.
+       */
+      let said = '';
+      try {
+        const apiKey = booking ? await getApiKeyForProperty(booking.property_id) : null;
+        const all = await conversation(bookingSmoobuId, apiKey);
+        const mine = all.filter((m) => m.from === 'guest');
+        said = mine.length ? mine[mine.length - 1].text.slice(0, 180) : '';
+      } catch (err) {
+        console.log(`Webhook: could not read message ${messageId} — ${err.message}`);
+      }
+
+      await notify({
+        event: 'guest_message',
+        title: `${(booking && booking.guest_name) || 'A guest'} sent a message`,
+        body: [booking && booking.property, said].filter(Boolean).join(' · '),
+        propertyId: booking ? booking.property_id : null,
+        link: `/messages/${bookingSmoobuId}`,
+      });
+      return res.status(200).json({ received: true, action });
     }
 
     const smoobuId = bookingData.id || bookingData.reservationId;

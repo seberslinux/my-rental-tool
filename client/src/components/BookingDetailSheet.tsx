@@ -15,6 +15,8 @@ interface BookingDetailSheetProps {
    * next screen has nothing left to guess.
    */
   onRequestCleaner?: (date: string, propertyId: number, reason: 'checkout' | 'checkin' | 'other') => void;
+  /** Open this guest's conversation. */
+  onMessageGuest?: (smoobuId: number) => void;
 }
 
 /**
@@ -26,7 +28,7 @@ interface BookingDetailSheetProps {
  * its title and left most of the panel empty, so from `sm` up it becomes a
  * centred dialog of readable width.
  */
-export function BookingDetailSheet({ booking, onClose, onRequestCleaner }: BookingDetailSheetProps) {
+export function BookingDetailSheet({ booking, onClose, onRequestCleaner, onMessageGuest }: BookingDetailSheetProps) {
   // Extras asked for on this stay alone.
   const [editingExtras, setEditingExtras] = useState(false);
   // Escape closes it — on a laptop the click target is far from the pointer.
@@ -212,6 +214,16 @@ export function BookingDetailSheet({ booking, onClose, onRequestCleaner }: Booki
               `deductions` and `netPayout` come from the server's
               calcDeductions — the same function behind the dashboard KPIs
               and the analytics page. Nothing is recomputed in the client. */}
+          {/* Straight to the conversation with this guest. A block has
+              nobody to write to. */}
+          {!isBlocked && onMessageGuest &&
+          <button
+            onClick={() => onMessageGuest(booking.smoobuId)}
+            className="mt-5 w-full h-[44px] rounded-[10px] border border-[#DDDDDD] text-[14px] font-semibold text-[#222222] flex items-center justify-center gap-2">
+              Message {booking.name.split(' ')[0]}
+            </button>
+          }
+
           {!isBlocked && booking.total > 0 &&
           <div className="mt-5 rounded-xl bg-[#F7F7F7] px-4 py-3">
               <Row label="Guest total" value={formatTotal(booking.total)} muted />
