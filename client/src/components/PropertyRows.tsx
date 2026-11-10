@@ -25,9 +25,11 @@ export interface PropertyRow {
   name: string;
   status: 'ready' | 'stale' | 'dirty' | 'occupied' | 'cleaning';
   detail: string;
-  guest: {name: string;until: string;leaving_today: boolean;} | null;
+  guest: {name: string;until: string;leaving_today: boolean;
+    smoobu_id?: number;nights?: number;kept?: number;platform?: string;} | null;
   cleaner: {name: string | null;date: string;status: string;} | null;
-  next_arrival: {name: string;date: string;} | null;
+  next_arrival: {name: string;date: string;
+    smoobu_id?: number;nights?: number;kept?: number;platform?: string;} | null;
   blocks: Block[];
 }
 
@@ -42,34 +44,46 @@ const LOOK: Record<PropertyRow['status'], {label: string;tone: string;Icon: any;
 const pretty = (d: string | null) =>
 d ? new Date(d + 'T00:00:00').toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
 
-/** The one line under the name, built from what is true rather than from a template. */
-function summarise(r: PropertyRow): string {
-  const parts: string[] = [LOOK[r.status]?.label || ''];
+const rand = (n?: number) => (n == null ? '' : `R ${Math.round(n).toLocaleString('en-ZA')}`);
 
+/**
+ * Who is there, and what it is worth.
+ *
+ * This was one run-on line — "Occupied · Hunter Tamryn until Thu, 12 Nov
+ * · Francesca cleans Thu, 12 Nov" — which reads as three facts with no
+ * verbs and left you to work out which date belonged to what. It is two
+ * sentences now: the stay, with what it leaves after fees, and the clean.
+ */
+function stayLine(r: PropertyRow): string {
   if (r.guest) {
-    parts.push(r.guest.leaving_today ?
+    const stay = r.guest.leaving_today ?
     `${r.guest.name} leaves today` :
-    `${r.guest.name} until ${pretty(r.guest.until)}`);
-  } else if (r.next_arrival) {
-    parts.push(`${r.next_arrival.name} arrives ${pretty(r.next_arrival.date)}`);
+    `${r.guest.name} is staying until ${pretty(r.guest.until)}`;
+    return [stay, r.guest.kept != null ? `${rand(r.guest.kept)} to you` : ''].filter(Boolean).join(' · ');
   }
+  if (r.next_arrival) {
+    return [`Empty · ${r.next_arrival.name} arrives ${pretty(r.next_arrival.date)}`,
+    r.next_arrival.kept != null ? `${rand(r.next_arrival.kept)} to you` : ''].filter(Boolean).join(' · ');
+  }
+  return 'Empty · nothing booked';
+}
 
+function cleanLine(r: PropertyRow): string | null {
   // Only worth saying when it is not already obvious from the state.
-  if (r.cleaner && r.status !== 'ready' && r.status !== 'cleaning') {
-    parts.push(r.cleaner.name ?
-    `${r.cleaner.name} cleans ${pretty(r.cleaner.date)}` :
-    `nobody cleaning yet`);
-  }
-
-  return parts.filter(Boolean).join(' · ');
+  if (!r.cleaner || r.status === 'ready' || r.status === 'cleaning') return null;
+  if (!r.cleaner.name) return `Clean on ${pretty(r.cleaner.date)} · nobody assigned yet`;
+  const answer = r.cleaner.status === 'pending' ? ' · not answered yet' : '';
+  return `Clean on ${pretty(r.cleaner.date)} · ${r.cleaner.name}${answer}`;
 }
 
 export function PropertyRows({
-  rows, onChanged,
+  rows, onChanged, onOpenBooking,
 }: {
   rows: PropertyRow[];
   /** Re-read the page after a change, so nothing here goes stale. */
   onChanged: () => void;
+  /** Open the stay this row is about: whoever is there, or who is next. */
+  onOpenBooking?: (smoobuId: number) => void;
 }) {
   const [busy, setBusy] = useState<number | null>(null);
   const [error, setError] = useState('');
@@ -142,9 +156,24 @@ export function PropertyRows({
                 <span className={`w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${look.tone}`}>
                   <look.Icon className="w-[15px] h-[15px]" strokeWidth={2.25} />
                 </span>
-                <div className="flex-1 min-w-0">
-                  <div className="text-[15px] font-medium text-[#222222] truncate">{r.name}</div>
-                  <div className="text-[13px] text-[#717171] truncate">{summarise(r)}</div>
+                {/* Tapping the row opens the booking it is about. */}
+                <div
+              className={`flex-1 min-w-0 ${(r.guest?.smoobu_id || r.next_arrival?.smoobu_id) && onOpenBooking ? 'cursor-pointer' : ''}`}
+              onClick={() => {
+                const id = r.guest?.smoobu_id || r.next_arrival?.smoobu_id;
+                if (id && onOpenBooking) onOpenBooking(id);
+              }}>
+                  <div className="text-[15px] font-medium text-[#222222] leading-snug">
+                    {r.name}
+                    <span className="ml-2 text-[12px] font-normal text-[#717171]">{LOOK[r.status]?.label}</span>
+                  </div>
+                  <div className="text-[13px] text-[#717171] leading-snug">{stayLine(r)}</div>
+                  {cleanLine(r) &&
+              <div className={`text-[13px] leading-snug ${
+              r.cleaner && (!r.cleaner.name || r.cleaner.status === 'pending') ? 'text-[#B45309]' : 'text-[#717171]'}`}>
+                      {cleanLine(r)}
+                    </div>
+              }
                 </div>
 
                 {/* The manager's own eyes, where it changes the answer.
