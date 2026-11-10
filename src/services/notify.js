@@ -381,9 +381,41 @@ async function notify({
         }
       }
     }
-    if (delivery === 'failed') {
-      console.error(`notify: ${event} not delivered — ${deliveryError}`);
+  }
+
+  /**
+   * A device took it, so it was delivered.
+   *
+   * `pushed` was counted and then thrown away. `delivery` and `channel`
+   * were decided by WhatsApp alone, so with Meta refusing every send —
+   * "Object with ID … does not exist, cannot be loaded due to missing
+   * permissions" — every row in the feed read `failed`, including the
+   * ones that had just arrived on somebody's phone a second earlier.
+   *
+   * That is the exact harm the comment above this block warns about:
+   * crying failure on every row trains people to ignore the warning
+   * that means something, and it told an owner nothing was being sent
+   * while their phone was buzzing.
+   *
+   * Push is the channel that works here. If it reached a device the
+   * notification was delivered, and WhatsApp's failure is a caveat on a
+   * delivery rather than the headline.
+   */
+  if (pushed > 0) {
+    const alsoWhatsapp = delivery === 'sent';
+    channel = alsoWhatsapp ? 'whatsapp+push' : 'push';
+    if (!alsoWhatsapp) {
+      deliveryError = deliveryError ?
+        `Delivered by push. WhatsApp did not: ${deliveryError}` :
+        null;
     }
+    delivery = 'sent';
+  }
+
+  // Logged once, after every channel has had its say — not from inside
+  // the WhatsApp branch, which could not see that push had succeeded.
+  if (delivery === 'failed') {
+    console.error(`notify: ${event} not delivered — ${deliveryError}`);
   }
 
   try {

@@ -461,3 +461,92 @@ test('an owner alert is likewise recorded rather than attempted', async () => {
 
   if (token) process.env.WHATSAPP_TOKEN = token;
 });
+
+/* ---------------------------------------------------------------------- *
+ * Push counts as delivery
+ *
+ * `pushed` was counted and then thrown away: delivery and channel were
+ * decided by WhatsApp alone. With Meta refusing every send — "Object
+ * with ID … does not exist, cannot be loaded due to missing
+ * permissions" — every row in production read `failed`, including the
+ * ones that had reached a phone a second earlier. The owner was told
+ * nothing was being sent while their phone was buzzing.
+ * ---------------------------------------------------------------------- */
+
+const whatsapp = require('../../src/services/whatsapp');
+const pushService = require('../../src/services/push');
+
+/**
+ * Production's shape: WhatsApp refusing every send, push working.
+ *
+ * Restores both afterwards, including on a failure — a stub left behind
+ * would silently change every test that ran after it.
+ */
+function asProduction(devices, run) {
+  const realSend = whatsapp.sendMessage;
+  const realConfigured = pushService.isConfigured;
+  const realSendTo = pushService.sendTo;
+  whatsapp.sendMessage = async () => {
+    const err = new Error('send failed');
+    err.response = { data: { error: { message: "Object with ID '990160614186502' does not exist" } } };
+    throw err;
+  };
+  pushService.isConfigured = () => true;
+  pushService.sendTo = async () => ({ sent: devices, gone: 0 });
+  return run().finally(() => {
+    whatsapp.sendMessage = realSend;
+    pushService.isConfigured = realConfigured;
+    pushService.sendTo = realSendTo;
+  });
+}
+
+const lastNotification = () => pool.query(
+  'SELECT * FROM notifications ORDER BY id DESC LIMIT 1'
+).then((r) => r.rows[0]);
+
+test('a notification a phone took is recorded as sent, whatever WhatsApp did', async () => {
+  await resetDb();
+  const owner = await seedUser({ role: 'admin', phone: '+27831112222', notify_whatsapp: 1 });
+  const property = await seedProperty({ owner });
+
+  await asProduction(1, () => notify({
+    event: 'booking_created', title: 'New booking — The loft',
+    body: 'Someone, for three nights.', propertyId: property.id, link: '/booking/1',
+  }));
+
+  const row = await lastNotification();
+  assert.equal(row.delivery, 'sent');
+  assert.equal(row.channel, 'push');
+});
+
+test('the WhatsApp failure survives as a caveat on the delivery', async () => {
+  // Still worth recording — Meta is rejecting every send and somebody
+  // should fix it. It is simply not what happened to this notification.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin', phone: '+27831112222', notify_whatsapp: 1 });
+  const property = await seedProperty({ owner });
+
+  await asProduction(1, () => notify({
+    event: 'booking_created', title: 'New booking', body: '', propertyId: property.id,
+  }));
+
+  const row = await lastNotification();
+  assert.match(row.delivery_error, /Delivered by push/);
+  assert.match(row.delivery_error, /990160614186502/, 'and says what WhatsApp did');
+});
+
+test('no device means push changes nothing', async () => {
+  // Zero is not a delivery. Whatever WhatsApp decided still stands, and
+  // a genuine failure must still read as one.
+  await resetDb();
+  const owner = await seedUser({ role: 'admin', phone: '+27831112222', notify_whatsapp: 1 });
+  const property = await seedProperty({ owner });
+
+  await asProduction(0, () => notify({
+    event: 'booking_created', title: 'New booking', body: '', propertyId: property.id,
+  }));
+
+  const row = await lastNotification();
+  assert.equal(row.delivery, 'failed');
+  assert.notEqual(row.channel, 'push');
+});
