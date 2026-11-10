@@ -1,5 +1,4 @@
 const cron = require('node-cron');
-const { sendCheckinMessages, sendCheckoutMessages } = require('../services/messaging');
 const { runAssignmentForAllCheckouts } = require('../services/cleaner-assignment');
 const { getAll, getOne, run } = require('../db/database');
 const { notify } = require('../services/notify');
@@ -29,25 +28,25 @@ const { STILL_TO_DO_SQL } = require('../services/job-life');
 // POST /api/pricing/run are untouched, so it can still be run
 // deliberately against a property whose numbers have been checked.
 
-// Daily at 7:00 AM SAST = 5:00 AM UTC — send checkout reminders
-cron.schedule('0 5 * * *', async () => {
-  console.log('Sending checkout reminders...');
-  try {
-    await sendCheckoutMessages();
-  } catch (err) {
-    console.error('Checkout messaging cron error:', err.message);
-  }
-});
-
-// Daily at 10:00 AM SAST = 8:00 AM UTC — send check-in instructions (for tomorrow)
-cron.schedule('0 8 * * *', async () => {
-  console.log('Sending check-in instructions...');
-  try {
-    await sendCheckinMessages();
-  } catch (err) {
-    console.error('Checkin messaging cron error:', err.message);
-  }
-});
+// The app sends guests nothing on a schedule.
+//
+// There were two: a checkout reminder at 07:00 and check-in
+// instructions at 10:00, both through Smoobu. Neither ever reached a
+// guest. They posted to /reservations/{id}/messages, which is the path
+// for reading a conversation, and failed quietly every morning — none
+// of the last five finished stays, on Airbnb or Booking.com, has either
+// message in it. Smoobu's own templates are what guests have been
+// getting, and Smoobu stays the one sender.
+//
+// They were not fixed rather than removed because fixing them would
+// have started sending built-in text alongside those templates — and the
+// checkout one did not skip blocked periods, so it would have told the
+// owner's own blocks that checkout was at ten.
+//
+// sendCheckinMessages and sendCheckoutMessages are still in
+// services/messaging, tested, and unscheduled. The time to bring
+// messages from this app back is when WhatsApp delivers and guests'
+// phone numbers are on file — a different channel, not these.
 
 // Daily at 5:00 AM SAST = 3:00 AM UTC — run cleaner assignment
 cron.schedule('0 3 * * *', async () => {
