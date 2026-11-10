@@ -60,18 +60,39 @@ async function bookingFor(req, res) {
     res.status(400).json({ error: 'That is not a booking' });
     return null;
   }
-  const booking = await getOne(
-    `SELECT b.smoobu_id, b.guest_name, b.check_in, b.check_out, b.platform, b.property_id, p.name AS property
+  const row = await getOne(
+    `SELECT b.smoobu_id, b.guest_name, b.check_in, b.check_out, b.platform, b.property_id,
+            b.raw_payload, p.name AS property
        FROM bookings b JOIN properties p ON p.id = b.property_id
       WHERE b.smoobu_id = $1`,
     [id]
   );
-  if (!booking) {
+  if (!row) {
     res.status(404).json({ error: 'No booking like that here' });
     return null;
   }
-  if (denyIfOutOfScope(req, res, booking.property_id)) return null;
+  if (denyIfOutOfScope(req, res, row.property_id)) return null;
+  const { raw_payload: raw, ...booking } = row;
+  booking.channel_link = channelLink(booking.platform, raw);
   return booking;
+}
+
+/**
+ * The conversation on the channel's own site, where what Smoobu cannot
+ * carry still is.
+ *
+ * Airbnb passes Smoobu a guest's message without its photo — Smoobu
+ * stores it with empty text and no attachment, and neither it nor this
+ * app can show it. Airbnb resolves a reservation by its confirmation
+ * code, and from the stay Messages is one tap; on a phone the link
+ * opens the Airbnb app. Only Airbnb: Booking.com's extranet links need a
+ * session token this app does not hold.
+ */
+function channelLink(platform, raw) {
+  const payload = typeof raw === 'string' ? (() => { try { return JSON.parse(raw); } catch { return null; } })() : raw;
+  const ref = payload && (payload['reference-id'] || payload.referenceId);
+  if (!/airbnb/i.test(String(platform || '')) || !/^[A-Z0-9]{6,12}$/.test(String(ref || ''))) return null;
+  return { label: 'Airbnb', url: `https://www.airbnb.com/hosting/reservations/details/${ref}` };
 }
 
 /** One conversation. Opening it is reading it. */

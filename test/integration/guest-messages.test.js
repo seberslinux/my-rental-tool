@@ -226,3 +226,37 @@ test("Smoobu's real field name for the HTML body is read", async () => {
   const { body } = await agent.get(`/api/messages/${BOOKING}`).expect(200);
   assert.equal(body.messages[0].text, 'Only in HTML');
 });
+
+// --- where the photo is -------------------------------------------------------
+
+test('an Airbnb conversation links to the stay on Airbnb, where photos still are', async () => {
+  // Airbnb gives Smoobu the message without its photo. The confirmation
+  // code is how Airbnb finds the stay.
+  const { agent } = await setup();
+  await pool.query(
+    `UPDATE bookings SET platform = 'Airbnb', raw_payload = $1 WHERE smoobu_id = $2`,
+    [JSON.stringify({ 'reference-id': 'TESTREF001' }), BOOKING]
+  );
+  const { body } = await agent.get(`/api/messages/${BOOKING}`).expect(200);
+  assert.deepEqual(body.booking.channel_link, {
+    label: 'Airbnb', url: 'https://www.airbnb.com/hosting/reservations/details/TESTREF001',
+  });
+  assert.equal(body.booking.raw_payload, undefined, 'the payload itself is not sent to the screen');
+});
+
+test('no link where there is nothing safe to link to', async () => {
+  const { agent } = await setup();
+  // Booking.com: its extranet needs a session token this app does not hold.
+  await pool.query(
+    `UPDATE bookings SET platform = 'Booking.com', raw_payload = $1 WHERE smoobu_id = $2`,
+    [JSON.stringify({ 'reference-id': '4512345678' }), BOOKING]
+  );
+  assert.equal((await agent.get(`/api/messages/${BOOKING}`).expect(200)).body.booking.channel_link, null);
+
+  // An Airbnb code that does not look like one is not put into a URL.
+  await pool.query(
+    `UPDATE bookings SET platform = 'Airbnb', raw_payload = $1 WHERE smoobu_id = $2`,
+    [JSON.stringify({ 'reference-id': '../../evil' }), BOOKING]
+  );
+  assert.equal((await agent.get(`/api/messages/${BOOKING}`).expect(200)).body.booking.channel_link, null);
+});

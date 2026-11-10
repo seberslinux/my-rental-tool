@@ -27,7 +27,9 @@ interface Thread {
 interface Message {id: number;from: 'guest' | 'you';subject: string;text: string;at?: string | null;empty?: boolean;}
 
 interface Conversation {
-  booking: {smoobu_id: number;guest_name: string;property: string;check_in: string;check_out: string;platform: string;};
+  booking: {smoobu_id: number;guest_name: string;property: string;check_in: string;check_out: string;platform: string;
+    /** The conversation on the channel's own site, where photos still are. */
+    channel_link?: {label: string;url: string;} | null;};
   messages: Message[];
 }
 
@@ -192,12 +194,21 @@ function ConversationView({ bookingId, onBack }: {bookingId: number;onBack: () =
         <button onClick={onBack} aria-label="Back to messages" className="p-1 -ml-1">
           <ArrowLeft className="w-5 h-5 text-[#222222]" />
         </button>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <div className="text-[16px] font-semibold text-[#222222] leading-snug">
             {convo ? convo.booking.guest_name : 'Conversation'}
           </div>
           {convo && <div className="text-[12px] text-[#717171]">{stay(convo.booking)} · {convo.booking.platform}</div>}
         </div>
+        {convo?.booking.channel_link &&
+        <a
+          href={convo.booking.channel_link.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 text-[13px] font-semibold text-[#FF385C]">
+            Open in {convo.booking.channel_link.label}
+          </a>
+        }
       </div>
 
       <div className="flex-1 px-4 py-4 space-y-2 lg:max-w-[860px] w-full">
@@ -220,10 +231,15 @@ function ConversationView({ bookingId, onBack }: {bookingId: number;onBack: () =
                   attachment, so say there is something rather than
                   showing nothing — or dropping it, which made a guest
                   look as if they had sent nothing at all. */}
-              {m.empty ?
+              {m.empty ? (
+            convo.booking.channel_link ?
+            <a href={convo.booking.channel_link.url} target="_blank" rel="noopener noreferrer"
+            className="italic underline opacity-80">
+                    Sent a photo or file — open it in {convo.booking.channel_link.label}
+                  </a> :
             <span className="italic opacity-70">
-                  Sent a photo or file — open it in {convo.booking.platform || 'the channel'} to see it
-                </span> :
+                    Sent a photo or file — open it in {convo.booking.platform || 'the channel'} to see it
+                  </span>) :
             m.text}
             </div>
             {m.at && <span className="text-[11px] text-[#B0B0B0] mt-0.5 px-1 tabular-nums">{stamp(m.at)}</span>}
