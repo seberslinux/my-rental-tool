@@ -257,3 +257,51 @@ test('a date never quoted because it was already taken shows as sold, not blank'
   const { body } = await agent.get('/api/peers').expect(200);
   assert.deepEqual(body.properties[0].benchmark.weekend[0], { nightly: null, open: false });
 });
+
+// --- summary ----------------------------------------------------------------
+
+test('the summary gives occupancy for us, the median and the benchmark over 30 and 90 days', async () => {
+  const { admin } = await setup();
+  // Of the next 30 nights: we have 6 taken, Tal 27, Seaforest 12.
+  await runPeerCheck({
+    fetchCalendar: stub({ 111: year((i) => i < 6), 222: year((i) => i < 27), 333: year((i) => i < 12) }),
+    pauseMs: 0,
+  });
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get('/api/peers/summary').expect(200);
+
+  const p = body.properties[0];
+  assert.equal(p.name, 'Hill Top Lodge');
+  assert.equal(p.benchmark_name, "Tal's house");
+  const d30 = p.windows.find((w) => w.days === 30);
+  assert.equal(d30.own, 20);
+  assert.equal(d30.benchmark, 90);
+  assert.equal(d30.median, 65, 'median of Tal (90) and Seaforest (40)');
+  const d90 = p.windows.find((w) => w.days === 90);
+  assert.equal(d90.own, 7);
+  assert.ok(body.read_at);
+
+  // The Competitors page carries the same summary.
+  const full = await agent.get('/api/peers').expect(200);
+  assert.deepEqual(full.body.summary, body.properties);
+});
+
+test('the summary is empty before anything has been read', async () => {
+  const { admin } = await setup();
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get('/api/peers/summary').expect(200);
+  assert.deepEqual(body.properties, []);
+  assert.equal(body.read_at, null);
+});
+
+test("a manager's summary covers only their own properties", async () => {
+  await setup();
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year(), 333: year() }), pauseMs: 0 });
+  const manager = await seedUser({ role: 'property_manager' });
+  const agent = await getAgent();
+  await loginAs(agent, manager);
+  const { body } = await agent.get('/api/peers/summary').expect(200);
+  assert.deepEqual(body.properties, []);
+});

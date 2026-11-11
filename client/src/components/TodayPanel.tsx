@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { LogIn, LogOut, Check, AlertCircle, ArrowRight, RefreshCw, Sparkles, ShoppingCart, X } from 'lucide-react';
 import { apiGet, Unauthorized } from '../data/session';
 import { PropertyRows, PropertyRow } from './PropertyRows';
+import { PeersSummary } from './PeersSummary';
 
 /**
  * The home screen.
@@ -421,6 +422,10 @@ export function TodayPanel({ onGoToDay, onNeedsChange, onNavigate, propertyId = 
         }
         </div>
       }
+
+      {/* How the selling compares: our occupancy against the
+             competitors read from Airbnb. Tapping opens the detail. */}
+      {!failed && <PeersSummary propertyId={propertyId} onOpen={onNavigate ? () => onNavigate('peers') : undefined} />}
 
       {/* 3. The state of each property, one row each. */}
       {!failed && <PropertyRows rows={properties} onChanged={load} onOpenBooking={onOpenBooking} />}
