@@ -21,6 +21,69 @@ function median(values) {
   return v.length % 2 ? v[mid] : Math.round((v[mid - 1] + v[mid]) / 2);
 }
 
+/**
+ * Occupancy against the competitors, in one line per property.
+ *
+ * The share of nights not open over the next 30 and 90 days, for our own
+ * listing, the benchmark and the competitors' median — all read from
+ * Airbnb the same way, so blocks count as taken for everybody. Home and
+ * the top of the Competitors page both show this.
+ */
+const WINDOWS = [30, 90];
+
+async function occupancySummary(scope, today) {
+  const rows = await getAll(
+    `SELECT l.id, l.name, l.property_id, l.is_own, l.is_benchmark, w.days,
+            ROUND(100.0 * COUNT(*) FILTER (WHERE NOT c.available) / NULLIF(COUNT(*), 0))::int AS taken
+       FROM peer_listings l
+       CROSS JOIN unnest($2::int[]) AS w(days)
+       JOIN peer_calendar c ON c.listing_id = l.id
+        AND c.date >= $1::date AND c.date < $1::date + w.days
+      WHERE l.active AND l.property_id IS NOT NULL
+        AND ($3::int[] IS NULL OR l.property_id = ANY($3::int[]))
+      GROUP BY l.id, w.days`,
+    [today, WINDOWS, scope]
+  );
+  const props = await getAll(
+    `SELECT id, name FROM properties
+      WHERE ($1::int[] IS NULL OR id = ANY($1::int[]))
+        AND EXISTS (SELECT 1 FROM peer_listings l WHERE l.property_id = properties.id AND l.active)
+      ORDER BY name`,
+    [scope]
+  );
+  return props.map((p) => {
+    const mine = rows.filter((r) => r.property_id === p.id);
+    const benchmark = mine.find((r) => r.is_benchmark);
+    return {
+      id: p.id,
+      name: p.name,
+      benchmark_name: benchmark ? benchmark.name : null,
+      windows: WINDOWS.map((days) => {
+        const at = mine.filter((r) => r.days === days);
+        const own = at.find((r) => r.is_own);
+        const bench = at.find((r) => r.is_benchmark);
+        return {
+          days,
+          own: own ? own.taken : null,
+          benchmark: bench ? bench.taken : null,
+          median: median(at.filter((r) => !r.is_own).map((r) => r.taken)),
+        };
+      }),
+    };
+  }).filter((p) => p.windows.some((w) => w.own != null || w.median != null));
+}
+
+router.get('/summary', scopeProperties, async (req, res) => {
+  try {
+    const today = new Date().toISOString().slice(0, 10);
+    const lastRun = await getOne('SELECT finished_at FROM peer_runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 1');
+    res.json({ properties: await occupancySummary(req.accessiblePropertyIds, today), read_at: lastRun ? lastRun.finished_at : null });
+  } catch (err) {
+    console.error('Peer summary failed:', err.message);
+    res.status(500).json({ error: 'Could not load the competitor summary' });
+  }
+});
+
 router.get('/', scopeProperties, async (req, res) => {
   try {
     const today = new Date().toISOString().slice(0, 10);
@@ -147,7 +210,7 @@ router.get('/', scopeProperties, async (req, res) => {
       };
     });
 
-    res.json({ properties: out, last_run: lastRun || null });
+    res.json({ properties: out, summary: await occupancySummary(scope, today), last_run: lastRun || null });
   } catch (err) {
     console.error('Peers failed:', err.message);
     res.status(500).json({ error: 'Could not load the competitor comparison' });

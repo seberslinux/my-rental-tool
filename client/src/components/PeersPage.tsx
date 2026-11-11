@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ExternalLink, RefreshCw } from 'lucide-react';
 import { apiGet } from '../data/session';
+import { PeersSummaryCards, PeerSummaryRow } from './PeersSummary';
 
 /**
  * How we are selling against the listings we compete with.
@@ -131,12 +132,12 @@ function PriceTable({ title, dates, median, own, benchmark }: {
 }
 
 export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: number; isAdmin?: boolean }) {
-  const [data, setData] = useState<{ properties: PropertyPeers[]; last_run: Run | null } | null>(null);
+  const [data, setData] = useState<{ properties: PropertyPeers[]; summary?: PeerSummaryRow[]; last_run: Run | null } | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
-    apiGet<{ properties: PropertyPeers[]; last_run: Run | null }>('/api/peers')
+    apiGet<{ properties: PropertyPeers[]; summary?: PeerSummaryRow[]; last_run: Run | null }>('/api/peers')
       .then((d) => { setData(d); setError(''); })
       .catch(() => setError('Could not load the competitors.'));
   }, []);
@@ -193,6 +194,15 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
       {pricing && <p className="text-[13px] text-[#717171]">{pricing}</p>}
       {run && run.error && run.listings_ok === 0 &&
       <p className="text-[13px] text-[#C13515]">{run.error}</p>
+      }
+
+      {/* The answer first: are we filling like the competitors? The
+          month-by-month detail is below for each property. */}
+      {data.summary && data.summary.length > 0 &&
+      <div>
+          <div className={label}>Summary</div>
+          <PeersSummaryCards rows={data.summary} propertyId={propertyId} />
+        </div>
       }
 
       {shown.map((p) =>
