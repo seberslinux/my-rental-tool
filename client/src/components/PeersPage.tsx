@@ -224,7 +224,7 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
       {data.summary && data.summary.length > 0 &&
       <div>
           <div className={label}>Summary</div>
-          <PeersSummaryCards rows={data.summary} propertyId={propertyId} />
+          <PeersSummaryCards rows={data.summary} propertyId={propertyId} height={300} />
         </div>
       }
 

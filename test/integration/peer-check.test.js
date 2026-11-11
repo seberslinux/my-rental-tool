@@ -305,3 +305,23 @@ test("a manager's summary covers only their own properties", async () => {
   const { body } = await agent.get('/api/peers/summary').expect(200);
   assert.deepEqual(body.properties, []);
 });
+
+test('the chart has one point per priced listing: occupancy against average asking price', async () => {
+  const { admin } = await setup();
+  await runPeerCheck({
+    fetchCalendar: stub({ 111: year((i) => i < 6), 222: year((i) => i < 27), 333: year((i) => i < 12) }),
+    pauseMs: 0,
+  });
+  // Tal is not priced at all, so has no price to be placed by.
+  await runPeerPrices({ fetchQuote: quoteAt({ 111: 2700, 333: 2500 }), pauseMs: 0 });
+
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get('/api/peers/summary').expect(200);
+  const p = body.properties[0];
+  const byName = Object.fromEntries(p.points.map((x) => [x.name, x]));
+  assert.deepEqual(byName['Our lodge'], { name: 'Our lodge', occupancy: 20, price: 2700, is_own: true, is_benchmark: false });
+  assert.equal(byName.Seaforest.price, 2500);
+  assert.equal(byName["Tal's house"], undefined, 'no quote, no point');
+  assert.equal(p.median_price, 2500, 'median of the competitors only');
+});
