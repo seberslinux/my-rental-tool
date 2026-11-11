@@ -98,3 +98,83 @@ test('nothing to say when only blocks or our own sales were found', () => {
   assert.equal(summarise([]), null);
   assert.equal(summarise([{ kind: 'block', listing: { is_own: false } }]), null);
 });
+
+// --- prices -----------------------------------------------------------------
+
+const { planQuotes } = require('../src/services/peer-check');
+const { fetchQuote } = require('../src/services/airbnb-calendar');
+
+const weekdayOf = (ymd) => new Date(`${ymd}T00:00:00Z`).getUTCDay();
+const nextCalendar = (open = () => true, minNights = 2) => new Map(
+  Array.from({ length: 70 }, (_, i) => [inDays(i + 1), { available: open(i + 1), minNights }])
+);
+
+test('quotes are planned for Friday weekends and Monday weekday stays', () => {
+  const plan = planQuotes(nextCalendar(), today);
+  const weekends = plan.filter((p) => p.kind === 'weekend');
+  const weekdays = plan.filter((p) => p.kind === 'weekday');
+  assert.equal(weekends.length, 8);
+  assert.equal(weekdays.length, 8);
+  assert.ok(weekends.every((p) => weekdayOf(p.checkIn) === 5 && p.nights === 2));
+  assert.ok(weekdays.every((p) => weekdayOf(p.checkIn) === 1));
+});
+
+test('a stay with any night taken is not quoted', () => {
+  const plan = planQuotes(nextCalendar((i) => weekdayOf(inDays(i)) !== 6), today);
+  assert.equal(plan.filter((p) => p.kind === 'weekend').length, 0, 'every Saturday is taken');
+  assert.equal(plan.filter((p) => p.kind === 'weekday').length, 8);
+});
+
+test("a listing's minimum stay sets the length of the quote", () => {
+  const plan = planQuotes(nextCalendar(() => true, 3), today);
+  assert.ok(plan.every((p) => p.nights === 3));
+});
+
+function fakeAirbnb(body, status = 200) {
+  return async () => ({ ok: status < 400, status, json: async () => body });
+}
+const priced = (line, total) => ({
+  data: { node: { pdpPresentation: { bookIt: { structuredDisplayPrice: {
+    primaryLine: { price: total, accessibilityLabel: `${total} for 2 nights` },
+    explanationData: { priceDetails: [{ items: [{ description: line }] }] },
+  } } } } },
+});
+
+test("the nightly rate is Airbnb's own per-night line, fees left out", async () => {
+  const q = await fetchQuote('1', inDays(5), inDays(7), {
+    key: 'k', hash: 'h', fetchImpl: fakeAirbnb(priced('2 nights x R 2,544.00 ZAR', 'R 5,688 ZAR')),
+  });
+  assert.equal(q.nightly, 2544);
+  assert.equal(q.total, 5688);
+});
+
+test('without the per-night line, the total is shared over the nights', async () => {
+  const q = await fetchQuote('1', inDays(5), inDays(7), {
+    key: 'k', hash: 'h', fetchImpl: fakeAirbnb(priced('', 'R 5,000 ZAR')),
+  });
+  assert.equal(q.nightly, 2500);
+});
+
+test('dates Airbnb will not sell give no quote rather than a wrong one', async () => {
+  const q = await fetchQuote('1', inDays(5), inDays(7), {
+    key: 'k', hash: 'h', fetchImpl: fakeAirbnb({ data: { node: { pdpPresentation: { bookIt: { structuredDisplayPrice: null } } } } }),
+  });
+  assert.equal(q, null);
+});
+
+test('a rotated hash is an error, not an empty answer', async () => {
+  await assert.rejects(
+    fetchQuote('1', inDays(5), inDays(7), {
+      key: 'k', hash: 'h', fetchImpl: fakeAirbnb({ errors: [{ message: 'PersistedQueryNotFound' }] }),
+    }),
+    /PersistedQueryNotFound/
+  );
+});
+
+test('a booking message says what the nights were on sale for', () => {
+  const msg = summarise([{
+    checkIn: inDays(9), checkOut: inDays(11), nights: 2, kind: 'booking', nightly: 4200,
+    listing: { name: "Tal's house", is_own: false, is_benchmark: true },
+  }]);
+  assert.match(msg.body, /about R4 200 a night/);
+});

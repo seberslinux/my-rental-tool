@@ -166,3 +166,94 @@ test('the agreed competitor set attaches itself to the properties by name', asyn
   assert.equal(rows.find((r) => r.airbnb_id === '46742610').property_id, loft.id);
   assert.equal(rows.filter((r) => r.is_own).length, 2);
 });
+
+// --- prices -----------------------------------------------------------------
+
+const { runPeerPrices } = require('../../src/services/peer-check');
+
+const quoteAt = (rates) => async (id) => (rates[id] ? { nightly: rates[id], total: rates[id] * 2 } : null);
+
+test('the daily price run quotes every open planned stay and only those', async () => {
+  await setup();
+  await runPeerCheck({
+    fetchCalendar: stub({ 111: year(), 222: year((i) => i > 0 && i < 70), 333: year() }),
+    pauseMs: 0,
+  });
+  const r = await runPeerPrices({ fetchQuote: quoteAt({ 111: 2700, 222: 4200, 333: 2500 }), pauseMs: 0 });
+
+  const { rows } = await pool.query(
+    `SELECT l.name, COUNT(*)::int AS n FROM peer_prices p JOIN peer_listings l ON l.id = p.listing_id GROUP BY l.name`
+  );
+  const n = Object.fromEntries(rows.map((x) => [x.name, x.n]));
+  assert.equal(n['Our lodge'], 16);
+  assert.equal(n.Seaforest, 16);
+  assert.equal(n["Tal's house"], undefined, 'nothing to quote while Tal is full');
+  assert.equal(r.quoted, 32);
+});
+
+test('a sale carries the price it was last on sale for', async () => {
+  await setup();
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year(), 333: year() }), pauseMs: 0 });
+  await runPeerPrices({ fetchQuote: quoteAt({ 222: 4200 }), pauseMs: 0 });
+
+  const { rows: [fri] } = await pool.query(
+    `SELECT (check_in - CURRENT_DATE)::int AS i FROM peer_prices p JOIN peer_listings l ON l.id = p.listing_id
+      WHERE l.airbnb_id = '222' AND kind = 'weekend' ORDER BY check_in LIMIT 1`
+  );
+  await runPeerCheck({
+    fetchCalendar: stub({ 111: year(), 222: year((i) => i === fri.i || i === fri.i + 1), 333: year() }),
+    pauseMs: 0,
+  });
+
+  const stay = await pool.query('SELECT nightly FROM peer_stays');
+  assert.equal(stay.rows[0].nightly, 4200);
+  const note = await pool.query("SELECT body FROM notifications WHERE event = 'peer_booked'");
+  assert.match(note.rows[0].body, /about R4 200 a night/);
+});
+
+test('the comparison shows asking prices, and a sold stay as sold', async () => {
+  const { admin } = await setup();
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year(), 333: year() }), pauseMs: 0 });
+  await runPeerPrices({ fetchQuote: quoteAt({ 111: 2700, 222: 4200, 333: 2500 }), pauseMs: 0 });
+
+  // Tal sells the first planned weekend after it was priced.
+  const { rows: [fri] } = await pool.query(
+    `SELECT (check_in - CURRENT_DATE)::int AS i FROM peer_prices WHERE kind = 'weekend' ORDER BY check_in LIMIT 1`
+  );
+  await runPeerCheck({
+    fetchCalendar: stub({ 111: year(), 222: year((i) => i === fri.i || i === fri.i + 1), 333: year() }),
+    pauseMs: 0,
+  });
+
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get('/api/peers').expect(200);
+  const p = body.properties[0];
+  assert.equal(p.prices.weekends.length, 8);
+  assert.deepEqual(p.own.weekend[0], { nightly: 2700, open: true });
+  assert.equal(p.benchmark.weekend[0].open, false, 'sold since it was priced');
+  assert.equal(p.benchmark.weekend[1].nightly, 4200);
+  // Median of the competitors still on sale: Seaforest alone on the
+  // first weekend, Seaforest and Tal after.
+  assert.equal(p.prices.weekend_median[0], 2500);
+  assert.equal(p.prices.weekend_median[1], 3350);
+});
+
+test('only an admin can start a price read by hand', async () => {
+  await setup();
+  const manager = await seedUser({ role: 'property_manager' });
+  const agent = await getAgent();
+  await loginAs(agent, manager);
+  await agent.post('/api/peers/prices').expect(403);
+});
+
+test('a date never quoted because it was already taken shows as sold, not blank', async () => {
+  const { admin } = await setup();
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year((i) => i > 0 && i < 70), 333: year() }), pauseMs: 0 });
+  await runPeerPrices({ fetchQuote: quoteAt({ 111: 2700, 333: 2500 }), pauseMs: 0 });
+
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get('/api/peers').expect(200);
+  assert.deepEqual(body.properties[0].benchmark.weekend[0], { nightly: null, open: false });
+});

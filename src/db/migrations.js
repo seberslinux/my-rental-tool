@@ -958,6 +958,27 @@ async function runMigrations() {
     )
   `);
 
+  /**
+   * What each listing asks for a few fixed stays: the next eight Friday
+   * weekends and eight Monday weekday stays, quoted once a day. One row
+   * per stay, overwritten — the latest asking price is what a sale the
+   * next reading finds most likely went for, which is why `peer_stays`
+   * carries it too.
+   */
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS peer_prices (
+      listing_id INTEGER NOT NULL REFERENCES peer_listings(id) ON DELETE CASCADE,
+      check_in DATE NOT NULL,
+      nights INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      nightly INTEGER NOT NULL,
+      total INTEGER,
+      quoted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (listing_id, check_in, nights)
+    )
+  `);
+  await pool.query(`ALTER TABLE peer_stays ADD COLUMN IF NOT EXISTS nightly INTEGER`);
+
   // The agreed set. Re-run on every boot so a property that arrives from
   // Smoobu after the first boot still gets its competitors attached; a
   // listing someone has since reassigned or switched off is left alone.

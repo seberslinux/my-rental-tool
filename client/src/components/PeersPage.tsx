@@ -11,15 +11,21 @@ import { apiGet } from '../data/session';
  * records the calendars; sales appear from the second one on.
  */
 
+interface Quote { nightly: number; open: boolean; }
 interface Listing {
   id: number; name: string; url: string; is_own: boolean; is_benchmark: boolean;
   read: boolean; months: (number | null)[]; open_30: number | null;
+  weekend: (Quote | null)[]; weekday: (Quote | null)[];
 }
-interface Sale { id: number; name: string; check_in: string; check_out: string; nights: number; detected_at: string; }
+interface Sale { id: number; name: string; check_in: string; check_out: string; nights: number; nightly: number | null; detected_at: string; }
+interface Prices {
+  weekends: string[]; weekdays: string[];
+  weekend_median: (number | null)[]; weekday_median: (number | null)[];
+}
 interface PropertyPeers {
   id: number; name: string; months: string[];
   own: Listing | null; benchmark: Listing | null; peer_median: (number | null)[];
-  listings: Listing[]; recent: Sale[];
+  prices: Prices; listings: Listing[]; recent: Sale[];
 }
 interface Run { finished_at: string; listings_ok: number; listings_failed: number; error: string | null; }
 
@@ -76,6 +82,54 @@ function SoldTable({ p }: { p: PropertyPeers }) {
     </div>);
 }
 
+const rand = (n: number) => `R${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}`;
+const dayMonth = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
+
+/**
+ * Asking price per night for the same stay, side by side.
+ *
+ * A stay that has already sold shows as "sold": the price it was on sale
+ * for is not what anybody can book it for now, and leaving it in would
+ * make a full competitor look cheap or dear by accident.
+ */
+function PriceTable({ title, dates, median, own, benchmark }: {
+  title: string; dates: string[]; median: (number | null)[];
+  own: (Quote | null)[] | undefined; benchmark: { name: string; quotes: (Quote | null)[] } | null;
+}) {
+  if (!dates.length) return null;
+  const cell = (q: Quote | null | undefined) =>
+    !q ? '–' : q.open ? rand(q.nightly) : <span className="text-[#B0B0B0]">sold</span>;
+  return (
+    <div className={`${card} overflow-x-auto`}>
+      <table className="w-full text-[14px]">
+        <thead>
+          <tr className="text-[12px] text-[#717171]">
+            <th className="text-left font-medium px-4 py-2 whitespace-nowrap">{title}</th>
+            {dates.map((d) => <th key={d} className="font-medium px-2 py-2 text-right whitespace-nowrap">{dayMonth(d)}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {own &&
+          <tr className="border-t border-[#F0F0F0]">
+              <td className="px-4 py-2 font-semibold">You</td>
+              {dates.map((_, i) => <td key={i} className="px-2 py-2 text-right tabular-nums whitespace-nowrap">{cell(own[i])}</td>)}
+            </tr>
+          }
+          {benchmark &&
+          <tr className="border-t border-[#F0F0F0]">
+              <td className="px-4 py-2 max-w-[160px] truncate">{benchmark.name}</td>
+              {dates.map((_, i) => <td key={i} className="px-2 py-2 text-right tabular-nums whitespace-nowrap">{cell(benchmark.quotes[i])}</td>)}
+            </tr>
+          }
+          <tr className="border-t border-[#F0F0F0]">
+            <td className="px-4 py-2">Others (median)</td>
+            {median.map((v, i) => <td key={i} className="px-2 py-2 text-right tabular-nums whitespace-nowrap">{v == null ? '–' : rand(v)}</td>)}
+          </tr>
+        </tbody>
+      </table>
+    </div>);
+}
+
 export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: number; isAdmin?: boolean }) {
   const [data, setData] = useState<{ properties: PropertyPeers[]; last_run: Run | null } | null>(null);
   const [error, setError] = useState('');
@@ -87,6 +141,13 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
       .catch(() => setError('Could not load the competitors.'));
   }, []);
   useEffect(() => { load(); }, [load]);
+
+  const [pricing, setPricing] = useState('');
+  const readPrices = async () => {
+    const res = await fetch('/api/peers/prices', { method: 'POST', credentials: 'same-origin' });
+    setPricing(res.ok ? 'Reading prices in the background — a few minutes. Reload to see them.' :
+    res.status === 409 ? 'Prices are already being read.' : 'Could not start reading prices.');
+  };
 
   const readNow = async () => {
     setBusy(true);
@@ -106,8 +167,8 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
 
   return (
     <div className="p-4 bg-[#F7F7F7] min-h-full space-y-6 max-w-[900px]">
-      <div className="flex items-center justify-between gap-3">
-        <p className="text-[13px] text-[#717171]">
+      <div className="flex items-center gap-2">
+        <p className="flex-1 min-w-0 text-[13px] text-[#717171]">
           {run ?
           <>Read from Airbnb {ago(run.finished_at)} · {run.listings_ok} listings
               {run.listings_failed ? <span className="text-[#C13515]"> · {run.listings_failed} could not be read</span> : null}</> :
@@ -121,7 +182,15 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
             <RefreshCw className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} /> {busy ? 'Reading… about a minute' : 'Read now'}
           </button>
         }
+        {isAdmin &&
+        <button
+          onClick={readPrices}
+          className="shrink-0 px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] bg-white text-[13px] font-semibold">
+            Read prices
+          </button>
+        }
       </div>
+      {pricing && <p className="text-[13px] text-[#717171]">{pricing}</p>}
       {run && run.error && run.listings_ok === 0 &&
       <p className="text-[13px] text-[#C13515]">{run.error}</p>
       }
@@ -132,6 +201,27 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
 
           <SoldTable p={p} />
 
+          {p.prices && (p.prices.weekends.length > 0 || p.prices.weekdays.length > 0) ?
+        <div>
+              <div className={label}>Price per night, 2 adults</div>
+              <div className="space-y-3">
+                <PriceTable
+              title="Weekend (Fri)"
+              dates={p.prices.weekends}
+              median={p.prices.weekend_median}
+              own={p.own?.weekend}
+              benchmark={p.benchmark ? { name: p.benchmark.name, quotes: p.benchmark.weekend } : null} />
+                <PriceTable
+              title="Weekday (Mon)"
+              dates={p.prices.weekdays}
+              median={p.prices.weekday_median}
+              own={p.own?.weekday}
+              benchmark={p.benchmark ? { name: p.benchmark.name, quotes: p.benchmark.weekday } : null} />
+              </div>
+            </div> :
+        <p className="text-[13px] text-[#717171]">Prices are read once a day at 06:30.</p>
+        }
+
           <div>
             <div className={label}>New bookings, last 14 days</div>
             <div className={card}>
@@ -141,6 +231,7 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
             <div key={s.id} className={`px-4 py-2.5 flex items-baseline justify-between gap-3 ${i ? 'border-t border-[#F0F0F0]' : ''}`}>
                     <span className="text-[14px] text-[#222222] min-w-0 truncate">
                       <span className="font-medium">{s.name}</span> · {span(s.check_in, s.check_out)} · {s.nights} night{s.nights === 1 ? '' : 's'}
+                      {s.nightly ? ` · about ${rand(s.nightly)} a night` : ''}
                     </span>
                     <span className="text-[12px] text-[#717171] shrink-0">{ago(s.detected_at)}</span>
                   </div>
