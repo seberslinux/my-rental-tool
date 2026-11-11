@@ -131,6 +131,29 @@ function PriceTable({ title, dates, median, own, benchmark }: {
     </div>);
 }
 
+/**
+ * What this listing asks next, per night: its first weekend and first
+ * weekday stay still on sale among the eight quoted. Every competitor's
+ * own number, not just the median — a listing far above or below the
+ * rest is visible here and only blurs into the median above.
+ */
+function RowPrices({ listing, prices }: { listing: Listing; prices: Prices }) {
+  const first = (quotes: (Quote | null)[], dates: string[]) => {
+    const i = quotes.findIndex((q) => q && q.open && q.nightly);
+    return i < 0 ? null : { date: dates[i], nightly: (quotes[i] as Quote).nightly };
+  };
+  const we = first(listing.weekend || [], prices?.weekends || []);
+  const wd = first(listing.weekday || [], prices?.weekdays || []);
+  if (!prices || (!prices.weekends.length && !prices.weekdays.length)) return null;
+  return (
+    <span className="text-[12px] text-[#222222] block mt-0.5">
+      <span className="text-[#717171]">Per night: </span>
+      weekend {we ? <>{dayMonth(we.date)} <span className="font-semibold tabular-nums whitespace-nowrap">{rand(we.nightly)}</span></> : <span className="text-[#717171]">sold out</span>}
+      <span className="text-[#B0B0B0]"> · </span>
+      weekday {wd ? <>{dayMonth(wd.date)} <span className="font-semibold tabular-nums whitespace-nowrap">{rand(wd.nightly)}</span></> : <span className="text-[#717171]">sold out</span>}
+    </span>);
+}
+
 export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: number; isAdmin?: boolean }) {
   const [data, setData] = useState<{ properties: PropertyPeers[]; summary?: PeerSummaryRow[]; last_run: Run | null } | null>(null);
   const [error, setError] = useState('');
@@ -265,9 +288,10 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
                       {l.is_own && <span className="ml-2 text-[11px] font-semibold text-[#0F6E56]">YOURS</span>}
                       {l.is_benchmark && <span className="ml-2 text-[11px] font-semibold text-[#FF385C]">BENCHMARK</span>}
                     </span>
-                    <span className="text-[12px] text-[#717171]">
+                    <span className="text-[12px] text-[#717171] block">
                       {l.read ? `${pct(l.months[0])} of ${monthName(p.months[0])} sold · ${l.open_30} night${l.open_30 === 1 ? '' : 's'} open in the next 30 days` : 'Not read yet'}
                     </span>
+                    {l.read && <RowPrices listing={l} prices={p.prices} />}
                   </span>
                   <ExternalLink className="w-4 h-4 text-[#B0B0B0] shrink-0" />
                 </a>
