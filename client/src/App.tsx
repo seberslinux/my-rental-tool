@@ -104,7 +104,7 @@ import { resyncPush } from './data/push';
 
 // Tabs that scope their content to a single property. The Calendar has its
 // own property picker in CalendarHeader; More has nothing to scope.
-const SHOWS_PROPERTY_FILTER = new Set(['home', 'analytics', 'messages']);
+const SHOWS_PROPERTY_FILTER = new Set(['home', 'analytics', 'messages', 'peers']);
 
 /**
  * The window the cleaning picture is loaded over.
