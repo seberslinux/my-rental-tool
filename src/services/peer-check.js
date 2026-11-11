@@ -104,14 +104,101 @@ function summarise(found) {
   const sales = found.filter((f) => f.kind === 'booking' && !f.listing.is_own);
   if (!sales.length) return null;
   sales.sort((a, b) => Number(b.listing.is_benchmark) - Number(a.listing.is_benchmark) || a.checkIn.localeCompare(b.checkIn));
-  const line = (s) => `${s.listing.name} ${span(s.checkIn, s.checkOut)} (${s.nights} night${s.nights === 1 ? '' : 's'})`;
+  const at = (s) => (s.nightly ? `, about ${rand(s.nightly)} a night` : '');
+  const line = (s) => `${s.listing.name} ${span(s.checkIn, s.checkOut)} (${s.nights} night${s.nights === 1 ? '' : 's'}${at(s)})`;
   if (sales.length === 1) {
-    return { title: `${sales[0].listing.name} just got booked`, body: `${span(sales[0].checkIn, sales[0].checkOut)}, ${sales[0].nights} night${sales[0].nights === 1 ? '' : 's'}.` };
+    const s = sales[0];
+    return { title: `${s.listing.name} just got booked`, body: `${span(s.checkIn, s.checkOut)}, ${s.nights} night${s.nights === 1 ? '' : 's'}${at(s)}.` };
   }
   return { title: `${sales.length} competitor bookings`, body: sales.map(line).join(' · ') };
 }
 
+// "R4 200". By hand: en-ZA groups with a no-break space, which reads the
+// same but is not the space anybody would search or test for.
+const rand = (n) => `R${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}`;
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const WEEKS = 8;
+const weekday = (ymd) => new Date(`${ymd}T00:00:00Z`).getUTCDay(); // 0 Sunday … 5 Friday
+
+/**
+ * The stays worth quoting for one listing: the next eight Friday
+ * weekends and the next eight Monday weekday stays, two nights each or
+ * the listing's minimum if longer, and only where every night is open —
+ * Airbnb will not quote a stay it cannot sell.
+ *
+ * Fixed stays rather than every night: a price is only comparable with
+ * another for the same dates and length, and sixteen quotes a listing
+ * keeps the daily total to a few hundred requests.
+ */
+function planQuotes(calendar, today) {
+  const plan = [];
+  for (const [kind, day] of [['weekend', 5], ['weekday', 1]]) {
+    let d = addDays(today, 1);
+    while (weekday(d) !== day) d = addDays(d, 1);
+    for (let w = 0; w < WEEKS; w++, d = addDays(d, 7)) {
+      const first = calendar.get(d);
+      if (!first || !first.available) continue;
+      const nights = Math.max(2, first.minNights || 1);
+      let open = true;
+      for (let i = 1; i < nights; i++) {
+        const n = calendar.get(addDays(d, i));
+        if (!n || !n.available) { open = false; break; }
+      }
+      if (open) plan.push({ kind, checkIn: d, checkOut: addDays(d, nights), nights });
+    }
+  }
+  return plan;
+}
+
+/**
+ * Quote every listing's planned stays from its latest calendar.
+ *
+ * Once a day, after the morning reading: asking prices move far more
+ * slowly than availability, and this is the part that costs requests.
+ */
+async function runPeerPrices({ fetchQuote, today = new Date().toISOString().slice(0, 10), pauseMs = 1000 } = {}) {
+  const listings = await getAll('SELECT * FROM peer_listings WHERE active ORDER BY is_own DESC, is_benchmark DESC, id');
+  let quote = fetchQuote;
+  if (!quote) {
+    const hash = await airbnb.priceHash();
+    const key = listings.length ? await airbnb.webKey(listings[0].airbnb_id) : null;
+    quote = (id, a, b) => airbnb.fetchQuote(id, a, b, { key, hash });
+  }
+
+  let quoted = 0;
+  const failures = [];
+  for (const listing of listings) {
+    const rows = await getAll(
+      `SELECT to_char(date, 'YYYY-MM-DD') AS date, available, min_nights FROM peer_calendar
+        WHERE listing_id = $1 AND date > $2::date AND date <= $2::date + 70`,
+      [listing.id, today]
+    );
+    const calendar = new Map(rows.map((r) => [r.date, { available: r.available, minNights: r.min_nights }]));
+    for (const stay of planQuotes(calendar, today)) {
+      try {
+        const q = await quote(listing.airbnb_id, stay.checkIn, stay.checkOut);
+        if (q && q.nightly) {
+          await run(
+            `INSERT INTO peer_prices (listing_id, check_in, nights, kind, nightly, total, quoted_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())
+             ON CONFLICT (listing_id, check_in, nights) DO UPDATE SET
+               kind = EXCLUDED.kind, nightly = EXCLUDED.nightly, total = EXCLUDED.total, quoted_at = NOW()`,
+            [listing.id, stay.checkIn, stay.nights, stay.kind, q.nightly, q.total]
+          );
+          quoted++;
+        }
+      } catch (err) {
+        failures.push(`${listing.name}: ${err.message}`);
+      }
+      if (pauseMs) await sleep(pauseMs);
+    }
+  }
+  // Past stays are history the calendar already holds.
+  await run('DELETE FROM peer_prices WHERE check_in < $1::date', [today]);
+  return { quoted, failed: failures.length, error: failures.slice(0, 3).join(' · ') || null };
+}
 
 /**
  * Read every active listing once and record what changed.
@@ -152,12 +239,21 @@ async function runPeerCheck({ fetchCalendar, today = new Date().toISOString().sl
       const { stays, opened } = diffCalendar(previous, nights, today);
 
       for (const s of stays) {
-        await run(
-          `INSERT INTO peer_stays (listing_id, check_in, check_out, nights, kind, lead_days)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [listing.id, s.checkIn, s.checkOut, s.nights, s.kind, s.leadDays]
+        // The last asking price for any quoted stay overlapping these
+        // nights: what they were on sale for just before they went.
+        const quote = await getOne(
+          `SELECT nightly FROM peer_prices
+            WHERE listing_id = $1 AND check_in < $3::date AND check_in + nights > $2::date
+            ORDER BY quoted_at DESC LIMIT 1`,
+          [listing.id, s.checkIn, s.checkOut]
         );
-        found.push({ ...s, listing });
+        const nightly = quote ? quote.nightly : null;
+        await run(
+          `INSERT INTO peer_stays (listing_id, check_in, check_out, nights, kind, lead_days, nightly)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [listing.id, s.checkIn, s.checkOut, s.nights, s.kind, s.leadDays, nightly]
+        );
+        found.push({ ...s, nightly, listing });
       }
 
       // A night that opens again inside a recent sale is a cancellation:
@@ -220,4 +316,4 @@ async function runPeerCheck({ fetchCalendar, today = new Date().toISOString().sl
   return { runId, ok, failed, found };
 }
 
-module.exports = { runPeerCheck, diffCalendar, classify, summarise, span };
+module.exports = { runPeerCheck, runPeerPrices, planQuotes, diffCalendar, classify, summarise, span };

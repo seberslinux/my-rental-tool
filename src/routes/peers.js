@@ -58,7 +58,7 @@ router.get('/', scopeProperties, async (req, res) => {
     );
     const recent = await getAll(
       `SELECT s.id, s.listing_id, to_char(s.check_in, 'YYYY-MM-DD') AS check_in,
-              to_char(s.check_out, 'YYYY-MM-DD') AS check_out, s.nights, s.kind, s.detected_at
+              to_char(s.check_out, 'YYYY-MM-DD') AS check_out, s.nights, s.kind, s.nightly, s.detected_at
          FROM peer_stays s
         WHERE s.reversed_at IS NULL AND s.kind = 'booking' AND s.detected_at > NOW() - INTERVAL '14 days'
         ORDER BY s.detected_at DESC, s.check_in`
@@ -67,6 +67,34 @@ router.get('/', scopeProperties, async (req, res) => {
       `SELECT started_at, finished_at, listings_ok, listings_failed, stays_found, error
          FROM peer_runs WHERE finished_at IS NOT NULL ORDER BY id DESC LIMIT 1`
     );
+
+    // Latest asking price per planned stay, and whether its first night
+    // is still for sale — a price for a night already gone is what it
+    // sold at, not what it costs.
+    const prices = await getAll(
+      `SELECT p.listing_id, to_char(p.check_in, 'YYYY-MM-DD') AS check_in, p.kind, p.nightly,
+              COALESCE(c.available, FALSE) AS open
+         FROM peer_prices p
+         LEFT JOIN peer_calendar c ON c.listing_id = p.listing_id AND c.date = p.check_in
+        WHERE p.check_in > $1::date`,
+      [today]
+    );
+    const stayDates = (kind) => [...new Set(prices.filter((r) => r.kind === kind).map((r) => r.check_in))].sort().slice(0, 8);
+    const weekends = stayDates('weekend');
+    const weekdays = stayDates('weekday');
+    // Whether each priced date is still open, for listings never quoted on
+    // it: no quote because the night was already gone is "sold", which is
+    // not the same as "not read".
+    const taken = new Set((await getAll(
+      `SELECT listing_id, to_char(date, 'YYYY-MM-DD') AS date FROM peer_calendar
+        WHERE NOT available AND date = ANY($1::date[])`,
+      [[...weekends, ...weekdays]]
+    )).map((r) => `${r.listing_id}:${r.date}`));
+    const priceOf = (listingId, kind, date) => {
+      const r = prices.find((x) => x.listing_id === listingId && x.kind === kind && x.check_in === date);
+      if (r) return { nightly: r.nightly, open: r.open };
+      return taken.has(`${listingId}:${date}`) ? { nightly: null, open: false } : null;
+    };
 
     const byListing = new Map();
     for (const s of shares) {
@@ -86,6 +114,8 @@ router.get('/', scopeProperties, async (req, res) => {
           is_benchmark: l.is_benchmark,
           read: Boolean(byListing.get(l.id)),
           months: months.map((mo) => (m[mo] ? m[mo].sold : null)),
+          weekend: weekends.map((d) => priceOf(l.id, 'weekend', d)),
+          weekday: weekdays.map((d) => priceOf(l.id, 'weekday', d)),
           // Nights still for sale in the next 30 days.
           open_30: byListing.has(l.id)
             ? Object.values(m).reduce((n, row) => n + row.open_30, 0)
@@ -101,6 +131,14 @@ router.get('/', scopeProperties, async (req, res) => {
         own: mine.find((l) => l.is_own) || null,
         benchmark: mine.find((l) => l.is_benchmark) || null,
         peer_median: months.map((_, i) => median(peers.map((l) => l.months[i]))),
+        // Asking prices only: a stay that has sold says nothing about
+        // what a guest could book it for now.
+        prices: {
+          weekends,
+          weekdays,
+          weekend_median: weekends.map((_, i) => median(peers.map((l) => (l.weekend[i] && l.weekend[i].open ? l.weekend[i].nightly : null)))),
+          weekday_median: weekdays.map((_, i) => median(peers.map((l) => (l.weekday[i] && l.weekday[i].open ? l.weekday[i].nightly : null)))),
+        },
         listings: mine,
         recent: recent.filter((r) => ids.has(r.listing_id)).map((r) => ({
           ...r,
@@ -125,6 +163,22 @@ router.post('/run', requireRole('admin'), async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+/**
+ * Quote prices now. A few hundred requests a second apart take several
+ * minutes, so this answers at once and the work carries on behind it.
+ */
+let pricing = false;
+router.post('/prices', requireRole('admin'), (req, res) => {
+  if (pricing) return res.status(409).json({ error: 'Prices are already being read' });
+  pricing = true;
+  const { runPeerPrices } = require('../services/peer-check');
+  runPeerPrices()
+    .then((r) => console.log(`Peer prices (by hand): ${r.quoted} quoted, ${r.failed} failed.`))
+    .catch((err) => console.error(`Peer prices (by hand) failed: ${err.message}`))
+    .finally(() => { pricing = false; });
+  res.status(202).json({ started: true });
 });
 
 module.exports = router;

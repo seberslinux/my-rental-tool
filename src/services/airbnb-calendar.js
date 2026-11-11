@@ -77,4 +77,79 @@ async function fetchCalendar(listingId, { key, hash, fetchImpl = fetch, now = ne
   }));
 }
 
-module.exports = { fetchCalendar, webKey, calendarHash, DEFAULT_HASH };
+/**
+ * What Airbnb asks for a stay, as the listing page's booking box shows it.
+ *
+ * `StaysPdpBookItQuery`, logged out, 2 adults, in rand. The nightly rate
+ * is read from Airbnb's own line ("2 nights x R 2,544.00") so cleaning
+ * and service fees stay out of it; the total falls back to that line
+ * when the line is missing. `null` means Airbnb would not quote — the
+ * dates are taken or do not meet the stay rules.
+ *
+ * Its hash rotates like the calendar's and is replaced the same way,
+ * through the `airbnb_price_hash` setting (DevTools → Network →
+ * StaysPdpBookItQuery on a listing page with dates).
+ */
+const DEFAULT_PRICE_HASH = 'b4e68e2374e453d598e4cdf9dad60447bd1b64372e8d6deb80df3cd11d3e84db';
+
+async function priceHash() {
+  try {
+    const row = await getOne("SELECT value FROM app_settings WHERE key = 'airbnb_price_hash'");
+    return (row && row.value && row.value.trim()) || DEFAULT_PRICE_HASH;
+  } catch {
+    return DEFAULT_PRICE_HASH;
+  }
+}
+
+const rands = (s) => {
+  const m = String(s || '').match(/R\s?([\d,  ]+(?:\.\d+)?)/);
+  return m ? Math.round(Number(m[1].replace(/[,  ]/g, ''))) : null;
+};
+
+async function fetchQuote(listingId, checkIn, checkOut, { key, hash, fetchImpl = fetch } = {}) {
+  const range = { startDate: checkIn, endDate: checkOut };
+  const variables = {
+    id: Buffer.from(`DemandStayListing:${listingId}`).toString('base64'),
+    dateRange: range,
+    guestCounts: { numberOfAdults: 2 },
+    includePdpMigrationBookItCalendarSheetFragment: true,
+    includePdpMigrationBookItFloatingFooterFragment: true,
+    includePdpMigrationBookItNavFragment: true,
+    includePdpMigrationBookItSidebarFragment: true,
+    includeGalleryBookItCtaFragment: true,
+    includeOverviewMerchandisingTipsFragment: true,
+    includeStaysPdpPriceHeatmapFragment: false,
+    priceHeatmapDateRange: range,
+    selectedCancellationPolicyId: null,
+    causeId: null,
+    selectedGuestOptionId: null,
+    federatedSearchId: null,
+    interactionType: null,
+    logEntityPricingViewEvent: false,
+  };
+  const extensions = { persistedQuery: { version: 1, sha256Hash: hash } };
+  const url = `${BASE}/api/v3/StaysPdpBookItQuery/${hash}` +
+    `?operationName=StaysPdpBookItQuery&locale=en&currency=ZAR` +
+    `&variables=${encodeURIComponent(JSON.stringify(variables))}` +
+    `&extensions=${encodeURIComponent(JSON.stringify(extensions))}`;
+
+  const res = await fetchImpl(url, {
+    headers: { 'User-Agent': UA, 'X-Airbnb-API-Key': key, Accept: 'application/json' },
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || body.errors) {
+    const why = body.error_message || body.errors?.[0]?.message || `status ${res.status}`;
+    throw new Error(`Airbnb price: ${why}`);
+  }
+  const price = body?.data?.node?.pdpPresentation?.bookIt?.structuredDisplayPrice;
+  if (!price) return null;
+
+  const nights = Math.round((Date.parse(checkOut) - Date.parse(checkIn)) / 86400000);
+  const line = price.explanationData?.priceDetails?.[0]?.items?.[0]?.description || '';
+  const perNight = /x\s*R/.test(line) ? rands(line.split(/x/)[1]) : null;
+  const total = rands(price.primaryLine?.price || price.primaryLine?.accessibilityLabel);
+  const nightly = perNight || (total && nights ? Math.round(total / nights) : null);
+  return nightly ? { nightly, total } : null;
+}
+
+module.exports = { fetchCalendar, fetchQuote, webKey, calendarHash, priceHash, DEFAULT_HASH, DEFAULT_PRICE_HASH };
