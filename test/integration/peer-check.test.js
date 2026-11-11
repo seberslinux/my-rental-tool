@@ -1,0 +1,168 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { getApp, getAgent, resetDb, closePool } = require('../helpers/harness');
+const { seedUser, seedProperty, loginAs } = require('../helpers/seed');
+const { pool } = require('../../src/db/database');
+const { todayISO, inDays } = require('../helpers/dates');
+const { runPeerCheck } = require('../../src/services/peer-check');
+
+/**
+ * The competitor check end to end, with Airbnb replaced by a stub.
+ *
+ * Nothing in this file reaches Airbnb: every run is given its own
+ * `fetchCalendar`, and the one that is not would fail the setup step
+ * long before it sent anything.
+ */
+
+test.before(() => getApp());
+test.beforeEach(() => resetDb());
+test.after(() => closePool());
+
+const today = todayISO();
+const night = (i) => (i === 0 ? today : inDays(i));
+const year = (taken = () => false) =>
+  Array.from({ length: 120 }, (_, i) => ({ date: night(i), available: !taken(i), minNights: 2 }));
+
+async function setup() {
+  const admin = await seedUser({ role: 'admin' });
+  const lodge = await seedProperty({ owner: admin, name: 'Hill Top Lodge' });
+  const insert = (airbnbId, name, extra = {}) => pool.query(
+    `INSERT INTO peer_listings (airbnb_id, name, bedrooms, property_id, is_own, is_benchmark)
+     VALUES ($1, $2, 2, $3, $4, $5) RETURNING *`,
+    [airbnbId, name, lodge.id, Boolean(extra.own), Boolean(extra.benchmark)]
+  ).then((r) => r.rows[0]);
+  const own = await insert('111', 'Our lodge', { own: true });
+  const tal = await insert('222', "Tal's house", { benchmark: true });
+  const other = await insert('333', 'Seaforest');
+  return { admin, lodge, own, tal, other };
+}
+
+const stub = (calendars) => async (id) => {
+  if (!calendars[id]) throw new Error(`no calendar for ${id}`);
+  return calendars[id];
+};
+
+test('the first run records the calendars and reports nothing', async () => {
+  await setup();
+  const r = await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year(), 333: year() }), pauseMs: 0 });
+  assert.equal(r.ok, 3);
+  assert.equal(r.found.length, 0);
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM peer_calendar');
+  assert.equal(rows[0].n, 360);
+  const notes = await pool.query("SELECT 1 FROM notifications WHERE event = 'peer_booked'");
+  assert.equal(notes.rows.length, 0);
+});
+
+test('a competitor selling a weekend is recorded and announced once', async () => {
+  await setup();
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year(), 333: year() }), pauseMs: 0 });
+  await runPeerCheck({
+    fetchCalendar: stub({
+      111: year((i) => i === 3),                // our own sale: not announced
+      222: year((i) => i === 9 || i === 10),     // Tal sells two nights
+      333: year((i) => i >= 30 && i < 70),       // a host block
+    }),
+    pauseMs: 0,
+  });
+
+  const stays = await pool.query(
+    `SELECT l.name, s.kind, s.nights, to_char(s.check_in, 'YYYY-MM-DD') AS check_in
+       FROM peer_stays s JOIN peer_listings l ON l.id = s.listing_id ORDER BY l.name`
+  );
+  const tal = stays.rows.find((s) => s.name === "Tal's house");
+  assert.equal(tal.kind, 'booking');
+  assert.equal(tal.nights, 2);
+  assert.equal(tal.check_in, inDays(9));
+  assert.equal(stays.rows.find((s) => s.name === 'Seaforest').kind, 'block');
+
+  const notes = await pool.query("SELECT title, body, link FROM notifications WHERE event = 'peer_booked'");
+  assert.equal(notes.rows.length, 1);
+  assert.match(notes.rows[0].title, /Tal's house just got booked/);
+  assert.equal(notes.rows[0].link, '/peers');
+});
+
+test('a sale whose nights open again is marked as cancelled, not deleted', async () => {
+  await setup();
+  const base = { 111: year(), 333: year() };
+  await runPeerCheck({ fetchCalendar: stub({ ...base, 222: year() }), pauseMs: 0 });
+  await runPeerCheck({ fetchCalendar: stub({ ...base, 222: year((i) => i === 9 || i === 10) }), pauseMs: 0 });
+  await runPeerCheck({ fetchCalendar: stub({ ...base, 222: year() }), pauseMs: 0 });
+
+  const { rows } = await pool.query('SELECT reversed_at FROM peer_stays');
+  assert.equal(rows.length, 1);
+  assert.ok(rows[0].reversed_at);
+});
+
+test('one listing failing does not stop the rest', async () => {
+  await setup();
+  const r = await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year() }), pauseMs: 0 });
+  assert.equal(r.ok, 2);
+  assert.equal(r.failed, 1);
+  const run = await pool.query('SELECT error FROM peer_runs ORDER BY id DESC LIMIT 1');
+  assert.match(run.rows[0].error, /Seaforest/);
+  const alarm = await pool.query("SELECT 1 FROM notifications WHERE event = 'peer_check_failed'");
+  assert.equal(alarm.rows.length, 0);
+});
+
+test('when nothing can be read it says so, once a day', async () => {
+  await setup();
+  const broken = async () => { throw new Error('Airbnb calendar: PersistedQueryNotFound'); };
+  await runPeerCheck({ fetchCalendar: broken, pauseMs: 0 });
+  await runPeerCheck({ fetchCalendar: broken, pauseMs: 0 });
+  const { rows } = await pool.query("SELECT body FROM notifications WHERE event = 'peer_check_failed'");
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].body, /PersistedQueryNotFound/);
+});
+
+test('the comparison puts us, the benchmark and the peer median side by side', async () => {
+  const { admin } = await setup();
+  await runPeerCheck({
+    fetchCalendar: stub({ 111: year((i) => i < 10), 222: year((i) => i < 60), 333: year((i) => i < 5) }),
+    pauseMs: 0,
+  });
+
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const res = await agent.get('/api/peers').expect(200);
+  const p = res.body.properties[0];
+  assert.equal(p.name, 'Hill Top Lodge');
+  assert.equal(p.months.length, 6);
+  assert.equal(p.own.name, 'Our lodge');
+  assert.equal(p.benchmark.name, "Tal's house");
+  assert.ok(p.benchmark.months[0] > p.own.months[0], 'Tal has sold more of this month than we have');
+  assert.equal(p.listings.length, 3);
+  assert.equal(p.listings.find((l) => l.name === 'Seaforest').open_30, 25);
+  assert.ok(res.body.last_run);
+});
+
+test('a manager sees only the competitors of their own properties', async () => {
+  await setup();
+  const manager = await seedUser({ role: 'property_manager' });
+  const agent = await getAgent();
+  await loginAs(agent, manager);
+  const res = await agent.get('/api/peers').expect(200);
+  assert.deepEqual(res.body.properties, []);
+});
+
+test('only an admin can start a run by hand', async () => {
+  await setup();
+  const manager = await seedUser({ role: 'property_manager' });
+  const agent = await getAgent();
+  await loginAs(agent, manager);
+  await agent.post('/api/peers/run').expect(403);
+});
+
+test('the agreed competitor set attaches itself to the properties by name', async () => {
+  const admin = await seedUser({ role: 'admin' });
+  const lodge = await seedProperty({ owner: admin, name: 'Hill Top Lodge' });
+  const loft = await seedProperty({ owner: admin, name: 'The loft' });
+  const { runMigrations } = require('../../src/db/migrations');
+  await runMigrations();
+
+  const { rows } = await pool.query('SELECT airbnb_id, property_id, is_own, is_benchmark FROM peer_listings');
+  const tal = rows.find((r) => r.airbnb_id === '1273593055077595534');
+  assert.equal(tal.property_id, lodge.id);
+  assert.equal(tal.is_benchmark, true);
+  assert.equal(rows.find((r) => r.airbnb_id === '46742610').property_id, loft.id);
+  assert.equal(rows.filter((r) => r.is_own).length, 2);
+});

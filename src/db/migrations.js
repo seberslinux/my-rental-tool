@@ -902,6 +902,75 @@ async function runMigrations() {
     )
   `);
 
+  /**
+   * Competitors on Airbnb, read two to three times a day.
+   *
+   * `peer_calendar` holds the latest state of every night, which is all
+   * the diff needs: a night that was open last time and is taken now is
+   * a sale (or a block — `peer_stays.kind` says which it looked like).
+   */
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS peer_listings (
+      id SERIAL PRIMARY KEY,
+      airbnb_id TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      bedrooms INTEGER,
+      property_id INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+      is_own BOOLEAN NOT NULL DEFAULT FALSE,
+      is_benchmark BOOLEAN NOT NULL DEFAULT FALSE,
+      active BOOLEAN NOT NULL DEFAULT TRUE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS peer_calendar (
+      listing_id INTEGER NOT NULL REFERENCES peer_listings(id) ON DELETE CASCADE,
+      date DATE NOT NULL,
+      available BOOLEAN NOT NULL,
+      min_nights INTEGER,
+      checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (listing_id, date)
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS peer_stays (
+      id SERIAL PRIMARY KEY,
+      listing_id INTEGER NOT NULL REFERENCES peer_listings(id) ON DELETE CASCADE,
+      check_in DATE NOT NULL,
+      check_out DATE NOT NULL,
+      nights INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      lead_days INTEGER,
+      detected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      reversed_at TIMESTAMPTZ
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_peer_stays_detected ON peer_stays (detected_at DESC)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS peer_runs (
+      id SERIAL PRIMARY KEY,
+      started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      finished_at TIMESTAMPTZ,
+      listings_ok INTEGER NOT NULL DEFAULT 0,
+      listings_failed INTEGER NOT NULL DEFAULT 0,
+      stays_found INTEGER NOT NULL DEFAULT 0,
+      error TEXT
+    )
+  `);
+
+  // The agreed set. Re-run on every boot so a property that arrives from
+  // Smoobu after the first boot still gets its competitors attached; a
+  // listing someone has since reassigned or switched off is left alone.
+  for (const p of require('./peer-seed')) {
+    await pool.query(
+      `INSERT INTO peer_listings (airbnb_id, name, bedrooms, property_id, is_own, is_benchmark)
+       VALUES ($1, $2, $3, (SELECT id FROM properties WHERE lower(name) = lower($4) ORDER BY id LIMIT 1), $5, $6)
+       ON CONFLICT (airbnb_id) DO UPDATE SET
+         property_id = COALESCE(peer_listings.property_id, EXCLUDED.property_id)`,
+      [p.id, p.name, p.bedrooms, p.property, Boolean(p.own), Boolean(p.benchmark)]
+    );
+  }
+
   console.log('Database migrations complete.');
 }
 

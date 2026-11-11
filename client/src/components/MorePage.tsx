@@ -72,6 +72,18 @@ export function MorePage({ onNavigate, onLogout }: MorePageProps) {
             <ChevronRight className="w-3.5 h-3.5 text-[#B0B0B0] shrink-0" strokeWidth={2} />
           </div>
 
+          <div
+            className="flex items-center gap-3 p-3 px-4 min-h-[48px] active:bg-[#F7F7F7] cursor-pointer border-t border-[#F0F0F0]"
+            onClick={() => onNavigate && onNavigate('peers')}>
+            <div className="w-[30px] h-[30px] rounded-[7px] bg-[#FF385C] flex items-center justify-center shrink-0 text-white">
+              <Users className="w-4 h-4" strokeWidth={2} />
+            </div>
+            <div className="flex-1 text-[16px] font-normal text-[#222222]">
+              Competitors
+            </div>
+            <ChevronRight className="w-3.5 h-3.5 text-[#B0B0B0] shrink-0" strokeWidth={2} />
+          </div>
+
           <div className="flex items-center gap-3 p-3 px-4 min-h-[48px] active:bg-[#F7F7F7] cursor-pointer border-t border-[#F0F0F0]">
             <div className="w-[30px] h-[30px] rounded-[7px] bg-[#00A699] flex items-center justify-center shrink-0 text-white">
               <DollarSign className="w-4 h-4" strokeWidth={2} />
