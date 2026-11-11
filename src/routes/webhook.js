@@ -18,6 +18,7 @@ const { upsertDailyRates } = require('../services/rate-sync');
 const { conversation, recordGuestMessage, markRead } = require('../services/guest-messages');
 const { getApiKeyForProperty } = require('../services/api-key-resolver');
 const { notify } = require('../services/notify');
+const { isBlockedPlatform } = require('../services/analytics-calc');
 
 // Smoobu has no HMAC/signature support in its webhook config — the only
 // control we have is the URL itself. Require a long random secret as part
@@ -66,6 +67,43 @@ function describe(booking, propertyName) {
     line: `${nights} night${nights === 1 ? '' : 's'} from ${arrives}`,
     where: propertyName || 'a property',
   };
+}
+
+/**
+ * A stay that is no longer happening, whether cancelled or deleted.
+ *
+ * The row is kept and marked cancelled rather than removed: analytics
+ * and finances read cancelled history. The cleaner comes off the job and
+ * the turnover block on the checkout day is released.
+ */
+async function takeOffCalendar(booking, property, { removed }) {
+  await run("UPDATE bookings SET status = 'cancelled', modified_at = NOW() WHERE smoobu_id = $1", [booking.smoobu_id]);
+  await unassignCleanerFromBooking(booking.smoobu_id);
+
+  const blockedDates = await getAll(
+    'SELECT * FROM blocked_dates WHERE property_id = $1 AND date = $2',
+    [property.id, booking.check_out]
+  );
+  for (const blocked of blockedDates) {
+    await run('DELETE FROM blocked_dates WHERE id = $1', [blocked.id]);
+  }
+
+  // A removed block is somebody's own edit, not news. A removed or
+  // cancelled stay is nights back on sale, worth knowing early enough
+  // to reprice them.
+  if (isBlockedPlatform(booking.platform)) return;
+
+  const d = describe(booking, property.name);
+  await notify({
+    event: 'booking_cancelled',
+    title: `${removed ? 'Booking removed' : 'Booking cancelled'} — ${d.where}`,
+    body: `${d.who}, ${d.line}. Those nights are free again.`,
+    propertyId: property.id,
+    // Home, not the booking: a cancelled stay is filtered out of the
+    // calendar, so a link to it would open the app on a sheet that
+    // cannot be drawn.
+    link: '/',
+  });
 }
 
 /** What Smoobu calls a changed booking, plus the names this once guessed. */
@@ -164,6 +202,37 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
     const smoobuId = bookingData.id || bookingData.reservationId;
     const apartmentId = bookingData['apartment']?.id || bookingData.apartmentId;
 
+    /**
+     * A reservation deleted in Smoobu.
+     *
+     * Nothing listened for this, so a deleted stay — most often a block
+     * somebody removed — stayed on the calendar, kept its cleaner and
+     * held its nights off sale until the next full sync happened to
+     * sweep it away. Handled before the property lookup: the booking we
+     * already hold knows its property, so this does not depend on the
+     * payload carrying an apartment.
+     */
+    if (action === 'deleteReservation' || action === 'delete') {
+      const booking = smoobuId
+        ? await getOne('SELECT * FROM bookings WHERE smoobu_id = $1', [smoobuId])
+        : null;
+      if (!booking) {
+        console.log(`Webhook: deleted reservation ${smoobuId} was never stored here`);
+        return res.status(200).json({ received: true, action });
+      }
+      const owner = await getOne('SELECT * FROM properties WHERE id = $1', [booking.property_id]);
+      // An apartment on the payload that disagrees with the stored one
+      // is not ours to act on.
+      if (!owner || (apartmentId && String(owner.smoobu_id) !== String(apartmentId))) {
+        console.log(`Webhook: deleted reservation ${smoobuId} does not match apartment ${apartmentId}`);
+        return res.status(200).json({ received: true, action: 'unknown property' });
+      }
+      if (booking.status !== 'cancelled') {
+        await takeOffCalendar(booking, owner, { removed: true });
+      }
+      return res.status(200).json({ received: true, action });
+    }
+
     // Find local property
     const property = await getOne('SELECT * FROM properties WHERE smoobu_id = $1', [apartmentId]);
 
@@ -211,35 +280,7 @@ router.post('/:secret', verifyWebhookSecret, async (req, res) => {
 
     } else if (action === 'cancelReservation' || action === 'cancel') {
       const booking = await getOne('SELECT * FROM bookings WHERE smoobu_id = $1', [smoobuId]);
-
-      if (booking) {
-        await run("UPDATE bookings SET status = 'cancelled', modified_at = NOW() WHERE smoobu_id = $1", [smoobuId]);
-        await unassignCleanerFromBooking(smoobuId);
-
-        // Unblock any dates that were blocked due to this booking's checkout
-        const blockedDates = await getAll(
-          'SELECT * FROM blocked_dates WHERE property_id = $1 AND date = $2',
-          [property.id, booking.check_out]
-        );
-
-        for (const blocked of blockedDates) {
-          await run('DELETE FROM blocked_dates WHERE id = $1', [blocked.id]);
-        }
-
-        // A cancellation is nights back on sale, which is worth knowing
-        // early enough to reprice them.
-        const d = describe(booking, property.name);
-        await notify({
-          event: 'booking_cancelled',
-          title: `Booking cancelled — ${d.where}`,
-          body: `${d.who}, ${d.line}. Those nights are free again.`,
-          propertyId: property.id,
-          // Home, not the booking: a cancelled stay is filtered out of
-          // the calendar, so a link to it would open the app on a sheet
-          // that cannot be drawn.
-          link: '/',
-        });
-      }
+      if (booking) await takeOffCalendar(booking, property, { removed: false });
 
     } else if (UPDATED.has(action)) {
       /**

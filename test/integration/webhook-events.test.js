@@ -180,3 +180,97 @@ test('an action nobody handles says so rather than looking successful', async ()
   assert.equal(res.body.handled, false);
   assert.equal(res.body.action, 'somethingNew');
 });
+
+// --- deleted reservations, which nothing listened for --------------------
+
+const { seedBooking, seedCleaner } = require('../helpers/seed');
+
+const deleted = (id, apartmentId) => ({
+  action: 'deleteReservation', user: 971234,
+  data: apartmentId ? { id, apartment: { id: apartmentId } } : { id },
+});
+
+test('a reservation deleted in Smoobu comes off the calendar at once', async () => {
+  const { app, property } = await setup();
+  await seedBooking({
+    property, smoobu_id: 900101, platform: 'Booking.com',
+    check_in: inDays(20), check_out: inDays(23),
+  });
+
+  const res = await post(app, deleted(900101, property.smoobu_id));
+  assert.equal(res.body.action, 'deleteReservation');
+  assert.notEqual(res.body.handled, false);
+
+  // Kept and marked, like a cancellation: finances read the history.
+  const { rows } = await pool.query('SELECT status FROM bookings WHERE smoobu_id = 900101');
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].status, 'cancelled');
+
+  const notes = await pool.query(
+    "SELECT title, body FROM notifications WHERE event = 'booking_cancelled'"
+  );
+  assert.equal(notes.rows.length, 1);
+  assert.match(notes.rows[0].title, /removed/i);
+  assert.match(notes.rows[0].body, /free again/);
+});
+
+test('a deleted block is released quietly', async () => {
+  const { app, property } = await setup();
+  await seedBooking({
+    property, smoobu_id: 900102, platform: 'Blocked channel',
+    check_in: inDays(10), check_out: inDays(12),
+  });
+
+  await post(app, deleted(900102, property.smoobu_id));
+
+  const { rows } = await pool.query('SELECT status FROM bookings WHERE smoobu_id = 900102');
+  assert.equal(rows[0].status, 'cancelled');
+  const notes = await pool.query("SELECT 1 FROM notifications WHERE event = 'booking_cancelled'");
+  assert.equal(notes.rows.length, 0);
+});
+
+test('a deletion without an apartment on the payload still lands', async () => {
+  const { app, property } = await setup();
+  await seedBooking({ property, smoobu_id: 900103, check_in: inDays(5), check_out: inDays(7) });
+
+  await post(app, deleted(900103));
+
+  const { rows } = await pool.query('SELECT status FROM bookings WHERE smoobu_id = 900103');
+  assert.equal(rows[0].status, 'cancelled');
+});
+
+test('deleting a reservation we never stored is not an error', async () => {
+  const { app } = await setup();
+  const res = await post(app, deleted(900199));
+  assert.equal(res.body.received, true);
+});
+
+test('the cleaner comes off a deleted stay', async () => {
+  const { app, property } = await setup();
+  const cleaner = await seedCleaner();
+  await seedBooking({ property, smoobu_id: 900104, check_in: inDays(8), check_out: inDays(11) });
+  await pool.query(
+    `INSERT INTO cleaning_jobs (property_id, cleaner_id, booking_id, cleaning_date, start_time, end_time)
+     VALUES ($1, $2, 900104, $3, '10:00', '14:00')`,
+    [property.id, cleaner.id, inDays(11)]
+  );
+
+  await post(app, deleted(900104, property.smoobu_id));
+
+  const jobs = await pool.query('SELECT 1 FROM cleaning_jobs WHERE booking_id = 900104');
+  assert.equal(jobs.rows.length, 0);
+  const told = await pool.query(
+    "SELECT 1 FROM notifications WHERE event = 'job_cancelled' AND cleaner_id = $1", [cleaner.id]
+  );
+  assert.equal(told.rows.length, 1);
+});
+
+test('a deletion naming a different apartment touches nothing', async () => {
+  const { app, property } = await setup();
+  await seedBooking({ property, smoobu_id: 900105, check_in: inDays(30), check_out: inDays(32) });
+
+  await post(app, deleted(900105, 123456789));
+
+  const { rows } = await pool.query('SELECT status FROM bookings WHERE smoobu_id = 900105');
+  assert.equal(rows[0].status, 'confirmed');
+});
