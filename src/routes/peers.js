@@ -51,13 +51,31 @@ async function occupancySummary(scope, today) {
       ORDER BY name`,
     [scope]
   );
+  // The average asking price per night over the stays quoted in the next
+  // five weeks: the price axis of the chart, one figure per listing.
+  const asking = new Map((await getAll(
+    `SELECT listing_id, ROUND(AVG(nightly))::int AS price FROM peer_prices
+      WHERE check_in > $1::date AND check_in <= $1::date + 35 GROUP BY listing_id`,
+    [today]
+  )).map((r) => [r.listing_id, r.price]));
+
   return props.map((p) => {
     const mine = rows.filter((r) => r.property_id === p.id);
     const benchmark = mine.find((r) => r.is_benchmark);
+    const near = mine.filter((r) => r.days === WINDOWS[0]);
+    // Price against occupancy, one point per listing. A listing with no
+    // quote in the window — full, or not yet priced — has no price to
+    // place it by, so it is left off rather than put at zero.
+    const points = near
+      .filter((r) => asking.has(r.id))
+      .map((r) => ({ name: r.name, occupancy: r.taken, price: asking.get(r.id), is_own: r.is_own, is_benchmark: r.is_benchmark }));
+    const competitors = points.filter((x) => !x.is_own);
     return {
       id: p.id,
       name: p.name,
       benchmark_name: benchmark ? benchmark.name : null,
+      points,
+      median_price: median(competitors.map((x) => x.price)),
       windows: WINDOWS.map((days) => {
         const at = mine.filter((r) => r.days === days);
         const own = at.find((r) => r.is_own);
