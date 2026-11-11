@@ -282,4 +282,21 @@ cron.schedule('0 4 * * *', async () => {
   }
 });
 
+/**
+ * Competitors on Airbnb, three times a day and no more.
+ *
+ * Morning, early afternoon and evening catch a sale within a few hours
+ * of it happening, which is as fast as anybody can act on one. More
+ * often adds requests to Airbnb without adding anything worth knowing.
+ */
+cron.schedule('0 6,13,20 * * *', async () => {
+  try {
+    const { runPeerCheck } = require('../services/peer-check');
+    const { ok, failed, found } = await runPeerCheck();
+    console.log(`Peer check: ${ok} read, ${failed} failed, ${found.length} new stay(s).`);
+  } catch (err) {
+    console.error(`Peer check cron error: ${err.message}`);
+  }
+});
+
 console.log('Cron jobs scheduled (SAST/UTC+2).');

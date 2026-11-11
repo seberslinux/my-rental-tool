@@ -104,6 +104,10 @@ const EVENTS = {
   // A guest wrote. Somebody is waiting on an answer, often about getting
   // in, so it reaches the phone.
   guest_message: { severity: 'attention' },
+  // A competitor sold nights — one summary per run of the peer check.
+  peer_booked: { severity: 'info' },
+  // The peer check could read no listing at all, so it has gone quiet.
+  peer_check_failed: { severity: 'attention' },
 
   // The cleaner's own. Each of these replaces a bare whatsapp.sendMessage
   // that reported nothing and was recorded nowhere — which is how every

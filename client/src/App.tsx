@@ -13,6 +13,7 @@ import { LoginPage } from './components/LoginPage';
 import { InvitePage } from './components/InvitePage';
 import { CleanerDashboard } from './components/CleanerDashboard';
 import { NotificationGate } from './components/NotificationGate';
+import { PeersPage } from './components/PeersPage';
 import { NotificationsPanel } from './components/NotificationsPanel';
 import { CleanersPage } from './components/CleanersPage';
 import { PropertiesPage } from './components/PropertiesPage';
@@ -46,6 +47,7 @@ const TAB_PATHS: Record<string, string> = {
   smoobu: '/smoobu',
   todo: '/todo',
   rates: '/rates',
+  peers: '/peers',
   more: '/more',
 };
 
@@ -413,6 +415,8 @@ export function App() {
         return 'To do';
       case 'rates':
         return 'Rates';
+      case 'peers':
+        return 'Competitors';
       case 'messages':
         return 'Messages';
       case 'more':
@@ -675,6 +679,7 @@ export function App() {
         {activeTab === 'users' && <UsersPage />}
         {activeTab === 'todo' && <TodoPage propertyId={globalPropertyFilter} />}
         {activeTab === 'rates' && <RatesPage initialPropertyId={ratesProperty} />}
+        {activeTab === 'peers' && <PeersPage propertyId={globalPropertyFilter} isAdmin={userRole === 'admin'} />}
         {activeTab === 'messages' &&
         <MessagesPage
           initialBookingId={openMessageId}
