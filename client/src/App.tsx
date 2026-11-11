@@ -12,6 +12,7 @@ import { AnalyticsPage } from './components/AnalyticsPage';
 import { LoginPage } from './components/LoginPage';
 import { InvitePage } from './components/InvitePage';
 import { CleanerDashboard } from './components/CleanerDashboard';
+import { NotificationGate } from './components/NotificationGate';
 import { NotificationsPanel } from './components/NotificationsPanel';
 import { CleanersPage } from './components/CleanersPage';
 import { PropertiesPage } from './components/PropertiesPage';
@@ -491,12 +492,15 @@ export function App() {
   // guest names, other cleaners' rates. The server now refuses those, so
   // without this the same screen would render as a wall of failures.
   if (userRole === 'cleaner') {
+    const signOut = async () => {
+      await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
+      window.location.href = '/';
+    };
+    // Push is how a cleaner hears about work, so it comes first.
     return (
-      <CleanerDashboard
-        onSignOut={async () => {
-          await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
-          window.location.href = '/';
-        }} />);
+      <NotificationGate onSignOut={signOut}>
+        <CleanerDashboard onSignOut={signOut} />
+      </NotificationGate>);
   }
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-[#F7F7F7] font-sans text-[#222222] antialiased">
