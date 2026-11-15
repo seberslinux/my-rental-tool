@@ -982,6 +982,76 @@ async function runMigrations() {
   // a 14-guest villa is compared on what a group of twelve would pay.
   await pool.query(`ALTER TABLE properties ADD COLUMN IF NOT EXISTS peer_guests INTEGER DEFAULT 2`);
 
+  /**
+   * The competitor history: append-only, never updated, never deleted.
+   *
+   * `peer_calendar` and `peer_prices` hold only the latest state, which is
+   * all the daily check needs, and each reading overwrote the one before.
+   * The value of watching a market is the record of how it moved, so every
+   * change of a night, every quote and a weekly picture of every listing
+   * is kept here for good.
+   */
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS peer_calendar_changes (
+      id BIGSERIAL PRIMARY KEY,
+      listing_id INTEGER NOT NULL REFERENCES peer_listings(id) ON DELETE CASCADE,
+      date DATE NOT NULL,
+      available BOOLEAN NOT NULL,
+      min_nights INTEGER,
+      baseline BOOLEAN NOT NULL DEFAULT FALSE,
+      seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_peer_calendar_changes ON peer_calendar_changes (listing_id, date, seen_at)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS peer_price_history (
+      id BIGSERIAL PRIMARY KEY,
+      listing_id INTEGER NOT NULL REFERENCES peer_listings(id) ON DELETE CASCADE,
+      check_in DATE NOT NULL,
+      nights INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      guests INTEGER,
+      currency TEXT,
+      nightly INTEGER NOT NULL,
+      total INTEGER,
+      quoted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_peer_price_history ON peer_price_history (listing_id, check_in, quoted_at)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS peer_listing_snapshots (
+      id BIGSERIAL PRIMARY KEY,
+      listing_id INTEGER NOT NULL REFERENCES peer_listings(id) ON DELETE CASCADE,
+      taken_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      title TEXT,
+      property_type TEXT,
+      rating REAL,
+      reviews INTEGER,
+      guests INTEGER,
+      bedrooms INTEGER,
+      beds INTEGER,
+      baths REAL,
+      superhost BOOLEAN,
+      guest_favorite BOOLEAN,
+      photos INTEGER,
+      category_ratings JSONB,
+      amenities JSONB
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_peer_listing_snapshots ON peer_listing_snapshots (listing_id, taken_at DESC)`);
+
+  // What was already gathered becomes the start of the record, once.
+  await pool.query(`
+    INSERT INTO peer_price_history (listing_id, check_in, nights, kind, nightly, total, quoted_at)
+    SELECT listing_id, check_in, nights, kind, nightly, total, quoted_at FROM peer_prices
+     WHERE NOT EXISTS (SELECT 1 FROM peer_price_history)
+  `);
+  await pool.query(`
+    INSERT INTO peer_calendar_changes (listing_id, date, available, min_nights, baseline, seen_at)
+    SELECT listing_id, date, available, min_nights, TRUE, checked_at FROM peer_calendar
+     WHERE NOT EXISTS (SELECT 1 FROM peer_calendar_changes)
+  `);
+
   // The agreed set. Re-run on every boot so a property that arrives from
   // Smoobu after the first boot still gets its competitors attached; a
   // listing someone has since reassigned or switched off is left alone.

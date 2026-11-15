@@ -191,6 +191,12 @@ async function runPeerPrices({ fetchQuote, today = new Date().toISOString().slic
                kind = EXCLUDED.kind, nightly = EXCLUDED.nightly, total = EXCLUDED.total, quoted_at = NOW()`,
             [listing.id, stay.checkIn, stay.nights, stay.kind, q.nightly, q.total]
           );
+          // And into the record, which keeps every quote ever taken.
+          await run(
+            `INSERT INTO peer_price_history (listing_id, check_in, nights, kind, guests, currency, nightly, total)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+            [listing.id, stay.checkIn, stay.nights, stay.kind, listing.guests, listing.currency, q.nightly, q.total]
+          );
           quoted++;
         }
       } catch (err) {
@@ -199,7 +205,8 @@ async function runPeerPrices({ fetchQuote, today = new Date().toISOString().slic
       if (pauseMs) await sleep(pauseMs);
     }
   }
-  // Past stays are history the calendar already holds.
+  // The working table keeps only stays still ahead; every quote it drops
+  // is already in peer_price_history, which nothing ever deletes from.
   await run('DELETE FROM peer_prices WHERE check_in < $1::date', [today]);
   return { quoted, failed: failures.length, error: failures.slice(0, 3).join(' · ') || null };
 }
@@ -272,6 +279,20 @@ async function runPeerCheck({ fetchCalendar, today = new Date().toISOString().sl
               AND detected_at > NOW() - INTERVAL '30 days'
               AND EXISTS (SELECT 1 FROM unnest($2::date[]) d WHERE d >= check_in AND d < check_out)`,
           [listing.id, opened]
+        );
+      }
+
+      // The record: every night whose state moved since the last reading,
+      // and on a listing's first reading every night, as the baseline.
+      const changed = nights.filter((n) => {
+        const before = previous.get(n.date);
+        return !before || before.available !== n.available || (before.minNights ?? null) !== (n.minNights ?? null);
+      });
+      if (changed.length) {
+        await run(
+          `INSERT INTO peer_calendar_changes (listing_id, date, available, min_nights, baseline)
+           SELECT $1, d, a, m, $5 FROM unnest($2::date[], $3::boolean[], $4::int[]) AS t(d, a, m)`,
+          [listing.id, changed.map((n) => n.date), changed.map((n) => n.available), changed.map((n) => n.minNights), previous.size === 0]
         );
       }
 

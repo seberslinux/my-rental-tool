@@ -252,6 +252,78 @@ router.get('/analysis', scopeProperties, async (req, res) => {
   }
 });
 
+/** What each feature is worth among the competitors, and what to add. */
+router.get('/features', scopeProperties, async (req, res) => {
+  try {
+    const { featureAnalysis } = require('../services/peer-features');
+    res.json({ properties: await featureAnalysis({ scope: req.accessiblePropertyIds }) });
+  } catch (err) {
+    console.error('Peer features failed:', err.message);
+    res.status(500).json({ error: 'Could not load the feature analysis' });
+  }
+});
+
+/** Take the listing snapshots that are due now, in the background. */
+let snapping = false;
+router.post('/snapshots', requireRole('admin'), (req, res) => {
+  if (snapping) return res.status(409).json({ error: 'Listings are already being read' });
+  snapping = true;
+  const { snapshotListings } = require('../services/peer-features');
+  snapshotListings()
+    .then((r) => console.log(`Peer snapshots (by hand): ${r.taken} of ${r.due} taken, ${r.failed} failed.`))
+    .catch((err) => console.error(`Peer snapshots (by hand) failed: ${err.message}`))
+    .finally(() => { snapping = false; });
+  res.status(202).json({ started: true });
+});
+
+/**
+ * The record, as CSV, for analysis outside the app.
+ *
+ * Admin only and whole tables: this is the database the watch builds up,
+ * and owning it means being able to take it anywhere.
+ */
+const EXPORTS = {
+  listings: `SELECT l.id, l.airbnb_id, l.name, p.name AS property, l.is_own, l.is_benchmark, l.active, l.created_at
+               FROM peer_listings l LEFT JOIN properties p ON p.id = l.property_id ORDER BY l.id`,
+  bookings: `SELECT s.id, l.airbnb_id, l.name, s.check_in, s.check_out, s.nights, s.kind, s.lead_days, s.nightly,
+                    s.detected_at, s.reversed_at
+               FROM peer_stays s JOIN peer_listings l ON l.id = s.listing_id ORDER BY s.detected_at, s.id`,
+  prices: `SELECT h.id, l.airbnb_id, l.name, h.check_in, h.nights, h.kind, h.guests, h.currency, h.nightly, h.total, h.quoted_at
+             FROM peer_price_history h JOIN peer_listings l ON l.id = h.listing_id ORDER BY h.quoted_at, h.id`,
+  calendar: `SELECT c.id, l.airbnb_id, l.name, c.date, c.available, c.min_nights, c.baseline, c.seen_at
+               FROM peer_calendar_changes c JOIN peer_listings l ON l.id = c.listing_id ORDER BY c.seen_at, c.id`,
+  snapshots: `SELECT s.id, l.airbnb_id, l.name, s.taken_at, s.title, s.property_type, s.rating, s.reviews, s.guests,
+                     s.bedrooms, s.beds, s.baths, s.superhost, s.guest_favorite, s.photos, s.category_ratings, s.amenities
+                FROM peer_listing_snapshots s JOIN peer_listings l ON l.id = s.listing_id ORDER BY s.taken_at, s.id`,
+  runs: `SELECT * FROM peer_runs ORDER BY id`,
+};
+
+function toCsv(rows) {
+  if (!rows.length) return '';
+  const cols = Object.keys(rows[0]);
+  const cell = (v) => {
+    if (v == null) return '';
+    const s = v instanceof Date ? v.toISOString() : typeof v === 'object' ? JSON.stringify(v) : String(v);
+    return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  return [cols.join(','), ...rows.map((r) => cols.map((c) => cell(r[c])).join(','))].join('\n') + '\n';
+}
+
+router.get('/export/:table', requireRole('admin'), async (req, res) => {
+  const sql = EXPORTS[req.params.table];
+  if (!sql) return res.status(404).json({ error: `No table "${req.params.table}". Try: ${Object.keys(EXPORTS).join(', ')}` });
+  try {
+    const rows = await getAll(sql);
+    const day = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="competitors-${req.params.table}-${day}.csv"`);
+    res.send(toCsv(rows));
+  } catch (err) {
+    console.error('Peer export failed:', err.message);
+    res.status(500).json({ error: 'Could not export' });
+  }
+});
+
 /** Run it now rather than waiting for the next scheduled read. */
 router.post('/run', requireRole('admin'), async (req, res) => {
   try {
