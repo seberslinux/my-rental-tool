@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ExternalLink, RefreshCw } from 'lucide-react';
 import { apiGet } from '../data/session';
 import { PeersSummaryCards, PeerSummaryRow, money } from './PeersSummary';
+import { PeerAnalysis } from './PeerAnalysis';
 
 /**
  * How we are selling against the listings we compete with.
@@ -226,6 +227,9 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
           <PeersSummaryCards rows={data.summary} propertyId={propertyId} height={300} />
         </div>
       }
+
+      {/* What they sold, by week, month and season, with what to do about it. */}
+      <PeerAnalysis propertyId={propertyId} />
 
       {shown.map((p) =>
       <section key={p.id} className="space-y-3">
