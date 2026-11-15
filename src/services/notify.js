@@ -108,6 +108,8 @@ const EVENTS = {
   peer_booked: { severity: 'info' },
   // The peer check could read no listing at all, so it has gone quiet.
   peer_check_failed: { severity: 'attention' },
+  // Monday's summary of what the competitors sold the week before.
+  peer_weekly: { severity: 'info' },
 
   // The cleaner's own. Each of these replaces a bare whatsapp.sendMessage
   // that reported nothing and was recorded nowhere — which is how every
