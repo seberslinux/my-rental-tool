@@ -316,4 +316,19 @@ cron.schedule('30 6 * * *', async () => {
   }
 });
 
+/**
+ * Monday 07:30: last week's competitor sales, one summary per property.
+ * Weekly rather than daily — the booking alerts already say what sold
+ * today; this is the view across the week, when a pattern shows.
+ */
+cron.schedule('30 7 * * 1', async () => {
+  try {
+    const { weeklyDigest } = require('../services/peer-analysis');
+    const sent = await weeklyDigest();
+    console.log(`Peer weekly digest: sent for ${sent.length} propert${sent.length === 1 ? 'y' : 'ies'}.`);
+  } catch (err) {
+    console.error(`Peer weekly digest error: ${err.message}`);
+  }
+});
+
 console.log('Cron jobs scheduled (SAST/UTC+2).');

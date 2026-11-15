@@ -350,3 +350,56 @@ test('the comparison says which currency and party size its prices are for', asy
   assert.equal(body.properties[0].guests, 12);
   assert.equal(body.summary[0].currency, 'EUR');
 });
+
+// --- the booking analysis ------------------------------------------------------
+
+const { weeklyDigest } = require('../../src/services/peer-analysis');
+
+async function withSales() {
+  const ctx = await setup();
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year(), 333: year() }), pauseMs: 0 });
+  await runPeerPrices({ fetchQuote: quoteAt({ 111: 2700, 222: 4200, 333: 2500 }), pauseMs: 0 });
+  await runPeerCheck({
+    fetchCalendar: stub({ 111: year((i) => i === 3), 222: year((i) => i === 9 || i === 10), 333: year((i) => i >= 20 && i < 23) }),
+    pauseMs: 0,
+  });
+  return ctx;
+}
+
+test('the analysis adds up what competitors sold, leaving our own sales out', async () => {
+  const { admin } = await withSales();
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get('/api/peers/analysis').expect(200);
+  const a = body.properties[0];
+  assert.equal(a.total.bookings, 2, "Tal's and Seaforest's sales, not ours");
+  assert.equal(a.total.nights, 5);
+  assert.equal(a.weeks.length, 1);
+  assert.equal(a.listings[0].name, 'Seaforest');
+  assert.ok(a.months.length >= 1 && a.seasons.length >= 1);
+  assert.ok(Array.isArray(a.suggestions));
+});
+
+test('a manager sees no analysis for properties that are not theirs', async () => {
+  await withSales();
+  const manager = await seedUser({ role: 'property_manager' });
+  const agent = await getAgent();
+  await loginAs(agent, manager);
+  const { body } = await agent.get('/api/peers/analysis').expect(200);
+  assert.deepEqual(body.properties, []);
+});
+
+test("Monday's summary covers last week's sales and stays quiet on a week with none", async () => {
+  await withSales();
+  const sent = [];
+  // Run it as if it were Monday a week from now: the sales above fall in "last week".
+  const nextMonday = (() => { const d = new Date(); d.setUTCDate(d.getUTCDate() + ((8 - d.getUTCDay()) % 7 || 7)); return d.toISOString().slice(0, 10); })();
+  await weeklyDigest({ today: nextMonday, notifyImpl: async (n) => sent.push(n) });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].event, 'peer_weekly');
+  assert.match(sent[0].title, /competitors sold 2 bookings, 5 nights last week/);
+  const later = [];
+  const inTwoWeeks = new Date(Date.parse(`${nextMonday}T00:00:00Z`) + 7 * 86400000).toISOString().slice(0, 10);
+  await weeklyDigest({ today: inTwoWeeks, notifyImpl: async (n) => later.push(n) });
+  assert.equal(later.length, 0);
+});

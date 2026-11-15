@@ -238,6 +238,20 @@ router.get('/', scopeProperties, async (req, res) => {
   }
 });
 
+/**
+ * What the competitors sold: by week found, by month and season of stay,
+ * by competitor, with suggestions. See services/peer-analysis.
+ */
+router.get('/analysis', scopeProperties, async (req, res) => {
+  try {
+    const { bookingAnalysis } = require('../services/peer-analysis');
+    res.json({ properties: await bookingAnalysis({ scope: req.accessiblePropertyIds }) });
+  } catch (err) {
+    console.error('Peer analysis failed:', err.message);
+    res.status(500).json({ error: 'Could not load the competitor analysis' });
+  }
+});
+
 /** Run it now rather than waiting for the next scheduled read. */
 router.post('/run', requireRole('admin'), async (req, res) => {
   try {
