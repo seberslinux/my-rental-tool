@@ -80,8 +80,11 @@ async function fetchCalendar(listingId, { key, hash, fetchImpl = fetch, now = ne
 /**
  * What Airbnb asks for a stay, as the listing page's booking box shows it.
  *
- * `StaysPdpBookItQuery`, logged out, 2 adults, in rand. The nightly rate
- * is read from Airbnb's own line ("2 nights x R 2,544.00") so cleaning
+ * `StaysPdpBookItQuery`, logged out, for the property's own guest count
+ * and currency: 2 adults in rand unless the property says otherwise, since
+ * a 14-guest villa is not priced like a couple's cottage and a villa in
+ * Piemonte is compared in euro. The nightly rate is read from Airbnb's own
+ * line ("2 nights x R 2,544.00", "7 nights x € 973.00") so cleaning
  * and service fees stay out of it; the total falls back to that line
  * when the line is missing. `null` means Airbnb would not quote — the
  * dates are taken or do not meet the stay rules.
@@ -101,17 +104,19 @@ async function priceHash() {
   }
 }
 
-const rands = (s) => {
-  const m = String(s || '').match(/R\s?([\d,  ]+(?:\.\d+)?)/);
-  return m ? Math.round(Number(m[1].replace(/[,  ]/g, ''))) : null;
+// The amount in a price string, whatever the currency sign: "R 5,088 ZAR",
+// "€6,809", "€ 973.00 EUR". English locale, so commas group thousands.
+const amount = (s) => {
+  const m = String(s || '').match(/(\d[\d,\u00a0\u202f ]*(?:\.\d+)?)/);
+  return m ? Math.round(Number(m[1].replace(/[,\u00a0\u202f ]/g, ''))) : null;
 };
 
-async function fetchQuote(listingId, checkIn, checkOut, { key, hash, fetchImpl = fetch } = {}) {
+async function fetchQuote(listingId, checkIn, checkOut, { key, hash, fetchImpl = fetch, currency = 'ZAR', adults = 2 } = {}) {
   const range = { startDate: checkIn, endDate: checkOut };
   const variables = {
     id: Buffer.from(`DemandStayListing:${listingId}`).toString('base64'),
     dateRange: range,
-    guestCounts: { numberOfAdults: 2 },
+    guestCounts: { numberOfAdults: adults },
     includePdpMigrationBookItCalendarSheetFragment: true,
     includePdpMigrationBookItFloatingFooterFragment: true,
     includePdpMigrationBookItNavFragment: true,
@@ -129,7 +134,7 @@ async function fetchQuote(listingId, checkIn, checkOut, { key, hash, fetchImpl =
   };
   const extensions = { persistedQuery: { version: 1, sha256Hash: hash } };
   const url = `${BASE}/api/v3/StaysPdpBookItQuery/${hash}` +
-    `?operationName=StaysPdpBookItQuery&locale=en&currency=ZAR` +
+    `?operationName=StaysPdpBookItQuery&locale=en&currency=${encodeURIComponent(currency)}` +
     `&variables=${encodeURIComponent(JSON.stringify(variables))}` +
     `&extensions=${encodeURIComponent(JSON.stringify(extensions))}`;
 
@@ -146,8 +151,9 @@ async function fetchQuote(listingId, checkIn, checkOut, { key, hash, fetchImpl =
 
   const nights = Math.round((Date.parse(checkOut) - Date.parse(checkIn)) / 86400000);
   const line = price.explanationData?.priceDetails?.[0]?.items?.[0]?.description || '';
-  const perNight = /x\s*R/.test(line) ? rands(line.split(/x/)[1]) : null;
-  const total = rands(price.primaryLine?.price || price.primaryLine?.accessibilityLabel);
+  // "7 nights x € 973.00": the amount after the " x ", never the night count before it.
+  const perNight = /\sx\s/.test(line) ? amount(line.split(/\sx\s/)[1]) : null;
+  const total = amount(price.primaryLine?.price || price.primaryLine?.accessibilityLabel);
   const nightly = perNight || (total && nights ? Math.round(total / nights) : null);
   return nightly ? { nightly, total } : null;
 }

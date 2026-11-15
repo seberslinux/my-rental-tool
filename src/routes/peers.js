@@ -45,7 +45,7 @@ async function occupancySummary(scope, today) {
     [today, WINDOWS, scope]
   );
   const props = await getAll(
-    `SELECT id, name FROM properties
+    `SELECT id, name, COALESCE(base_currency, 'ZAR') AS currency, COALESCE(peer_guests, 2) AS guests FROM properties
       WHERE ($1::int[] IS NULL OR id = ANY($1::int[]))
         AND EXISTS (SELECT 1 FROM peer_listings l WHERE l.property_id = properties.id AND l.active)
       ORDER BY name`,
@@ -73,6 +73,7 @@ async function occupancySummary(scope, today) {
     return {
       id: p.id,
       name: p.name,
+      currency: p.currency,
       benchmark_name: benchmark ? benchmark.name : null,
       points,
       median_price: median(competitors.map((x) => x.price)),
@@ -107,7 +108,7 @@ router.get('/', scopeProperties, async (req, res) => {
     const today = new Date().toISOString().slice(0, 10);
     const scope = req.accessiblePropertyIds; // null = all
     const properties = await getAll(
-      `SELECT id, name FROM properties
+      `SELECT id, name, COALESCE(base_currency, 'ZAR') AS currency, COALESCE(peer_guests, 2) AS guests FROM properties
         WHERE ($1::int[] IS NULL OR id = ANY($1::int[]))
           AND EXISTS (SELECT 1 FROM peer_listings l WHERE l.property_id = properties.id AND l.active)
         ORDER BY name`,
@@ -208,6 +209,8 @@ router.get('/', scopeProperties, async (req, res) => {
       return {
         id: p.id,
         name: p.name,
+        currency: p.currency,
+        guests: p.guests,
         months,
         own: mine.find((l) => l.is_own) || null,
         benchmark: mine.find((l) => l.is_benchmark) || null,

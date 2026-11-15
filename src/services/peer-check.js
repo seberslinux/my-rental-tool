@@ -104,7 +104,7 @@ function summarise(found) {
   const sales = found.filter((f) => f.kind === 'booking' && !f.listing.is_own);
   if (!sales.length) return null;
   sales.sort((a, b) => Number(b.listing.is_benchmark) - Number(a.listing.is_benchmark) || a.checkIn.localeCompare(b.checkIn));
-  const at = (s) => (s.nightly ? `, about ${rand(s.nightly)} a night` : '');
+  const at = (s) => (s.nightly ? `, about ${money(s.nightly, s.listing.currency)} a night` : '');
   const line = (s) => `${s.listing.name} ${span(s.checkIn, s.checkOut)} (${s.nights} night${s.nights === 1 ? '' : 's'}${at(s)})`;
   if (sales.length === 1) {
     const s = sales[0];
@@ -113,9 +113,11 @@ function summarise(found) {
   return { title: `${sales.length} competitor bookings`, body: sales.map(line).join(' · ') };
 }
 
-// "R4 200". By hand: en-ZA groups with a no-break space, which reads the
-// same but is not the space anybody would search or test for.
-const rand = (n) => `R${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}`;
+// "R4 200", "€1 995". By hand: en-ZA groups with a no-break space, which
+// reads the same but is not the space anybody would search or test for.
+const SIGNS = { ZAR: 'R', EUR: '€', USD: '$', GBP: '£' };
+const money = (n, currency = 'ZAR') =>
+  `${SIGNS[currency] || `${currency} `}${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}`;
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -159,12 +161,14 @@ function planQuotes(calendar, today) {
  * slowly than availability, and this is the part that costs requests.
  */
 async function runPeerPrices({ fetchQuote, today = new Date().toISOString().slice(0, 10), pauseMs = 1000 } = {}) {
-  const listings = await getAll('SELECT * FROM peer_listings WHERE active ORDER BY is_own DESC, is_benchmark DESC, id');
+  const listings = await getAll(`SELECT l.*, COALESCE(p.base_currency, 'ZAR') AS currency, COALESCE(p.peer_guests, 2) AS guests
+       FROM peer_listings l LEFT JOIN properties p ON p.id = l.property_id
+      WHERE l.active ORDER BY l.is_own DESC, l.is_benchmark DESC, l.id`);
   let quote = fetchQuote;
   if (!quote) {
     const hash = await airbnb.priceHash();
     const key = listings.length ? await airbnb.webKey(listings[0].airbnb_id) : null;
-    quote = (id, a, b) => airbnb.fetchQuote(id, a, b, { key, hash });
+    quote = (id, a, b, opts) => airbnb.fetchQuote(id, a, b, { key, hash, ...opts });
   }
 
   let quoted = 0;
@@ -178,7 +182,7 @@ async function runPeerPrices({ fetchQuote, today = new Date().toISOString().slic
     const calendar = new Map(rows.map((r) => [r.date, { available: r.available, minNights: r.min_nights }]));
     for (const stay of planQuotes(calendar, today)) {
       try {
-        const q = await quote(listing.airbnb_id, stay.checkIn, stay.checkOut);
+        const q = await quote(listing.airbnb_id, stay.checkIn, stay.checkOut, { currency: listing.currency, adults: listing.guests });
         if (q && q.nightly) {
           await run(
             `INSERT INTO peer_prices (listing_id, check_in, nights, kind, nightly, total, quoted_at)
@@ -209,7 +213,9 @@ async function runPeerPrices({ fetchQuote, today = new Date().toISOString().slic
  * a quiet market.
  */
 async function runPeerCheck({ fetchCalendar, today = new Date().toISOString().slice(0, 10), pauseMs = 1500 } = {}) {
-  const listings = await getAll('SELECT * FROM peer_listings WHERE active ORDER BY is_own DESC, is_benchmark DESC, id');
+  const listings = await getAll(`SELECT l.*, COALESCE(p.base_currency, 'ZAR') AS currency, COALESCE(p.peer_guests, 2) AS guests
+       FROM peer_listings l LEFT JOIN properties p ON p.id = l.property_id
+      WHERE l.active ORDER BY l.is_own DESC, l.is_benchmark DESC, l.id`);
   const { id: runId } = await getOne('INSERT INTO peer_runs DEFAULT VALUES RETURNING id');
 
   let read = fetchCalendar;
