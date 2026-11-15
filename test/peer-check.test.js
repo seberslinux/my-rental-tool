@@ -178,3 +178,31 @@ test('a booking message says what the nights were on sale for', () => {
   }]);
   assert.match(msg.body, /about R4 200 a night/);
 });
+
+// --- currency and party size --------------------------------------------------
+
+test('a euro quote reads the per-night amount, not the night count before it', async () => {
+  const q = await fetchQuote('1', inDays(5), inDays(12), {
+    key: 'k', hash: 'h', currency: 'EUR', adults: 12,
+    fetchImpl: fakeAirbnb(priced('7 nights x € 973.00 EUR', '€6,809 EUR')),
+  });
+  assert.equal(q.nightly, 973);
+  assert.equal(q.total, 6809);
+});
+
+test('the quote asks Airbnb for the currency and party size it is given', async () => {
+  let asked = '';
+  const spy = async (url) => { asked = url; return { ok: true, status: 200, json: async () => priced('7 nights x € 973.00 EUR', '€6,809') }; };
+  await fetchQuote('1', inDays(5), inDays(12), { key: 'k', hash: 'h', currency: 'EUR', adults: 12, fetchImpl: spy });
+  assert.match(asked, /currency=EUR/);
+  const vars = JSON.parse(decodeURIComponent(asked.match(/variables=([^&]+)/)[1]));
+  assert.equal(vars.guestCounts.numberOfAdults, 12);
+});
+
+test('a booking message prices a euro property in euro', () => {
+  const msg = summarise([{
+    checkIn: inDays(9), checkOut: inDays(16), nights: 7, kind: 'booking', nightly: 1995,
+    listing: { name: 'Villa San Lorenzo', is_own: false, is_benchmark: true, currency: 'EUR' },
+  }]);
+  assert.match(msg.body, /about €1 995 a night/);
+});

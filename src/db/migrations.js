@@ -978,6 +978,9 @@ async function runMigrations() {
     )
   `);
   await pool.query(`ALTER TABLE peer_stays ADD COLUMN IF NOT EXISTS nightly INTEGER`);
+  // How many guests a competitor's price is quoted for. Two suits a cottage;
+  // a 14-guest villa is compared on what a group of twelve would pay.
+  await pool.query(`ALTER TABLE properties ADD COLUMN IF NOT EXISTS peer_guests INTEGER DEFAULT 2`);
 
   // The agreed set. Re-run on every boot so a property that arrives from
   // Smoobu after the first boot still gets its competitors attached; a

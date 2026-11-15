@@ -25,13 +25,17 @@ import { apiGet } from '../data/session';
 export interface PeerWindow { days: number; own: number | null; benchmark: number | null; median: number | null; }
 export interface PeerPoint { name: string; occupancy: number; price: number; is_own: boolean; is_benchmark: boolean; }
 export interface PeerSummaryRow {
-  id: number; name: string; benchmark_name: string | null; windows: PeerWindow[];
+  id: number; name: string; currency?: string; benchmark_name: string | null; windows: PeerWindow[];
   points?: PeerPoint[]; median_price?: number | null;
 }
 
 const card = 'bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)]';
 const pct = (v: number | null | undefined) => (v == null ? '–' : `${v}%`);
-const rand = (n: number) => `R${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}`;
+const SIGNS: Record<string, string> = { ZAR: 'R', EUR: '€', USD: '$', GBP: '£' };
+/** "R4 200", "€1 995": the amount in the property's own currency. */
+export const money = (n: number, currency = 'ZAR') =>
+  `${SIGNS[currency] || `${currency} `}${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}`;
+export const sign = (currency = 'ZAR') => SIGNS[currency] || `${currency} `;
 const ORANGE = '#eb6834';
 const BLUE = '#2a78d6';
 const GREY = '#B4B2A9';
@@ -55,13 +59,13 @@ const diamond = (props: any) => {
   return <path d={`M${cx},${cy - s} L${cx + s},${cy} L${cx},${cy + s} L${cx - s},${cy} Z`} fill={BLUE} stroke="#fff" strokeWidth={2} />;
 };
 
-function Tip({ active, payload }: any) {
+function Tip({ active, payload, currency }: any) {
   if (!active || !payload || !payload.length) return null;
   const p: PeerPoint = payload[0].payload;
   return (
     <div className="bg-white rounded-[8px] shadow-[0_4px_12px_rgba(0,0,0,0.15)] px-3 py-2 text-[12px]">
       <div className="font-semibold text-[#222222]">{p.is_own ? `${p.name} (you)` : p.name}</div>
-      <div className="text-[#717171]">{p.occupancy}% taken · {rand(p.price)} a night</div>
+      <div className="text-[#717171]">{p.occupancy}% taken · {money(p.price, currency)} a night</div>
     </div>);
 }
 
@@ -93,7 +97,7 @@ function PositionChart({ row, height }: { row: PeerSummaryRow; height: number })
             <CartesianGrid stroke="#EFEEEA" />
             <XAxis
               type="number" dataKey="price" domain={[lo, hi]} tickCount={5}
-              tickFormatter={(v) => `R${(v / 1000).toFixed(1)}k`}
+              tickFormatter={(v) => `${sign(row.currency)}${(v / 1000).toFixed(1)}k`}
               tick={{ fill: INK, fontSize: 11 }} axisLine={false} tickLine={false}
               label={{ value: 'Price per night', position: 'insideBottom', offset: -12, fill: INK, fontSize: 11 }} />
             <YAxis
@@ -110,7 +114,7 @@ function PositionChart({ row, height }: { row: PeerSummaryRow; height: number })
               </>
             }
             <ReferenceLine x={medPrice} stroke={INK} strokeDasharray="5 4" />
-            <Tooltip content={<Tip />} cursor={false} />
+            <Tooltip content={<Tip currency={row.currency} />} cursor={false} />
             <Scatter data={others} shape={dot(GREY, 6)} isAnimationActive={false} />
             <Scatter data={bench} shape={diamond} isAnimationActive={false} />
             <Scatter data={own} shape={dot(ORANGE, 9, true)} isAnimationActive={false} />
@@ -125,7 +129,7 @@ function PositionChart({ row, height }: { row: PeerSummaryRow; height: number })
       </div>
       {outliers.length > 0 &&
       <p className="text-[12px] text-[#B0B0B0] mt-1">
-          Not shown, priced far above the rest: {outliers.map((o) => `${o.name} (${o.occupancy}%, ${rand(o.price)})`).join(', ')}.
+          Not shown, priced far above the rest: {outliers.map((o) => `${o.name} (${o.occupancy}%, ${money(o.price, row.currency)})`).join(', ')}.
         </p>
       }
     </div>);

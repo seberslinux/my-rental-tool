@@ -325,3 +325,28 @@ test('the chart has one point per priced listing: occupancy against average aski
   assert.equal(byName["Tal's house"], undefined, 'no quote, no point');
   assert.equal(p.median_price, 2500, 'median of the competitors only');
 });
+
+test("prices are quoted in the property's currency for its party size", async () => {
+  const { lodge } = await setup();
+  await pool.query("UPDATE properties SET base_currency = 'EUR', peer_guests = 12 WHERE id = $1", [lodge.id]);
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year(), 333: year() }), pauseMs: 0 });
+  const asked = [];
+  await runPeerPrices({
+    fetchQuote: async (id, a, b, opts) => { asked.push(opts); return { nightly: 977, total: 6839 }; },
+    pauseMs: 0,
+  });
+  assert.ok(asked.length > 0);
+  assert.ok(asked.every((o) => o.currency === 'EUR' && o.adults === 12));
+});
+
+test('the comparison says which currency and party size its prices are for', async () => {
+  const { admin, lodge } = await setup();
+  await pool.query("UPDATE properties SET base_currency = 'EUR', peer_guests = 12 WHERE id = $1", [lodge.id]);
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year(), 333: year() }), pauseMs: 0 });
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get('/api/peers').expect(200);
+  assert.equal(body.properties[0].currency, 'EUR');
+  assert.equal(body.properties[0].guests, 12);
+  assert.equal(body.summary[0].currency, 'EUR');
+});

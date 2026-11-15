@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { ExternalLink, RefreshCw } from 'lucide-react';
 import { apiGet } from '../data/session';
-import { PeersSummaryCards, PeerSummaryRow } from './PeersSummary';
+import { PeersSummaryCards, PeerSummaryRow, money } from './PeersSummary';
 
 /**
  * How we are selling against the listings we compete with.
@@ -24,7 +24,7 @@ interface Prices {
   weekend_median: (number | null)[]; weekday_median: (number | null)[];
 }
 interface PropertyPeers {
-  id: number; name: string; months: string[];
+  id: number; name: string; currency?: string; guests?: number; months: string[];
   own: Listing | null; benchmark: Listing | null; peer_median: (number | null)[];
   prices: Prices; listings: Listing[]; recent: Sale[];
 }
@@ -83,7 +83,6 @@ function SoldTable({ p }: { p: PropertyPeers }) {
     </div>);
 }
 
-const rand = (n: number) => `R${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}`;
 const dayMonth = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
 
 /**
@@ -93,13 +92,13 @@ const dayMonth = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en
  * for is not what anybody can book it for now, and leaving it in would
  * make a full competitor look cheap or dear by accident.
  */
-function PriceTable({ title, dates, median, own, benchmark }: {
-  title: string; dates: string[]; median: (number | null)[];
+function PriceTable({ title, dates, median, own, benchmark, currency }: {
+  title: string; dates: string[]; median: (number | null)[]; currency?: string;
   own: (Quote | null)[] | undefined; benchmark: { name: string; quotes: (Quote | null)[] } | null;
 }) {
   if (!dates.length) return null;
   const cell = (q: Quote | null | undefined) =>
-    !q ? '–' : q.open ? rand(q.nightly) : <span className="text-[#B0B0B0]">sold</span>;
+    !q ? '–' : q.open ? money(q.nightly, currency) : <span className="text-[#B0B0B0]">sold</span>;
   return (
     <div className={`${card} overflow-x-auto`}>
       <table className="w-full text-[14px]">
@@ -124,7 +123,7 @@ function PriceTable({ title, dates, median, own, benchmark }: {
           }
           <tr className="border-t border-[#F0F0F0]">
             <td className="px-4 py-2">Others (median)</td>
-            {median.map((v, i) => <td key={i} className="px-2 py-2 text-right tabular-nums whitespace-nowrap">{v == null ? '–' : rand(v)}</td>)}
+            {median.map((v, i) => <td key={i} className="px-2 py-2 text-right tabular-nums whitespace-nowrap">{v == null ? '–' : money(v, currency)}</td>)}
           </tr>
         </tbody>
       </table>
@@ -137,7 +136,7 @@ function PriceTable({ title, dates, median, own, benchmark }: {
  * own number, not just the median — a listing far above or below the
  * rest is visible here and only blurs into the median above.
  */
-function RowPrices({ listing, prices }: { listing: Listing; prices: Prices }) {
+function RowPrices({ listing, prices, currency }: { listing: Listing; prices: Prices; currency?: string }) {
   const first = (quotes: (Quote | null)[], dates: string[]) => {
     const i = quotes.findIndex((q) => q && q.open && q.nightly);
     return i < 0 ? null : { date: dates[i], nightly: (quotes[i] as Quote).nightly };
@@ -148,9 +147,9 @@ function RowPrices({ listing, prices }: { listing: Listing; prices: Prices }) {
   return (
     <span className="text-[12px] text-[#222222] block mt-0.5">
       <span className="text-[#717171]">Per night: </span>
-      weekend {we ? <>{dayMonth(we.date)} <span className="font-semibold tabular-nums whitespace-nowrap">{rand(we.nightly)}</span></> : <span className="text-[#717171]">sold out</span>}
+      weekend {we ? <>{dayMonth(we.date)} <span className="font-semibold tabular-nums whitespace-nowrap">{money(we.nightly, currency)}</span></> : <span className="text-[#717171]">sold out</span>}
       <span className="text-[#B0B0B0]"> · </span>
-      weekday {wd ? <>{dayMonth(wd.date)} <span className="font-semibold tabular-nums whitespace-nowrap">{rand(wd.nightly)}</span></> : <span className="text-[#717171]">sold out</span>}
+      weekday {wd ? <>{dayMonth(wd.date)} <span className="font-semibold tabular-nums whitespace-nowrap">{money(wd.nightly, currency)}</span></> : <span className="text-[#717171]">sold out</span>}
     </span>);
 }
 
@@ -236,18 +235,20 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
 
           {p.prices && (p.prices.weekends.length > 0 || p.prices.weekdays.length > 0) ?
         <div>
-              <div className={label}>Price per night, 2 adults</div>
+              <div className={label}>Price per night, {p.guests || 2} guests</div>
               <div className="space-y-3">
                 <PriceTable
               title="Weekend (Fri)"
               dates={p.prices.weekends}
               median={p.prices.weekend_median}
+              currency={p.currency}
               own={p.own?.weekend}
               benchmark={p.benchmark ? { name: p.benchmark.name, quotes: p.benchmark.weekend } : null} />
                 <PriceTable
               title="Weekday (Mon)"
               dates={p.prices.weekdays}
               median={p.prices.weekday_median}
+              currency={p.currency}
               own={p.own?.weekday}
               benchmark={p.benchmark ? { name: p.benchmark.name, quotes: p.benchmark.weekday } : null} />
               </div>
@@ -264,7 +265,7 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
             <div key={s.id} className={`px-4 py-2.5 flex items-baseline justify-between gap-3 ${i ? 'border-t border-[#F0F0F0]' : ''}`}>
                     <span className="text-[14px] text-[#222222] min-w-0 truncate">
                       <span className="font-medium">{s.name}</span> · {span(s.check_in, s.check_out)} · {s.nights} night{s.nights === 1 ? '' : 's'}
-                      {s.nightly ? ` · about ${rand(s.nightly)} a night` : ''}
+                      {s.nightly ? ` · about ${money(s.nightly, p.currency)} a night` : ''}
                     </span>
                     <span className="text-[12px] text-[#717171] shrink-0">{ago(s.detected_at)}</span>
                   </div>
@@ -291,7 +292,7 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
                     <span className="text-[12px] text-[#717171] block">
                       {l.read ? `${pct(l.months[0])} of ${monthName(p.months[0])} sold · ${l.open_30} night${l.open_30 === 1 ? '' : 's'} open in the next 30 days` : 'Not read yet'}
                     </span>
-                    {l.read && <RowPrices listing={l} prices={p.prices} />}
+                    {l.read && <RowPrices listing={l} prices={p.prices} currency={p.currency} />}
                   </span>
                   <ExternalLink className="w-4 h-4 text-[#B0B0B0] shrink-0" />
                 </a>
