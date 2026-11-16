@@ -535,19 +535,26 @@ test('the booking export says where each price came from', async () => {
   assert.ok(sources.every((s) => ['quoted', 'estimated', 'never quoted', 'not a sale'].includes(s)), sources.join('|'));
 });
 
-test("each chart point carries the money that listing has made, ours from Smoobu", async () => {
-  const { admin, lodge } = await withSales();
+test("each chart point carries the money booked for the next 30 nights, ours from Smoobu", async () => {
+  const { admin, lodge } = await setup();
+  // Tal's nights were already taken at the first read: never seen as a
+  // sale, still money on the books.
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year((i) => i < 4), 333: year() }), pauseMs: 0 });
+  await runPeerPrices({ fetchQuote: quoteAt({ 111: 2700, 222: 4200, 333: 2500 }), pauseMs: 0 });
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year((i) => i < 4), 333: year((i) => i >= 20 && i < 23 || i === 40) }), pauseMs: 0 });
   await pool.query(
     `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status,
                            num_guests, length_of_stay, price_per_night, currency, lead_time_days, created_at)
-     VALUES (990003, $1, 'Sam Guest', $2, $3, 'Booking.com', 7500, 'confirmed', 2, 3, 2500, 'ZAR', 20, $4)`,
-    [lodge.id, inDays(40), inDays(43), today]
+     VALUES (990003, $1, 'Sam Guest', $2, $3, 'Booking.com', 7500, 'confirmed', 2, 3, 2500, 'ZAR', 20, $4),
+            (990004, $1, 'Kim Guest', $5, $6, 'Airbnb', 9000, 'confirmed', 2, 3, 3000, 'ZAR', 20, $4)`,
+    [lodge.id, inDays(5), inDays(8), today, inDays(28), inDays(31)]
   );
   const agent = await getAgent();
   await loginAs(agent, admin);
   const { body } = await agent.get('/api/peers/summary').expect(200);
   const byName = Object.fromEntries(body.properties[0].points.map((x) => [x.name, x]));
-  assert.equal(byName['Our lodge'].revenue, 7500, 'what our guest paid');
-  assert.equal(byName.Seaforest.revenue, 3 * 2500, 'three nights sold at its quoted price');
-  assert.ok(body.properties[0].since);
+  assert.equal(byName['Our lodge'].revenue, 7500 + 2 * 3000, 'what guests pay for the nights inside the window');
+  assert.equal(byName["Tal's house"].revenue, 4 * 4200, 'booked before the watch, still counted');
+  assert.equal(byName.Seaforest.revenue, 3 * 2500, 'night 40 is outside the window');
+  assert.equal(body.properties[0].revenue_days, 30);
 });
