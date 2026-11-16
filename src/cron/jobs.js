@@ -331,4 +331,19 @@ cron.schedule('30 7 * * 1', async () => {
   }
 });
 
+/**
+ * 05:15 daily: a snapshot of every listing whose last one is a week old.
+ * One picture a week each, spread over the days, so the page reads stay
+ * few and the amenity record keeps up with renovations.
+ */
+cron.schedule('15 5 * * *', async () => {
+  try {
+    const { snapshotListings } = require('../services/peer-features');
+    const r = await snapshotListings();
+    console.log(`Peer snapshots: ${r.taken} of ${r.due} taken, ${r.failed} failed${r.error ? ` (${r.error})` : ''}.`);
+  } catch (err) {
+    console.error(`Peer snapshots cron error: ${err.message}`);
+  }
+});
+
 console.log('Cron jobs scheduled (SAST/UTC+2).');

@@ -403,3 +403,97 @@ test("Monday's summary covers last week's sales and stays quiet on a week with n
   await weeklyDigest({ today: inTwoWeeks, notifyImpl: async (n) => later.push(n) });
   assert.equal(later.length, 0);
 });
+
+// --- the record: history that only grows ----------------------------------------
+
+const { snapshotListings, featureAnalysis } = require('../../src/services/peer-features');
+
+test("a listing's first reading is its baseline; later readings add only what changed", async () => {
+  await setup();
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year(), 333: year() }), pauseMs: 0 });
+  const base = await pool.query('SELECT COUNT(*)::int AS n, bool_and(baseline) AS all_base FROM peer_calendar_changes');
+  assert.equal(base.rows[0].n, 360);
+  assert.equal(base.rows[0].all_base, true);
+
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year((i) => i === 9 || i === 10), 333: year() }), pauseMs: 0 });
+  const after = await pool.query('SELECT COUNT(*)::int AS n FROM peer_calendar_changes WHERE NOT baseline');
+  assert.equal(after.rows[0].n, 2, 'the two nights Tal sold, nothing else');
+
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year(), 333: year() }), pauseMs: 0 });
+  const back = await pool.query('SELECT COUNT(*)::int AS n FROM peer_calendar_changes WHERE NOT baseline AND available');
+  assert.equal(back.rows[0].n, 2, 'and the two that opened again: the cancellation is in the record too');
+});
+
+test('every quote is kept, each with its currency and party size', async () => {
+  await setup();
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year(), 333: year() }), pauseMs: 0 });
+  await runPeerPrices({ fetchQuote: quoteAt({ 111: 2700 }), pauseMs: 0 });
+  await runPeerPrices({ fetchQuote: quoteAt({ 111: 2900 }), pauseMs: 0 });
+  const { rows } = await pool.query("SELECT COUNT(*)::int AS n, COUNT(DISTINCT nightly)::int AS prices, MIN(currency) AS cur, MIN(guests) AS guests FROM peer_price_history");
+  assert.equal(rows[0].n, 32, 'two price reads, sixteen stays each, all kept');
+  assert.equal(rows[0].prices, 2);
+  assert.equal(rows[0].cur, 'ZAR');
+  assert.equal(rows[0].guests, 2);
+});
+
+const listingPage = (amenities, extra = {}) => ({
+  title: 'Home · 2 bedrooms · 2 beds · 1 bath', property_type: 'Entire home', rating: 4.8, reviews: 40, guests: 4,
+  bedrooms: 2, beds: 2, baths: 1, superhost: true, guest_favorite: false, photos: 30,
+  category_ratings: { value: 4.7 }, amenities: amenities.map((t) => ({ group: null, title: t })), ...extra,
+});
+
+test('listing snapshots are taken once a week each and kept', async () => {
+  await setup();
+  const pages = { 111: listingPage(['Pool']), 222: listingPage(['Hot tub', 'Pool']), 333: listingPage(['Wifi']) };
+  const fetchListing = async (id) => pages[id];
+  const first = await snapshotListings({ fetchListing, pauseMs: 0 });
+  assert.equal(first.taken, 3);
+  const again = await snapshotListings({ fetchListing, pauseMs: 0 });
+  assert.equal(again.due, 0, 'nothing is due again within the week');
+  const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM peer_listing_snapshots');
+  assert.equal(rows[0].n, 3);
+});
+
+test('features are weighed against how the competitors sell, and the gap becomes a shortlist', async () => {
+  const { lodge } = await setup();
+  const insert = (airbnbId, name) => pool.query(
+    'INSERT INTO peer_listings (airbnb_id, name, bedrooms, property_id) VALUES ($1, $2, 2, $3)', [airbnbId, name, lodge.id]);
+  await insert('444', 'Sea Song');
+  await insert('555', 'Kabelane');
+  // The hot-tub listings sell more and ask more; we have no hot tub. Their
+  // sales sit beyond the next five weeks, which stay open to be priced.
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year(), 333: year(), 444: year(), 555: year() }), pauseMs: 0 });
+  await runPeerCheck({
+    fetchCalendar: stub({ 111: year((i) => i < 10), 222: year((i) => i >= 40 && i < 100), 333: year((i) => i < 5), 444: year((i) => i >= 40 && i < 95), 555: year((i) => i < 8) }),
+    pauseMs: 0,
+  });
+  await runPeerPrices({ fetchQuote: quoteAt({ 111: 2700, 222: 4200, 333: 2500, 444: 4000, 555: 2600 }), pauseMs: 0 });
+  const pages = { 111: listingPage(['Pool']), 222: listingPage(['Hot tub']), 333: listingPage(['Pool']), 444: listingPage(['Hot tub', 'Pool']), 555: listingPage([]) };
+  await snapshotListings({ fetchListing: async (id) => pages[id], pauseMs: 0 });
+
+  const [a] = await featureAnalysis({});
+  const tub = a.features.find((f) => f.name === 'Hot tub');
+  assert.equal(tub.you, false);
+  assert.equal(tub.with, 2);
+  assert.ok(tub.price_premium > 0 && tub.occupancy_gap > 0);
+  assert.equal(a.shortlist[0].name, 'Hot tub');
+  const tal = a.leaders.find((l) => l.is_benchmark);
+  assert.deepEqual(tal.has_and_you_lack, ['Hot tub']);
+});
+
+test('the record downloads as CSV, for an admin only', async () => {
+  const { admin } = await setup();
+  await runPeerCheck({ fetchCalendar: stub({ 111: year(), 222: year(), 333: year() }), pauseMs: 0 });
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const res = await agent.get('/api/peers/export/calendar').expect(200);
+  assert.match(res.headers['content-type'], /text\/csv/);
+  assert.match(res.text.split('\n')[0], /airbnb_id,name,date,available/);
+  assert.equal(res.text.trim().split('\n').length, 361);
+  await agent.get('/api/peers/export/nonsense').expect(404);
+
+  const manager = await seedUser({ role: 'property_manager' });
+  const other = await getAgent();
+  await loginAs(other, manager);
+  await other.get('/api/peers/export/calendar').expect(403);
+});
