@@ -26,7 +26,7 @@ export interface PeerWindow { days: number; own: number | null; benchmark: numbe
 export interface PeerPoint { name: string; occupancy: number; price: number; is_own: boolean; is_benchmark: boolean; revenue?: number; }
 export interface PeerSummaryRow {
   id: number; name: string; currency?: string; benchmark_name: string | null; windows: PeerWindow[];
-  points?: PeerPoint[]; median_price?: number | null; since?: string;
+  points?: PeerPoint[]; median_price?: number | null; revenue_days?: number;
 }
 
 const card = 'bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)]';
@@ -69,7 +69,7 @@ function Tip({ active, payload, currency }: any) {
     <div className="bg-white rounded-[8px] shadow-[0_4px_12px_rgba(0,0,0,0.15)] px-3 py-2 text-[12px]">
       <div className="font-semibold text-[#222222]">{p.is_own ? `${p.name} (you)` : p.name}</div>
       <div className="text-[#717171]">{p.occupancy}% taken · {money(p.price, currency)} a night</div>
-      <div className="text-[#717171]">{p.revenue ? `${money(p.revenue, currency)} made since the watch began` : 'No sales found yet'}</div>
+      <div className="text-[#717171]">{p.revenue ? `${money(p.revenue, currency)} booked${p.is_own ? '' : ' (estimated)'}` : 'Nothing booked'}</div>
     </div>);
 }
 
@@ -101,7 +101,7 @@ function PositionChart({ row, height }: { row: PeerSummaryRow; height: number })
   const bench = shown.filter((p) => p.is_benchmark);
   const own = shown.filter((p) => p.is_own);
   const corner = (value: string, position: string) => ({ value, position, fill: INK, fontSize: 11 } as any);
-  const since = row.since ? new Date(`${row.since}T00:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : null;
+  const days = row.revenue_days || 30;
 
   return (
     <div>
@@ -144,7 +144,7 @@ function PositionChart({ row, height }: { row: PeerSummaryRow; height: number })
         <span className="flex items-center gap-1.5"><span className="w-[14px] border-t border-dashed" style={{ borderColor: INK }} />Median</span>
       </div>
       <p className="text-[12px] text-[#B0B0B0] mt-1">
-        Bubble size: money made{since ? ` since ${since}` : ''} — competitors' Airbnb sales, yours from Smoobu.
+        Bubble size: money booked for the next {days} nights — competitors' taken nights at their nearest quoted price, yours from Smoobu.
       </p>
       {leaders.length > 0 &&
       <button

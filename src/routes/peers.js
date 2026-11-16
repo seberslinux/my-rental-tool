@@ -53,25 +53,32 @@ async function occupancySummary(scope, today) {
   );
   // The average asking price per night over the stays quoted in the next
   // five weeks: the price axis of the chart, one figure per listing.
-  // Money each listing has made since the watch began, for the bubble size.
-  // Competitors: their detected sales at the price the nights were last on
-  // sale for, or the nearest quote. Ours: what guests paid, from Smoobu.
-  const sold = new Map((await getAll(
-    `SELECT s.listing_id, SUM(s.nights * COALESCE(s.nightly, est.nightly))::int AS revenue
-       FROM peer_stays s
-       LEFT JOIN LATERAL (
-         SELECT h.nightly FROM peer_price_history h WHERE h.listing_id = s.listing_id
-          ORDER BY (h.quoted_at > s.detected_at), abs(h.check_in - s.check_in), h.quoted_at DESC LIMIT 1
-       ) est ON TRUE
-      WHERE s.kind = 'booking' AND s.reversed_at IS NULL
-      GROUP BY s.listing_id`
+  // The money on the books for the nights the chart counts as taken, the
+  // bubble size. Competitors: each taken night at the listing's nearest
+  // quote by date, so nights sold before the watch began count too.
+  // Ours: what guests pay for those nights, from Smoobu.
+  const days = WINDOWS[0];
+  const booked = new Map((await getAll(
+    `SELECT c.listing_id, SUM(est.nightly)::int AS revenue
+       FROM peer_calendar c
+       JOIN peer_listings l ON l.id = c.listing_id AND l.active AND NOT l.is_own
+       CROSS JOIN LATERAL (
+         SELECT h.nightly FROM peer_price_history h WHERE h.listing_id = c.listing_id
+          ORDER BY abs(h.check_in - c.date), h.quoted_at DESC LIMIT 1
+       ) est
+      WHERE NOT c.available AND c.date >= $1::date AND c.date < $1::date + $2::int
+      GROUP BY c.listing_id`,
+    [today, days]
   )).map((r) => [r.listing_id, r.revenue]));
-  const watchStart = (await getAll(`SELECT to_char(MIN(started_at), 'YYYY-MM-DD') AS d FROM peer_runs`)).at(0)?.d || today;
-  const ownSold = new Map((await getAll(
-    `SELECT property_id, ROUND(SUM(total_price))::int AS revenue FROM bookings
-      WHERE status = 'confirmed' AND COALESCE(platform, '') NOT ILIKE 'blocked%'
-        AND substring(created_at, 1, 10) >= $1 GROUP BY property_id`,
-    [watchStart]
+  const ownBooked = new Map((await getAll(
+    `SELECT b.property_id,
+            ROUND(SUM(b.total_price / GREATEST(substring(b.check_out, 1, 10)::date - substring(b.check_in, 1, 10)::date, 1)))::int AS revenue
+       FROM bookings b
+       CROSS JOIN LATERAL generate_series(substring(b.check_in, 1, 10)::date, substring(b.check_out, 1, 10)::date - 1, interval '1 day') n(d)
+      WHERE b.status = 'confirmed' AND COALESCE(b.platform, '') NOT ILIKE 'blocked%'
+        AND n.d >= $1::date AND n.d < $1::date + $2::int
+      GROUP BY b.property_id`,
+    [today, days]
   )).map((r) => [r.property_id, r.revenue]));
   const asking = new Map((await getAll(
     `SELECT listing_id, ROUND(AVG(nightly))::int AS price FROM peer_prices
@@ -90,7 +97,7 @@ async function occupancySummary(scope, today) {
       .filter((r) => asking.has(r.id))
       .map((r) => ({
         name: r.name, occupancy: r.taken, price: asking.get(r.id), is_own: r.is_own, is_benchmark: r.is_benchmark,
-        revenue: r.is_own ? ownSold.get(p.id) || 0 : sold.get(r.id) || 0,
+        revenue: r.is_own ? ownBooked.get(p.id) || 0 : booked.get(r.id) || 0,
       }));
     const competitors = points.filter((x) => !x.is_own);
     return {
@@ -98,7 +105,7 @@ async function occupancySummary(scope, today) {
       name: p.name,
       currency: p.currency,
       benchmark_name: benchmark ? benchmark.name : null,
-      since: watchStart,
+      revenue_days: days,
       points,
       median_price: median(competitors.map((x) => x.price)),
       windows: WINDOWS.map((days) => {
