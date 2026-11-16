@@ -53,6 +53,26 @@ async function occupancySummary(scope, today) {
   );
   // The average asking price per night over the stays quoted in the next
   // five weeks: the price axis of the chart, one figure per listing.
+  // Money each listing has made since the watch began, for the bubble size.
+  // Competitors: their detected sales at the price the nights were last on
+  // sale for, or the nearest quote. Ours: what guests paid, from Smoobu.
+  const sold = new Map((await getAll(
+    `SELECT s.listing_id, SUM(s.nights * COALESCE(s.nightly, est.nightly))::int AS revenue
+       FROM peer_stays s
+       LEFT JOIN LATERAL (
+         SELECT h.nightly FROM peer_price_history h WHERE h.listing_id = s.listing_id
+          ORDER BY (h.quoted_at > s.detected_at), abs(h.check_in - s.check_in), h.quoted_at DESC LIMIT 1
+       ) est ON TRUE
+      WHERE s.kind = 'booking' AND s.reversed_at IS NULL
+      GROUP BY s.listing_id`
+  )).map((r) => [r.listing_id, r.revenue]));
+  const watchStart = (await getAll(`SELECT to_char(MIN(started_at), 'YYYY-MM-DD') AS d FROM peer_runs`)).at(0)?.d || today;
+  const ownSold = new Map((await getAll(
+    `SELECT property_id, ROUND(SUM(total_price))::int AS revenue FROM bookings
+      WHERE status = 'confirmed' AND COALESCE(platform, '') NOT ILIKE 'blocked%'
+        AND substring(created_at, 1, 10) >= $1 GROUP BY property_id`,
+    [watchStart]
+  )).map((r) => [r.property_id, r.revenue]));
   const asking = new Map((await getAll(
     `SELECT listing_id, ROUND(AVG(nightly))::int AS price FROM peer_prices
       WHERE check_in > $1::date AND check_in <= $1::date + 35 GROUP BY listing_id`,
@@ -68,13 +88,17 @@ async function occupancySummary(scope, today) {
     // place it by, so it is left off rather than put at zero.
     const points = near
       .filter((r) => asking.has(r.id))
-      .map((r) => ({ name: r.name, occupancy: r.taken, price: asking.get(r.id), is_own: r.is_own, is_benchmark: r.is_benchmark }));
+      .map((r) => ({
+        name: r.name, occupancy: r.taken, price: asking.get(r.id), is_own: r.is_own, is_benchmark: r.is_benchmark,
+        revenue: r.is_own ? ownSold.get(p.id) || 0 : sold.get(r.id) || 0,
+      }));
     const competitors = points.filter((x) => !x.is_own);
     return {
       id: p.id,
       name: p.name,
       currency: p.currency,
       benchmark_name: benchmark ? benchmark.name : null,
+      since: watchStart,
       points,
       median_price: median(competitors.map((x) => x.price)),
       windows: WINDOWS.map((days) => {
