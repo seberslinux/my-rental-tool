@@ -291,28 +291,15 @@ cron.schedule('0 4 * * *', async () => {
  */
 cron.schedule('0 6,13,20 * * *', async () => {
   try {
-    const { runPeerCheck } = require('../services/peer-check');
+    const { runPeerCheck, runPeerPrices } = require('../services/peer-check');
     const { ok, failed, found } = await runPeerCheck();
     console.log(`Peer check: ${ok} read, ${failed} failed, ${found.length} new stay(s).`);
+    // Prices in the same pass, every time: the next reading's sales then
+    // carry what their nights were on sale for a few hours earlier.
+    const p = await runPeerPrices();
+    console.log(`Peer prices: ${p.quoted} of ${p.planned} quoted, ${p.failed} failed${p.error ? ` (${p.error})` : ''}.`);
   } catch (err) {
     console.error(`Peer check cron error: ${err.message}`);
-  }
-});
-
-/**
- * Competitors' asking prices, once a day after the morning reading.
- *
- * Prices move slowly and this is the part that costs requests — up to
- * sixteen quotes a listing — so it runs once, from the calendars the
- * 06:00 reading has just refreshed.
- */
-cron.schedule('30 6 * * *', async () => {
-  try {
-    const { runPeerPrices } = require('../services/peer-check');
-    const { quoted, failed, error } = await runPeerPrices();
-    console.log(`Peer prices: ${quoted} quoted, ${failed} failed${error ? ` (${error})` : ''}.`);
-  } catch (err) {
-    console.error(`Peer prices cron error: ${err.message}`);
   }
 });
 

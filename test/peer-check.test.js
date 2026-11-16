@@ -109,12 +109,14 @@ const nextCalendar = (open = () => true, minNights = 2) => new Map(
   Array.from({ length: 70 }, (_, i) => [inDays(i + 1), { available: open(i + 1), minNights }])
 );
 
-test('quotes are planned for Friday weekends and Monday weekday stays', () => {
+test('quotes are planned for every open Friday weekend and Monday weekday stay in the window', () => {
+  // Both go out as far as the calendar does, up to a year.
   const plan = planQuotes(nextCalendar(), today);
   const weekends = plan.filter((p) => p.kind === 'weekend');
   const weekdays = plan.filter((p) => p.kind === 'weekday');
-  assert.equal(weekends.length, 8);
-  assert.equal(weekdays.length, 8);
+  const window = Array.from({ length: 69 }, (_, i) => inDays(i + 1));
+  assert.equal(weekends.length, window.filter((d) => weekdayOf(d) === 5).length);
+  assert.equal(weekdays.length, window.filter((d) => weekdayOf(d) === 1).length);
   assert.ok(weekends.every((p) => weekdayOf(p.checkIn) === 5 && p.nights === 2));
   assert.ok(weekdays.every((p) => weekdayOf(p.checkIn) === 1));
 });
@@ -122,7 +124,7 @@ test('quotes are planned for Friday weekends and Monday weekday stays', () => {
 test('a stay with any night taken is not quoted', () => {
   const plan = planQuotes(nextCalendar((i) => weekdayOf(inDays(i)) !== 6), today);
   assert.equal(plan.filter((p) => p.kind === 'weekend').length, 0, 'every Saturday is taken');
-  assert.equal(plan.filter((p) => p.kind === 'weekday').length, 8);
+  assert.equal(plan.filter((p) => p.kind === 'weekday').length, Array.from({ length: 69 }, (_, i) => inDays(i + 1)).filter((d) => weekdayOf(d) === 1).length);
 });
 
 test("a listing's minimum stay sets the length of the quote", () => {

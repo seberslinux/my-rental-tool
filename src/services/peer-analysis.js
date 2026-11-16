@@ -62,7 +62,11 @@ function summarise(sales) {
   const nights = sales.reduce((n, s) => n + s.nights, 0);
   const priced = sales.filter((s) => s.revenue != null);
   const revenue = priced.reduce((n, s) => n + s.revenue, 0);
-  const pricedNights = priced.reduce((n, s) => n + s.nights, 0);
+  // Per night leaves a price leader out: one listing at several times the
+  // market rate would decide the average alone. Its money still counts.
+  const rated = priced.filter((s) => !s.leader);
+  const ratedNights = rated.reduce((n, s) => n + s.nights, 0);
+  const ratedRevenue = rated.reduce((n, s) => n + s.revenue, 0);
   const byListing = new Map();
   for (const s of sales) byListing.set(s.name, (byListing.get(s.name) || 0) + s.nights);
   const top = [...byListing.entries()].sort((a, b) => b[1] - a[1])[0];
@@ -71,7 +75,7 @@ function summarise(sales) {
     nights,
     revenue: priced.length ? revenue : null,
     estimated: sales.some((s) => s.estimated) || priced.length < sales.length,
-    avg_nightly: pricedNights ? Math.round(revenue / pricedNights) : null,
+    avg_nightly: ratedNights ? Math.round(ratedRevenue / ratedNights) : null,
     median_lead_days: median(sales.map((s) => s.lead_days)),
     avg_stay: sales.length ? Math.round((nights / sales.length) * 10) / 10 : null,
     top_listing: top ? { name: top[0], nights: top[1] } : null,
@@ -194,8 +198,15 @@ async function bookingAnalysis({ scope = null, today = new Date().toISOString().
   const rows = await getAll(
     `SELECT s.id, s.listing_id, l.name, l.property_id, l.is_own, l.is_benchmark,
             to_char(s.check_in, 'YYYY-MM-DD') AS check_in, to_char(s.check_out, 'YYYY-MM-DD') AS check_out,
-            s.nights, s.lead_days, s.nightly, to_char(s.detected_at, 'YYYY-MM-DD') AS found
+            s.nights, s.lead_days, s.nightly, to_char(s.detected_at, 'YYYY-MM-DD') AS found,
+            est.nightly AS est_nightly
        FROM peer_stays s JOIN peer_listings l ON l.id = s.listing_id
+       -- The listing's quote nearest in date to the stay, before the sale
+       -- where there is one: the estimate for a sale nobody priced.
+       LEFT JOIN LATERAL (
+         SELECT h.nightly FROM peer_price_history h WHERE h.listing_id = s.listing_id
+          ORDER BY (h.quoted_at > s.detected_at), abs(h.check_in - s.check_in), h.quoted_at DESC LIMIT 1
+       ) est ON TRUE
       WHERE s.kind = 'booking' AND s.reversed_at IS NULL AND l.property_id = ANY($1::int[])
       ORDER BY s.detected_at, s.check_in`,
     [props.map((p) => p.id)]
@@ -220,6 +231,19 @@ async function bookingAnalysis({ scope = null, today = new Date().toISOString().
       WHERE p.check_in > $1::date`,
     [today]
   );
+  // Our own sales, from Smoobu rather than read off Airbnb: every channel,
+  // the price actually paid, the lead time as booked. Counted from the day
+  // the watch began, so both sides cover the same weeks.
+  const since = (await getAll(`SELECT to_char(MIN(started_at), 'YYYY-MM-DD') AS d FROM peer_runs`)).at(0)?.d || today;
+  const ownRows = await getAll(
+    `SELECT property_id, to_char(check_in::date, 'YYYY-MM-DD') AS check_in, to_char(check_out::date, 'YYYY-MM-DD') AS check_out,
+            COALESCE(NULLIF(length_of_stay, 0), 1) AS nights, total_price, price_per_night, lead_time_days,
+            substring(created_at, 1, 10) AS found, platform
+       FROM bookings
+      WHERE status = 'confirmed' AND COALESCE(platform, '') NOT ILIKE 'blocked%'
+        AND property_id = ANY($1::int[]) AND substring(created_at, 1, 10) >= $2`,
+    [props.map((p) => p.id), since]
+  );
   const ownOpenRows = await getAll(
     `SELECT l.property_id, to_char(c.date, 'YYYY-MM-DD') AS date FROM peer_calendar c
        JOIN peer_listings l ON l.id = c.listing_id AND l.is_own
@@ -239,44 +263,55 @@ async function bookingAnalysis({ scope = null, today = new Date().toISOString().
     const outlierIds = new Set(askMedian ? peerAsks.filter((r) => r.nightly > askMedian * 2).map((r) => r.listing_id) : []);
     const all = rows.filter((r) => r.property_id === p.id && !r.is_own);
     // Kept out of the medians, but not out of sight: a listing selling at
-    // several times the market rate is the ceiling to aim at, so it gets
-    // its own figures — what it sold, for how much, how far ahead.
-    const priced = (r) => {
-      const nightly = r.nightly != null ? r.nightly : latest.get(r.listing_id) ?? null;
-      return { ...r, nightly_sold: r.nightly, nightly_used: nightly, estimated: r.nightly == null, revenue: nightly != null ? nightly * r.nights : null };
-    };
-    const leaders = [...groupBy(all.filter((r) => outlierIds.has(r.listing_id)).map(priced), (r) => r.name).entries()]
-      .map(([name, ss]) => ({ name, asking: latest.get(ss[0].listing_id) ?? null, ...summarise(ss) }));
-    const sales = all.filter((r) => !outlierIds.has(r.listing_id)).map((r) => {
-      const fallback = latest.get(r.listing_id);
-      const nightly = r.nightly != null ? r.nightly : fallback != null ? fallback : null;
+    // several times the market rate is the ceiling to aim at. Its sales are
+    // in every list and count, marked; only the per-night averages and
+    // the price suggestions leave it out.
+    const sales = all.map((r) => {
+      const nightly = r.nightly != null ? r.nightly : r.est_nightly ?? latest.get(r.listing_id) ?? null;
       return {
         ...r,
+        leader: outlierIds.has(r.listing_id),
         nightly_sold: r.nightly,
         nightly_used: nightly,
         estimated: r.nightly == null,
         revenue: nightly != null ? nightly * r.nights : null,
       };
     });
+    const market = sales.filter((s) => !s.leader);
+    const leaders = [...groupBy(sales.filter((s) => s.leader), (r) => r.name).entries()]
+      .map(([name, ss]) => ({ name, asking: latest.get(ss[0].listing_id) ?? null, ...summarise(ss.map((x) => ({ ...x, leader: false }))) }));
+    const own = ownRows.filter((r) => r.property_id === p.id).map((r) => ({
+      name: 'You', own: true, check_in: r.check_in, check_out: r.check_out, nights: Number(r.nights),
+      lead_days: r.lead_time_days, found: r.found, channel: r.platform,
+      nightly_used: r.price_per_night ? Math.round(r.price_per_night) : null, estimated: false,
+      revenue: r.total_price ? Math.round(r.total_price) : null,
+    }));
+    const line = (x) => ({
+      name: x.name, own: Boolean(x.own), leader: Boolean(x.leader), channel: x.channel || null,
+      check_in: x.check_in, check_out: x.check_out, nights: x.nights, lead_days: x.lead_days,
+      nightly: x.nightly_used, estimated: x.estimated, revenue: x.revenue,
+    });
+    const period = (comp, mine) => ({ ...summarise(comp), you: summarise(mine) });
 
-    const weeks = [...groupBy(sales, (s) => mondayOf(s.found)).entries()]
-      .sort((a, b) => b[0].localeCompare(a[0]))
-      .map(([week, ss]) => ({
-        week, ...summarise(ss),
-        sales: ss.map((s) => ({
-          name: s.name, check_in: s.check_in, check_out: s.check_out, nights: s.nights,
-          lead_days: s.lead_days, nightly: s.nightly_used, estimated: s.estimated, revenue: s.revenue,
-        })),
-      }));
-    const months = [...groupBy(sales, (s) => s.check_in.slice(0, 7)).entries()]
-      .sort((a, b) => a[0].localeCompare(b[0]))
-      .map(([month, ss]) => ({ month, ...summarise(ss) }));
-    const seasons = [...groupBy(sales, (s) => seasonLabel(s.check_in, side)).entries()]
-      .sort((a, b) => a[1][0].check_in.localeCompare(b[1][0].check_in))
-      .map(([season, ss]) => ({ season, ...summarise(ss) }));
-    const listings = [...groupBy(sales, (s) => s.name).entries()]
-      .map(([name, ss]) => ({ name, is_benchmark: ss[0].is_benchmark, ...summarise(ss) }))
-      .sort((a, b) => b.nights - a.nights || (b.revenue || 0) - (a.revenue || 0));
+    const weekKeys = [...new Set([...sales, ...own].map((x) => mondayOf(x.found)))].sort().reverse();
+    const weeks = weekKeys.map((week) => {
+      const comp = sales.filter((x) => mondayOf(x.found) === week), mine = own.filter((x) => mondayOf(x.found) === week);
+      return { week, ...period(comp, mine), sales: [...comp, ...mine].sort((a, b) => a.check_in.localeCompare(b.check_in)).map(line) };
+    });
+    const monthKeys = [...new Set([...sales, ...own].map((x) => x.check_in.slice(0, 7)))].sort();
+    const months = monthKeys.map((month) => ({
+      month, ...period(sales.filter((x) => x.check_in.slice(0, 7) === month), own.filter((x) => x.check_in.slice(0, 7) === month)),
+    }));
+    const seasonKeys = [...new Set([...sales, ...own].sort((a, b) => a.check_in.localeCompare(b.check_in)).map((x) => seasonLabel(x.check_in, side)))];
+    const seasons = seasonKeys.map((season) => ({
+      season, ...period(sales.filter((x) => seasonLabel(x.check_in, side) === season), own.filter((x) => seasonLabel(x.check_in, side) === season)),
+    }));
+    const listings = [
+      ...[...groupBy(sales, (s) => s.name).entries()].map(([name, ss]) => ({
+        name, is_benchmark: ss[0].is_benchmark, is_leader: ss[0].leader, is_own: false, ...summarise(ss.map((x) => ({ ...x, leader: false }))),
+      })),
+      ...(own.length ? [{ name: 'You', is_benchmark: false, is_leader: false, is_own: true, ...summarise(own) }] : []),
+    ].sort((a, b) => b.nights - a.nights || (b.revenue || 0) - (a.revenue || 0));
 
     return {
       id: p.id,
@@ -285,6 +320,7 @@ async function bookingAnalysis({ scope = null, today = new Date().toISOString().
       hemisphere: side,
       since: rows.length ? rows.at(0).found : null,
       total: summarise(sales),
+      you: summarise(own),
       weeks,
       months,
       seasons,
@@ -292,7 +328,7 @@ async function bookingAnalysis({ scope = null, today = new Date().toISOString().
       leaders,
       suggestions: suggestions({
         leaders,
-        sales,
+        sales: market,
         ownPrices: ownPrices.filter((r) => r.property_id === p.id),
         ownOpen: new Set(ownOpenRows.filter((r) => r.property_id === p.id).map((r) => r.date)),
         today,
