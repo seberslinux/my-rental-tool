@@ -10,7 +10,7 @@ import { apiGet } from '../data/session';
  * Where each property stands against its competitors, as one picture.
  *
  * Price per night across, nights taken over the next 30 days up. Every
- * competitor is a grey dot, the benchmark a blue diamond, us an orange
+ * competitor is a grey dot, the benchmark a blue dot, us an orange
  * dot; the dashed lines are the competitors' medians and cut the chart
  * into four corners — fuller or emptier, cheaper or more expensive. The
  * corner we sit in is the answer to "how are we doing".
@@ -49,18 +49,13 @@ function verdict(w: PeerWindow | undefined) {
   return { text: 'level', cls: 'bg-[#F0F0F0] text-[#717171]' };
 }
 
-// Drawn by hand so the kinds stay distinct without colour alone: a ringed
-// dot for us, a diamond for the benchmark, a gold ring for a price leader,
-// a plain dot for the rest. The size of each is the money it has made.
+// Drawn by hand: every listing a round bubble, told apart by colour and
+// ring — orange for us, blue for the benchmark, a gold ring for a price
+// leader, grey for the rest. The size of each is the money it has made.
 const GOLD = '#C9A227';
 const bubble = (fill: string, radius: (p: any) => number, ring?: string) => (props: any) =>
   <circle cx={props.cx} cy={props.cy} r={radius(props.payload)} fill={fill} fillOpacity={0.8}
     stroke={ring || 'none'} strokeWidth={ring ? 2 : 0} />;
-const diamondOf = (radius: (p: any) => number) => (props: any) => {
-  const { cx, cy } = props;
-  const s = radius(props.payload) + 2;
-  return <path d={`M${cx},${cy - s} L${cx + s},${cy} L${cx},${cy + s} L${cx - s},${cy} Z`} fill={BLUE} fillOpacity={0.85} stroke="#fff" strokeWidth={2} />;
-};
 
 function Tip({ active, payload, currency }: any) {
   if (!active || !payload || !payload.length) return null;
@@ -131,14 +126,14 @@ function PositionChart({ row, height }: { row: PeerSummaryRow; height: number })
             <Tooltip content={<Tip currency={row.currency} />} cursor={false} />
             <Scatter data={others} shape={bubble(GREY, radius)} isAnimationActive={false} />
             <Scatter data={lead} shape={bubble(GREY, radius, GOLD)} isAnimationActive={false} />
-            <Scatter data={bench} shape={diamondOf(radius)} isAnimationActive={false} />
+            <Scatter data={bench} shape={bubble(BLUE, radius, '#fff')} isAnimationActive={false} />
             <Scatter data={own} shape={bubble(ORANGE, radius, '#fff')} isAnimationActive={false} />
           </ScatterChart>
         </ResponsiveContainer>
       </div>
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[#717171] mt-1">
         <span className="flex items-center gap-1.5"><span className="w-[10px] h-[10px] rounded-full" style={{ background: ORANGE }} />You</span>
-        {bench.length > 0 && <span className="flex items-center gap-1.5"><span className="w-[9px] h-[9px] rotate-45" style={{ background: BLUE }} />{row.benchmark_name}</span>}
+        {bench.length > 0 && <span className="flex items-center gap-1.5"><span className="w-[10px] h-[10px] rounded-full" style={{ background: BLUE }} />{row.benchmark_name}</span>}
         {lead.length > 0 && <span className="flex items-center gap-1.5"><span className="w-[10px] h-[10px] rounded-full" style={{ background: GREY, boxShadow: `0 0 0 2px ${GOLD}` }} />Price leader</span>}
         <span className="flex items-center gap-1.5"><span className="w-[8px] h-[8px] rounded-full" style={{ background: GREY }} />Other competitors</span>
         <span className="flex items-center gap-1.5"><span className="w-[14px] border-t border-dashed" style={{ borderColor: INK }} />Median</span>
