@@ -176,7 +176,7 @@ const quoteAt = (rates) => async (id) => (rates[id] ? { nightly: rates[id], tota
 test('the daily price run quotes every open planned stay and only those', async () => {
   await setup();
   await runPeerCheck({
-    fetchCalendar: stub({ 111: year(), 222: year((i) => i > 0 && i < 70), 333: year() }),
+    fetchCalendar: stub({ 111: year(), 222: year((i) => i > 0), 333: year() }),
     pauseMs: 0,
   });
   const r = await runPeerPrices({ fetchQuote: quoteAt({ 111: 2700, 222: 4200, 333: 2500 }), pauseMs: 0 });
@@ -185,10 +185,13 @@ test('the daily price run quotes every open planned stay and only those', async 
     `SELECT l.name, COUNT(*)::int AS n FROM peer_prices p JOIN peer_listings l ON l.id = p.listing_id GROUP BY l.name`
   );
   const n = Object.fromEntries(rows.map((x) => [x.name, x.n]));
-  assert.equal(n['Our lodge'], 16);
-  assert.equal(n.Seaforest, 16);
+  // Every open stay in the calendar's window: as many weekends as it holds, 8 weekdays.
+  const { planQuotes } = require('../../src/services/peer-check');
+  const open = planQuotes(new Map(year().map((d) => [d.date, { available: true, minNights: 2 }])), today).length;
+  assert.equal(n['Our lodge'], open);
+  assert.equal(n.Seaforest, open);
   assert.equal(n["Tal's house"], undefined, 'nothing to quote while Tal is full');
-  assert.equal(r.quoted, 32);
+  assert.equal(r.quoted, open * 2);
 });
 
 test('a sale carries the price it was last on sale for', async () => {
@@ -430,7 +433,9 @@ test('every quote is kept, each with its currency and party size', async () => {
   await runPeerPrices({ fetchQuote: quoteAt({ 111: 2700 }), pauseMs: 0 });
   await runPeerPrices({ fetchQuote: quoteAt({ 111: 2900 }), pauseMs: 0 });
   const { rows } = await pool.query("SELECT COUNT(*)::int AS n, COUNT(DISTINCT nightly)::int AS prices, MIN(currency) AS cur, MIN(guests) AS guests FROM peer_price_history");
-  assert.equal(rows[0].n, 32, 'two price reads, sixteen stays each, all kept');
+  const { planQuotes } = require('../../src/services/peer-check');
+  const open = planQuotes(new Map(year().map((d) => [d.date, { available: true, minNights: 2 }])), today).length;
+  assert.equal(rows[0].n, open * 2, 'two price reads, every open stay each, all kept');
   assert.equal(rows[0].prices, 2);
   assert.equal(rows[0].cur, 'ZAR');
   assert.equal(rows[0].guests, 2);
@@ -496,4 +501,36 @@ test('the record downloads as CSV, for an admin only', async () => {
   const other = await getAgent();
   await loginAs(other, manager);
   await other.get('/api/peers/export/calendar').expect(403);
+});
+
+test('our own sales come from Smoobu, beside the competitors, week by week', async () => {
+  const { admin, lodge } = await withSales();
+  await pool.query(
+    `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status,
+                           num_guests, length_of_stay, price_per_night, currency, lead_time_days, created_at)
+     VALUES (990001, $1, 'Sam Guest', $2, $3, 'Airbnb', 9000, 'confirmed', 2, 3, 3000, 'ZAR', 20, $4),
+            (990002, $1, 'Owner block', $2, $3, 'Blocked channel', 0, 'confirmed', 2, 3, 0, 'ZAR', 0, $4)`,
+    [lodge.id, inDays(20), inDays(23), today]
+  );
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get('/api/peers/analysis').expect(200);
+  const a = body.properties[0];
+  assert.equal(a.you.bookings, 1, 'a block is not a sale');
+  assert.equal(a.you.revenue, 9000);
+  assert.equal(a.weeks[0].you.nights, 3);
+  assert.ok(a.weeks[0].sales.some((s) => s.own && s.channel === 'Airbnb'));
+  assert.ok(a.listings.some((l) => l.is_own && l.name === 'You'));
+  assert.equal(a.total.bookings, 2, 'and the competitors are counted as before');
+});
+
+test('the booking export says where each price came from', async () => {
+  const { admin } = await withSales();
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const res = await agent.get('/api/peers/export/bookings').expect(200);
+  const [head, ...lines] = res.text.trim().split('\n');
+  assert.match(head, /nightly_quoted,nightly_estimate,price_source/);
+  const sources = lines.map((l) => l.split(',').at(head.split(',').indexOf('price_source')));
+  assert.ok(sources.every((s) => ['quoted', 'estimated', 'never quoted', 'not a sale'].includes(s)), sources.join('|'));
 });

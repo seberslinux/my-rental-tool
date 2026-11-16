@@ -121,25 +121,34 @@ const money = (n, currency = 'ZAR') =>
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const WEEKS = 8;
+// A year ahead — the whole booking window the calendar shows — for both
+// kinds of stay: a sale is priced only if its nights were quoted before
+// they went, and holiday homes sell months out. At 8 weeks, every January
+// sale arrived unpriced.
+//
+// Two quotes a week, because Airbnb prices a stay, not a night, and most
+// hosts charge one rate Friday and Saturday and another midweek: a
+// Friday-to-Sunday stay gives the weekend rate, a Monday one the weekday
+// rate. Together they price any night a competitor sells.
+const WEEKS = { weekend: 52, weekday: 52 };
 const weekday = (ymd) => new Date(`${ymd}T00:00:00Z`).getUTCDay(); // 0 Sunday … 5 Friday
 
 /**
- * The stays worth quoting for one listing: the next eight Friday
- * weekends and the next eight Monday weekday stays, two nights each or
- * the listing's minimum if longer, and only where every night is open —
- * Airbnb will not quote a stay it cannot sell.
+ * The stays worth quoting for one listing: the next 52 Friday weekends and
+ * the next 52 Monday weekday stays, two nights each or the listing's
+ * minimum if longer, and only where every night is open — Airbnb will not
+ * quote a stay it cannot sell.
  *
  * Fixed stays rather than every night: a price is only comparable with
- * another for the same dates and length, and sixteen quotes a listing
- * keeps the daily total to a few hundred requests.
+ * another for the same dates and length, and only open stays are quoted, so
+ * a busy listing costs few requests and a sold-out year none.
  */
 function planQuotes(calendar, today) {
   const plan = [];
   for (const [kind, day] of [['weekend', 5], ['weekday', 1]]) {
     let d = addDays(today, 1);
     while (weekday(d) !== day) d = addDays(d, 1);
-    for (let w = 0; w < WEEKS; w++, d = addDays(d, 7)) {
+    for (let w = 0; w < WEEKS[kind]; w++, d = addDays(d, 7)) {
       const first = calendar.get(d);
       if (!first || !first.available) continue;
       const nights = Math.max(2, first.minNights || 1);
@@ -157,10 +166,17 @@ function planQuotes(calendar, today) {
 /**
  * Quote every listing's planned stays from its latest calendar.
  *
- * Once a day, after the morning reading: asking prices move far more
- * slowly than availability, and this is the part that costs requests.
+ * Run straight after every calendar reading, three times a day, so a sale
+ * found at the next reading has the price its nights were on sale for a
+ * few hours before. Prices go out as far as the calendar does — Airbnb's
+ * booking window — because a sale six months ahead is still a sale.
+ *
+ * Two quotes at a time with a short pause between, and the run stops the
+ * moment Airbnb starts refusing (429 or 403): a listing page that gets us
+ * blocked costs every reading after it.
  */
-async function runPeerPrices({ fetchQuote, today = new Date().toISOString().slice(0, 10), pauseMs = 1000 } = {}) {
+const CONCURRENCY = 2;
+async function runPeerPrices({ fetchQuote, today = new Date().toISOString().slice(0, 10), pauseMs = 600 } = {}) {
   const listings = await getAll(`SELECT l.*, COALESCE(p.base_currency, 'ZAR') AS currency, COALESCE(p.peer_guests, 2) AS guests
        FROM peer_listings l LEFT JOIN properties p ON p.id = l.property_id
       WHERE l.active ORDER BY l.is_own DESC, l.is_benchmark DESC, l.id`);
@@ -171,44 +187,59 @@ async function runPeerPrices({ fetchQuote, today = new Date().toISOString().slic
     quote = (id, a, b, opts) => airbnb.fetchQuote(id, a, b, { key, hash, ...opts });
   }
 
-  let quoted = 0;
-  const failures = [];
+  // Every stay to quote, across every listing, as one queue.
+  const jobs = [];
   for (const listing of listings) {
     const rows = await getAll(
       `SELECT to_char(date, 'YYYY-MM-DD') AS date, available, min_nights FROM peer_calendar
-        WHERE listing_id = $1 AND date > $2::date AND date <= $2::date + 70`,
+        WHERE listing_id = $1 AND date > $2::date AND date <= $2::date + 370`,
       [listing.id, today]
     );
     const calendar = new Map(rows.map((r) => [r.date, { available: r.available, minNights: r.min_nights }]));
-    for (const stay of planQuotes(calendar, today)) {
-      try {
-        const q = await quote(listing.airbnb_id, stay.checkIn, stay.checkOut, { currency: listing.currency, adults: listing.guests });
-        if (q && q.nightly) {
-          await run(
-            `INSERT INTO peer_prices (listing_id, check_in, nights, kind, nightly, total, quoted_at)
-             VALUES ($1, $2, $3, $4, $5, $6, NOW())
-             ON CONFLICT (listing_id, check_in, nights) DO UPDATE SET
-               kind = EXCLUDED.kind, nightly = EXCLUDED.nightly, total = EXCLUDED.total, quoted_at = NOW()`,
-            [listing.id, stay.checkIn, stay.nights, stay.kind, q.nightly, q.total]
-          );
-          // And into the record, which keeps every quote ever taken.
-          await run(
-            `INSERT INTO peer_price_history (listing_id, check_in, nights, kind, guests, currency, nightly, total)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [listing.id, stay.checkIn, stay.nights, stay.kind, listing.guests, listing.currency, q.nightly, q.total]
-          );
-          quoted++;
-        }
-      } catch (err) {
-        failures.push(`${listing.name}: ${err.message}`);
+    for (const stay of planQuotes(calendar, today)) jobs.push({ listing, stay });
+  }
+
+  let quoted = 0;
+  let stopped = null;
+  const failures = [];
+  const work = async ({ listing, stay }) => {
+    try {
+      const q = await quote(listing.airbnb_id, stay.checkIn, stay.checkOut, { currency: listing.currency, adults: listing.guests });
+      if (q && q.nightly) {
+        await run(
+          `INSERT INTO peer_prices (listing_id, check_in, nights, kind, nightly, total, quoted_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW())
+           ON CONFLICT (listing_id, check_in, nights) DO UPDATE SET
+             kind = EXCLUDED.kind, nightly = EXCLUDED.nightly, total = EXCLUDED.total, quoted_at = NOW()`,
+          [listing.id, stay.checkIn, stay.nights, stay.kind, q.nightly, q.total]
+        );
+        // And into the record, which keeps every quote ever taken.
+        await run(
+          `INSERT INTO peer_price_history (listing_id, check_in, nights, kind, guests, currency, nightly, total)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [listing.id, stay.checkIn, stay.nights, stay.kind, listing.guests, listing.currency, q.nightly, q.total]
+        );
+        quoted++;
       }
+    } catch (err) {
+      failures.push(`${listing.name}: ${err.message}`);
+      if (/\b(429|403)\b/.test(err.message)) stopped = err.message;
+    }
+  };
+  let next = 0;
+  const lane = async () => {
+    while (next < jobs.length && !stopped) {
+      const job = jobs[next++];
+      await work(job);
       if (pauseMs) await sleep(pauseMs);
     }
-  }
+  };
+  await Promise.all(Array.from({ length: CONCURRENCY }, lane));
+
   // The working table keeps only stays still ahead; every quote it drops
   // is already in peer_price_history, which nothing ever deletes from.
   await run('DELETE FROM peer_prices WHERE check_in < $1::date', [today]);
-  return { quoted, failed: failures.length, error: failures.slice(0, 3).join(' · ') || null };
+  return { planned: jobs.length, quoted, failed: failures.length, stopped, error: stopped || failures.slice(0, 3).join(' · ') || null };
 }
 
 /**

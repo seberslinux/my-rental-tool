@@ -17,13 +17,13 @@ interface Period {
   avg_nightly: number | null; median_lead_days: number | null; avg_stay: number | null;
   top_listing: { name: string; nights: number } | null;
 }
-interface Sale { name: string; check_in: string; check_out: string; nights: number; lead_days: number | null; nightly: number | null; estimated: boolean; revenue: number | null; }
-interface Week extends Period { week: string; sales: Sale[]; }
-interface Month extends Period { month: string; }
-interface Season extends Period { season: string; }
-interface ListingRow extends Period { name: string; is_benchmark: boolean; }
+interface Sale { name: string; own?: boolean; leader?: boolean; channel?: string | null; check_in: string; check_out: string; nights: number; lead_days: number | null; nightly: number | null; estimated: boolean; revenue: number | null; }
+interface Week extends Period { week: string; you?: Period; sales: Sale[]; }
+interface Month extends Period { month: string; you?: Period; }
+interface Season extends Period { season: string; you?: Period; }
+interface ListingRow extends Period { name: string; is_benchmark: boolean; is_leader?: boolean; is_own?: boolean; }
 interface Analysis {
-  id: number; name: string; currency: string; since: string | null; total: Period;
+  id: number; name: string; currency: string; since: string | null; total: Period; you?: Period;
   weeks: Week[]; months: Month[]; seasons: Season[]; listings: ListingRow[];
   leaders: (ListingRow & { asking: number | null })[];
   suggestions: { kind: string; text: string }[];
@@ -41,10 +41,10 @@ const monthName = (ym: string) => new Date(`${ym}-01T00:00:00`).toLocaleDateStri
 type View = 'week' | 'month' | 'season';
 
 function PeriodTable({ a, view }: { a: Analysis; view: View }) {
-  const rows: { key: string; label: string; p: Period }[] =
-  view === 'week' ? a.weeks.map((w) => ({ key: w.week, label: `Week of ${day(w.week)}`, p: w })) :
-  view === 'month' ? a.months.map((m) => ({ key: m.month, label: monthName(m.month), p: m })) :
-  a.seasons.map((s) => ({ key: s.season, label: s.season, p: s }));
+  const rows: { key: string; label: string; p: Period; you?: Period }[] =
+  view === 'week' ? a.weeks.map((w) => ({ key: w.week, label: `Week of ${day(w.week)}`, p: w, you: w.you })) :
+  view === 'month' ? a.months.map((m) => ({ key: m.month, label: monthName(m.month), p: m, you: m.you })) :
+  a.seasons.map((s) => ({ key: s.season, label: s.season, p: s, you: s.you }));
   const th = 'font-medium px-3 py-2 text-right whitespace-nowrap';
   const td = 'px-3 py-2 text-right tabular-nums whitespace-nowrap';
   return (
@@ -56,6 +56,9 @@ function PeriodTable({ a, view }: { a: Analysis; view: View }) {
             <th className={th}>Bookings</th><th className={th}>Nights</th><th className={th}>Sold for</th>
             <th className={th}>Per night</th><th className={th}>Booked ahead</th>
             <th className="font-medium px-3 py-2 text-left whitespace-nowrap">Top seller</th>
+            <th className="font-medium px-3 py-2 text-right whitespace-nowrap border-l border-[#F0F0F0]">You: nights</th>
+            <th className={th}>You: sold for</th>
+            <th className={th}>You: per night</th>
           </tr>
         </thead>
         <tbody>
@@ -68,6 +71,9 @@ function PeriodTable({ a, view }: { a: Analysis; view: View }) {
               <td className={td}>{money(r.p.avg_nightly, a.currency)}</td>
               <td className={td}>{r.p.median_lead_days == null ? '–' : plural(r.p.median_lead_days, 'day')}</td>
               <td className="px-3 py-2 whitespace-nowrap">{r.p.top_listing ? `${r.p.top_listing.name} (${r.p.top_listing.nights})` : '–'}</td>
+              <td className={`${td} border-l border-[#F0F0F0] font-semibold`}>{r.you ? r.you.nights : 0}</td>
+              <td className={`${td} font-semibold`}>{money(r.you ? r.you.revenue : null, a.currency)}</td>
+              <td className={`${td} font-semibold`}>{money(r.you ? r.you.avg_nightly : null, a.currency)}</td>
             </tr>
           )}
         </tbody>
@@ -86,6 +92,13 @@ function OneProperty({ a }: { a: Analysis }) {
           {plural(a.total.bookings, 'booking')}, {plural(a.total.nights, 'night')}, about {money(a.total.revenue, a.currency)}{a.total.estimated ? '*' : ''}
           {a.since ? ` since ${day(a.since)}` : ''} · booked a median {a.total.median_lead_days == null ? '–' : plural(a.total.median_lead_days, 'day')} ahead · stays of {a.total.avg_stay ?? '–'} nights
         </p>
+        {a.you && a.you.bookings > 0 &&
+        <p className="text-[13px] text-[#222222]">
+            You, from Smoobu, all channels: {plural(a.you.bookings, 'booking')}, {plural(a.you.nights, 'night')}, {money(a.you.revenue, a.currency)}
+            {a.you.avg_nightly ? ` at ${money(a.you.avg_nightly, a.currency)} a night` : ''}
+            {a.you.median_lead_days != null ? ` · booked a median ${plural(a.you.median_lead_days, 'day')} ahead` : ''}
+          </p>
+        }
       </div>
 
       {a.leaders.length > 0 &&
@@ -137,7 +150,11 @@ function OneProperty({ a }: { a: Analysis }) {
           <div className={card}>
             {latest.sales.map((s, i) =>
           <div key={i} className={`px-4 py-2.5 ${i ? 'border-t border-[#F0F0F0]' : ''}`}>
-                <div className="text-[14px] font-medium text-[#222222]">{s.name}</div>
+                <div className="text-[14px] font-medium text-[#222222]">
+                  {s.name}
+                  {s.own && <span className="ml-2 text-[11px] font-semibold text-[#0F6E56]">YOURS{s.channel ? ` · ${s.channel}` : ''}</span>}
+                  {s.leader && <span className="ml-2 text-[11px] font-semibold text-[#C9A227]">PRICE LEADER</span>}
+                </div>
                 <div className="text-[12px] text-[#717171]">
                   {day(s.check_in)}–{day(s.check_out)} · {s.nights} night{s.nights === 1 ? '' : 's'}
                   {s.lead_days != null ? ` · booked ${plural(s.lead_days, 'day')} ahead` : ''}
@@ -165,7 +182,12 @@ function OneProperty({ a }: { a: Analysis }) {
             <tbody>
               {a.listings.map((l) =>
               <tr key={l.name} className="border-t border-[#F0F0F0]">
-                  <td className="px-3 py-2">{l.name}{l.is_benchmark && <span className="ml-1.5 text-[11px] font-semibold text-[#FF385C]">BENCHMARK</span>}</td>
+                  <td className={`px-3 py-2 ${l.is_own ? 'font-semibold' : ''}`}>
+                    {l.name}
+                    {l.is_benchmark && <span className="ml-1.5 text-[11px] font-semibold text-[#FF385C]">BENCHMARK</span>}
+                    {l.is_leader && <span className="ml-1.5 text-[11px] font-semibold text-[#C9A227]">PRICE LEADER</span>}
+                    {l.is_own && <span className="ml-1.5 text-[11px] font-semibold text-[#0F6E56]">YOURS</span>}
+                  </td>
                   <td className="px-3 py-2 text-right tabular-nums">{l.bookings}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{l.nights}</td>
                   <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{money(l.revenue, a.currency)}{l.estimated && l.revenue != null ? '*' : ''}</td>
@@ -176,7 +198,7 @@ function OneProperty({ a }: { a: Analysis }) {
           </table>
         </div>
         <p className="text-[12px] text-[#B0B0B0] mt-1.5">
-          * Estimated from the competitor's latest asking price where the sold nights were not quoted. Figures are Airbnb asking prices, before fees.
+          * Estimated from the competitor's quote nearest in date where the sold nights were not quoted. Competitor figures are Airbnb asking prices, before fees; yours are what guests paid, from Smoobu. The price leader counts in every list but not in the per-night averages.
         </p>
       </div>
     </section>);

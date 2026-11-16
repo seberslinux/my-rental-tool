@@ -285,9 +285,25 @@ router.post('/snapshots', requireRole('admin'), (req, res) => {
 const EXPORTS = {
   listings: `SELECT l.id, l.airbnb_id, l.name, p.name AS property, l.is_own, l.is_benchmark, l.active, l.created_at
                FROM peer_listings l LEFT JOIN properties p ON p.id = l.property_id ORDER BY l.id`,
-  bookings: `SELECT s.id, l.airbnb_id, l.name, s.check_in, s.check_out, s.nights, s.kind, s.lead_days, s.nightly,
+  // A sale is priced only when its nights were quoted before they went.
+  // Otherwise the estimate is the listing's quote nearest in date to the
+  // stay, taken before the sale where there is one; price_source says which.
+  bookings: `SELECT s.id, p.name AS property, l.airbnb_id, l.name, l.is_own, s.check_in, s.check_out, s.nights,
+                    s.kind, s.lead_days, s.nightly AS nightly_quoted,
+                    CASE WHEN s.nightly IS NULL AND s.kind = 'booking' THEN est.nightly END AS nightly_estimate,
+                    CASE WHEN s.nightly IS NOT NULL THEN 'quoted'
+                         WHEN s.kind = 'booking' AND est.nightly IS NOT NULL THEN 'estimated'
+                         WHEN s.kind = 'booking' THEN 'never quoted'
+                         ELSE 'not a sale' END AS price_source,
                     s.detected_at, s.reversed_at
-               FROM peer_stays s JOIN peer_listings l ON l.id = s.listing_id ORDER BY s.detected_at, s.id`,
+               FROM peer_stays s
+               JOIN peer_listings l ON l.id = s.listing_id
+               LEFT JOIN properties p ON p.id = l.property_id
+               LEFT JOIN LATERAL (
+                 SELECT h.nightly FROM peer_price_history h WHERE h.listing_id = s.listing_id
+                  ORDER BY (h.quoted_at > s.detected_at), abs(h.check_in - s.check_in), h.quoted_at DESC LIMIT 1
+               ) est ON TRUE
+              ORDER BY s.detected_at, s.id`,
   prices: `SELECT h.id, l.airbnb_id, l.name, h.check_in, h.nights, h.kind, h.guests, h.currency, h.nightly, h.total, h.quoted_at
              FROM peer_price_history h JOIN peer_listings l ON l.id = h.listing_id ORDER BY h.quoted_at, h.id`,
   calendar: `SELECT c.id, l.airbnb_id, l.name, c.date, c.available, c.min_nights, c.baseline, c.seen_at
@@ -327,8 +343,12 @@ router.get('/export/:table', requireRole('admin'), async (req, res) => {
 /** Run it now rather than waiting for the next scheduled read. */
 router.post('/run', requireRole('admin'), async (req, res) => {
   try {
-    const { runPeerCheck } = require('../services/peer-check');
+    const { runPeerCheck, runPeerPrices } = require('../services/peer-check');
     const { ok, failed, found } = await runPeerCheck();
+    // Prices follow in the background, as on the schedule.
+    runPeerPrices()
+      .then((p) => console.log(`Peer prices (with a read by hand): ${p.quoted} of ${p.planned} quoted.`))
+      .catch((err) => console.error(`Peer prices after a read failed: ${err.message}`));
     res.json({ ok, failed, stays: found.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
