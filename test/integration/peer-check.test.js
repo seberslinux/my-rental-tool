@@ -323,7 +323,7 @@ test('the chart has one point per priced listing: occupancy against average aski
   const { body } = await agent.get('/api/peers/summary').expect(200);
   const p = body.properties[0];
   const byName = Object.fromEntries(p.points.map((x) => [x.name, x]));
-  assert.deepEqual(byName['Our lodge'], { name: 'Our lodge', occupancy: 20, price: 2700, is_own: true, is_benchmark: false });
+  assert.deepEqual(byName['Our lodge'], { name: 'Our lodge', occupancy: 20, price: 2700, is_own: true, is_benchmark: false, revenue: 0 });
   assert.equal(byName.Seaforest.price, 2500);
   assert.equal(byName["Tal's house"], undefined, 'no quote, no point');
   assert.equal(p.median_price, 2500, 'median of the competitors only');
@@ -533,4 +533,21 @@ test('the booking export says where each price came from', async () => {
   assert.match(head, /nightly_quoted,nightly_estimate,price_source/);
   const sources = lines.map((l) => l.split(',').at(head.split(',').indexOf('price_source')));
   assert.ok(sources.every((s) => ['quoted', 'estimated', 'never quoted', 'not a sale'].includes(s)), sources.join('|'));
+});
+
+test("each chart point carries the money that listing has made, ours from Smoobu", async () => {
+  const { admin, lodge } = await withSales();
+  await pool.query(
+    `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status,
+                           num_guests, length_of_stay, price_per_night, currency, lead_time_days, created_at)
+     VALUES (990003, $1, 'Sam Guest', $2, $3, 'Booking.com', 7500, 'confirmed', 2, 3, 2500, 'ZAR', 20, $4)`,
+    [lodge.id, inDays(40), inDays(43), today]
+  );
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get('/api/peers/summary').expect(200);
+  const byName = Object.fromEntries(body.properties[0].points.map((x) => [x.name, x]));
+  assert.equal(byName['Our lodge'].revenue, 7500, 'what our guest paid');
+  assert.equal(byName.Seaforest.revenue, 3 * 2500, 'three nights sold at its quoted price');
+  assert.ok(body.properties[0].since);
 });

@@ -23,10 +23,10 @@ import { apiGet } from '../data/session';
  */
 
 export interface PeerWindow { days: number; own: number | null; benchmark: number | null; median: number | null; }
-export interface PeerPoint { name: string; occupancy: number; price: number; is_own: boolean; is_benchmark: boolean; }
+export interface PeerPoint { name: string; occupancy: number; price: number; is_own: boolean; is_benchmark: boolean; revenue?: number; }
 export interface PeerSummaryRow {
   id: number; name: string; currency?: string; benchmark_name: string | null; windows: PeerWindow[];
-  points?: PeerPoint[]; median_price?: number | null;
+  points?: PeerPoint[]; median_price?: number | null; since?: string;
 }
 
 const card = 'bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)]';
@@ -49,14 +49,17 @@ function verdict(w: PeerWindow | undefined) {
   return { text: 'level', cls: 'bg-[#F0F0F0] text-[#717171]' };
 }
 
-// Drawn by hand so the three kinds stay distinct without colour alone:
-// a ringed dot for us, a diamond for the benchmark, a plain dot for the rest.
-const dot = (fill: string, r: number, ring = false) => (props: any) =>
-  <circle cx={props.cx} cy={props.cy} r={r} fill={fill} stroke={ring ? '#fff' : 'none'} strokeWidth={ring ? 2 : 0} />;
-const diamond = (props: any) => {
+// Drawn by hand so the kinds stay distinct without colour alone: a ringed
+// dot for us, a diamond for the benchmark, a gold ring for a price leader,
+// a plain dot for the rest. The size of each is the money it has made.
+const GOLD = '#C9A227';
+const bubble = (fill: string, radius: (p: any) => number, ring?: string) => (props: any) =>
+  <circle cx={props.cx} cy={props.cy} r={radius(props.payload)} fill={fill} fillOpacity={0.8}
+    stroke={ring || 'none'} strokeWidth={ring ? 2 : 0} />;
+const diamondOf = (radius: (p: any) => number) => (props: any) => {
   const { cx, cy } = props;
-  const s = 8;
-  return <path d={`M${cx},${cy - s} L${cx + s},${cy} L${cx},${cy + s} L${cx - s},${cy} Z`} fill={BLUE} stroke="#fff" strokeWidth={2} />;
+  const s = radius(props.payload) + 2;
+  return <path d={`M${cx},${cy - s} L${cx + s},${cy} L${cx},${cy + s} L${cx - s},${cy} Z`} fill={BLUE} fillOpacity={0.85} stroke="#fff" strokeWidth={2} />;
 };
 
 function Tip({ active, payload, currency }: any) {
@@ -66,34 +69,45 @@ function Tip({ active, payload, currency }: any) {
     <div className="bg-white rounded-[8px] shadow-[0_4px_12px_rgba(0,0,0,0.15)] px-3 py-2 text-[12px]">
       <div className="font-semibold text-[#222222]">{p.is_own ? `${p.name} (you)` : p.name}</div>
       <div className="text-[#717171]">{p.occupancy}% taken · {money(p.price, currency)} a night</div>
+      <div className="text-[#717171]">{p.revenue ? `${money(p.revenue, currency)} made since the watch began` : 'No sales found yet'}</div>
     </div>);
 }
 
 function PositionChart({ row, height }: { row: PeerSummaryRow; height: number }) {
+  const [hideLeaders, setHideLeaders] = useState(false);
   const points = row.points || [];
   const w30 = row.windows.find((w) => w.days === 30);
   const medPrice = row.median_price || null;
   const medOcc = w30 ? w30.median : null;
   if (points.length < 2 || !medPrice) return null;
 
-  // A listing priced at more than twice the median would squash every
-  // other dot into one corner, so it is named under the chart instead.
-  const outliers = points.filter((p) => !p.is_own && p.price > medPrice * 2);
-  const shown = points.filter((p) => !outliers.includes(p));
+  // A listing priced at more than twice the median is a price leader: the
+  // ceiling to aim at. It is on the chart by default; hiding it lets the
+  // rest spread out over the whole width.
+  const leaders = points.filter((p) => !p.is_own && p.price > medPrice * 2);
+  const shown = hideLeaders ? points.filter((p) => !leaders.includes(p)) : points;
   const prices = shown.map((p) => p.price);
   const lo = Math.max(0, Math.floor((Math.min(...prices) * 0.9) / 500) * 500);
   const hi = Math.ceil((Math.max(...prices) * 1.1) / 500) * 500;
 
-  const others = shown.filter((p) => !p.is_own && !p.is_benchmark);
+  // Area, not radius, follows the money, so a listing making four times
+  // as much looks four times as big, not sixteen.
+  const maxRev = Math.max(1, ...shown.map((p) => p.revenue || 0));
+  const radius = (p: PeerPoint) => (p.revenue ? 5 + 15 * Math.sqrt(p.revenue / maxRev) : 4);
+  const bySize = (a: PeerPoint, b: PeerPoint) => (b.revenue || 0) - (a.revenue || 0);
+
+  const others = shown.filter((p) => !p.is_own && !p.is_benchmark && !leaders.includes(p)).sort(bySize);
+  const lead = shown.filter((p) => leaders.includes(p) && !p.is_benchmark);
   const bench = shown.filter((p) => p.is_benchmark);
   const own = shown.filter((p) => p.is_own);
   const corner = (value: string, position: string) => ({ value, position, fill: INK, fontSize: 11 } as any);
+  const since = row.since ? new Date(`${row.since}T00:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' }) : null;
 
   return (
     <div>
       <div style={{ width: '100%', height }}>
         <ResponsiveContainer>
-          <ScatterChart margin={{ top: 8, right: 12, bottom: 22, left: 0 }}>
+          <ScatterChart margin={{ top: 12, right: 16, bottom: 22, left: 0 }}>
             <CartesianGrid stroke="#EFEEEA" />
             <XAxis
               type="number" dataKey="price" domain={[lo, hi]} tickCount={5}
@@ -115,22 +129,29 @@ function PositionChart({ row, height }: { row: PeerSummaryRow; height: number })
             }
             <ReferenceLine x={medPrice} stroke={INK} strokeDasharray="5 4" />
             <Tooltip content={<Tip currency={row.currency} />} cursor={false} />
-            <Scatter data={others} shape={dot(GREY, 6)} isAnimationActive={false} />
-            <Scatter data={bench} shape={diamond} isAnimationActive={false} />
-            <Scatter data={own} shape={dot(ORANGE, 9, true)} isAnimationActive={false} />
+            <Scatter data={others} shape={bubble(GREY, radius)} isAnimationActive={false} />
+            <Scatter data={lead} shape={bubble(GREY, radius, GOLD)} isAnimationActive={false} />
+            <Scatter data={bench} shape={diamondOf(radius)} isAnimationActive={false} />
+            <Scatter data={own} shape={bubble(ORANGE, radius, '#fff')} isAnimationActive={false} />
           </ScatterChart>
         </ResponsiveContainer>
       </div>
       <div className="flex flex-wrap gap-x-3 gap-y-1 text-[12px] text-[#717171] mt-1">
         <span className="flex items-center gap-1.5"><span className="w-[10px] h-[10px] rounded-full" style={{ background: ORANGE }} />You</span>
         {bench.length > 0 && <span className="flex items-center gap-1.5"><span className="w-[9px] h-[9px] rotate-45" style={{ background: BLUE }} />{row.benchmark_name}</span>}
+        {lead.length > 0 && <span className="flex items-center gap-1.5"><span className="w-[10px] h-[10px] rounded-full" style={{ background: GREY, boxShadow: `0 0 0 2px ${GOLD}` }} />Price leader</span>}
         <span className="flex items-center gap-1.5"><span className="w-[8px] h-[8px] rounded-full" style={{ background: GREY }} />Other competitors</span>
         <span className="flex items-center gap-1.5"><span className="w-[14px] border-t border-dashed" style={{ borderColor: INK }} />Median</span>
       </div>
-      {outliers.length > 0 &&
       <p className="text-[12px] text-[#B0B0B0] mt-1">
-          Not shown, priced far above the rest: {outliers.map((o) => `${o.name} (${o.occupancy}%, ${money(o.price, row.currency)})`).join(', ')}.
-        </p>
+        Bubble size: money made{since ? ` since ${since}` : ''} — competitors' Airbnb sales, yours from Smoobu.
+      </p>
+      {leaders.length > 0 &&
+      <button
+        onClick={(e) => { e.stopPropagation(); setHideLeaders((v) => !v); }}
+        className="mt-1.5 text-[12px] font-semibold text-[#222222] underline underline-offset-2">
+          {hideLeaders ? `Show ${leaders.map((l) => l.name).join(', ')}` : `Hide the price leader (${leaders.map((l) => l.name).join(', ')})`}
+        </button>
       }
     </div>);
 }
