@@ -1,28 +1,28 @@
-import React, { useEffect, useState } from 'react';
-import { Lightbulb } from 'lucide-react';
-import { apiGet } from '../data/session';
+import React, { useState } from 'react';
+import { ChevronDown, ChevronRight, Lightbulb } from 'lucide-react';
 
 /**
- * What the competitors sold, added up.
+ * What the competitors sold, added up — and what we sold beside it.
  *
- * By the week a sale was found (what happened this week), by the month
- * and season the guests stay (where the demand is), and by competitor
- * (who is winning) — with the suggestions the numbers point to on top,
- * because those are what someone acts on. Money is an estimate wherever
- * a sale's own nights were never quoted, and the table says so.
+ * By the week a sale was made (what happened lately), by the month and
+ * season the guests stay (where the demand is). Every period is two
+ * lines, theirs and ours, the same figures in the same order, so the
+ * comparison reads down rather than across a table too wide for a phone.
+ * Money is an estimate wherever a sale's own nights were never quoted,
+ * and says so.
  */
 
-interface Period {
+export interface Period {
   bookings: number; nights: number; revenue: number | null; estimated: boolean;
   avg_nightly: number | null; median_lead_days: number | null; avg_stay: number | null;
   top_listing: { name: string; nights: number } | null;
 }
-interface Sale { name: string; own?: boolean; leader?: boolean; channel?: string | null; check_in: string; check_out: string; nights: number; lead_days: number | null; nightly: number | null; estimated: boolean; revenue: number | null; }
+export interface Sale { name: string; own?: boolean; leader?: boolean; channel?: string | null; check_in: string; check_out: string; nights: number; lead_days: number | null; nightly: number | null; estimated: boolean; revenue: number | null; }
 interface Week extends Period { week: string; you?: Period; sales: Sale[]; }
 interface Month extends Period { month: string; you?: Period; }
 interface Season extends Period { season: string; you?: Period; }
-interface ListingRow extends Period { name: string; is_benchmark: boolean; is_leader?: boolean; is_own?: boolean; }
-interface Analysis {
+export interface ListingRow extends Period { name: string; is_benchmark: boolean; is_leader?: boolean; is_own?: boolean; }
+export interface Analysis {
   id: number; name: string; currency: string; since: string | null; total: Period; you?: Period;
   weeks: Week[]; months: Month[]; seasons: Season[]; listings: ListingRow[];
   leaders: (ListingRow & { asking: number | null })[];
@@ -30,189 +30,137 @@ interface Analysis {
 }
 
 const card = 'bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)]';
-const label = 'text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2';
 const SIGNS: Record<string, string> = { ZAR: 'R', EUR: '€', USD: '$', GBP: '£' };
-const money = (n: number | null, c: string) =>
+export const money = (n: number | null | undefined, c: string) =>
   n == null ? '–' : `${SIGNS[c] || `${c} `}${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}`;
-const day = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
-const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
-const monthName = (ym: string) => new Date(`${ym}-01T00:00:00`).toLocaleDateString('en-ZA', { month: 'short', year: 'numeric' });
+export const day = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
+export const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
+/** "booked 12 days ahead", or the same day. */
+export const ahead = (n: number) => (n === 0 ? 'booked the same day' : `booked ${plural(n, 'day')} ahead`);
+const monthName = (ym: string) => new Date(`${ym}-01T00:00:00`).toLocaleDateString('en-ZA', { month: 'long', year: 'numeric' });
+const weekSpan = (monday: string) => {
+  const sunday = new Date(Date.parse(`${monday}T00:00:00Z`) + 6 * 86400000).toISOString().slice(0, 10);
+  return `${day(monday)} – ${day(sunday)}`;
+};
 
-type View = 'week' | 'month' | 'season';
-
-function PeriodTable({ a, view }: { a: Analysis; view: View }) {
-  const rows: { key: string; label: string; p: Period; you?: Period }[] =
-  view === 'week' ? a.weeks.map((w) => ({ key: w.week, label: `Week of ${day(w.week)}`, p: w, you: w.you })) :
-  view === 'month' ? a.months.map((m) => ({ key: m.month, label: monthName(m.month), p: m, you: m.you })) :
-  a.seasons.map((s) => ({ key: s.season, label: s.season, p: s, you: s.you }));
-  const th = 'font-medium px-3 py-2 text-right whitespace-nowrap';
-  const td = 'px-3 py-2 text-right tabular-nums whitespace-nowrap';
+/** "9 bookings · 41 nights · R271 702* · R3 923 a night · 51 days ahead" */
+function Figures({ p, currency }: { p: Period | undefined; currency: string }) {
+  if (!p || !p.bookings) return <span className="text-[#B0B0B0]">nothing sold</span>;
   return (
-    <div className={`${card} overflow-x-auto`}>
-      <table className="w-full text-[13px]">
-        <thead>
-          <tr className="text-[12px] text-[#717171]">
-            <th className="font-medium px-3 py-2 text-left whitespace-nowrap">{view === 'week' ? 'Found in' : 'Guests stay in'}</th>
-            <th className={th}>Bookings</th><th className={th}>Nights</th><th className={th}>Sold for</th>
-            <th className={th}>Per night</th><th className={th}>Booked ahead</th>
-            <th className="font-medium px-3 py-2 text-left whitespace-nowrap">Top seller</th>
-            <th className="font-medium px-3 py-2 text-right whitespace-nowrap border-l border-[#F0F0F0]">You: nights</th>
-            <th className={th}>You: sold for</th>
-            <th className={th}>You: per night</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) =>
-          <tr key={r.key} className="border-t border-[#F0F0F0]">
-              <td className="px-3 py-2 whitespace-nowrap">{r.label}</td>
-              <td className={td}>{r.p.bookings}</td>
-              <td className={td}>{r.p.nights}</td>
-              <td className={td}>{money(r.p.revenue, a.currency)}{r.p.estimated && r.p.revenue != null ? '*' : ''}</td>
-              <td className={td}>{money(r.p.avg_nightly, a.currency)}</td>
-              <td className={td}>{r.p.median_lead_days == null ? '–' : plural(r.p.median_lead_days, 'day')}</td>
-              <td className="px-3 py-2 whitespace-nowrap">{r.p.top_listing ? `${r.p.top_listing.name} (${r.p.top_listing.nights})` : '–'}</td>
-              <td className={`${td} border-l border-[#F0F0F0] font-semibold`}>{r.you ? r.you.nights : 0}</td>
-              <td className={`${td} font-semibold`}>{money(r.you ? r.you.revenue : null, a.currency)}</td>
-              <td className={`${td} font-semibold`}>{money(r.you ? r.you.avg_nightly : null, a.currency)}</td>
-            </tr>
-          )}
-        </tbody>
-      </table>
+    <span className="tabular-nums">
+      {plural(p.bookings, 'booking')} · {plural(p.nights, 'night')} · <span className="font-semibold">{money(p.revenue, currency)}{p.estimated && p.revenue != null ? '*' : ''}</span>
+      {p.avg_nightly != null && <> · {money(p.avg_nightly, currency)} a night</>}
+      {p.median_lead_days != null && <> · {ahead(p.median_lead_days)}</>}
+    </span>);
+}
+
+function SaleLine({ s, currency }: { s: Sale; currency: string }) {
+  return (
+    <div className="py-1.5 text-[13px]">
+      <span className={`font-medium ${s.own ? 'text-[#0F6E56]' : 'text-[#222222]'}`}>{s.own ? `You${s.channel ? ` (${s.channel})` : ''}` : s.name}</span>
+      {s.leader && <span className="ml-1.5 text-[11px] font-semibold text-[#C9A227]">PRICE LEADER</span>}
+      <span className="text-[#717171]">
+        {' · '}{day(s.check_in)}–{day(s.check_out)} · {plural(s.nights, 'night')}
+        {s.lead_days != null ? ` · ${ahead(s.lead_days)}` : ''}
+        {s.nightly != null ? ` · ${money(s.nightly, currency)} a night${s.estimated ? '*' : ''}` : ''}
+      </span>
     </div>);
 }
 
-function OneProperty({ a }: { a: Analysis }) {
-  const [view, setView] = useState<View>('week');
-  const latest = a.weeks.at(0);
+type View = 'week' | 'month' | 'season';
+const VIEWS: [View, string][] = [['week', 'Per week'], ['month', 'Per month'], ['season', 'Per season']];
+
+function PeriodList({ a, view, exporting }: { a: Analysis; view: View; exporting: boolean }) {
+  // The latest week opens by itself; the rest on a tap. A saved copy
+  // opens them all, since nobody can tap a file.
+  const [open, setOpen] = useState<Set<string>>(() => new Set(a.weeks.length ? [a.weeks[0].week] : []));
+  const rows: { key: string; label: string; p: Period; you?: Period; sales?: Sale[] }[] =
+  view === 'week' ? a.weeks.map((w) => ({ key: w.week, label: `Booked ${weekSpan(w.week)}`, p: w, you: w.you, sales: w.sales })) :
+  view === 'month' ? a.months.map((m) => ({ key: m.month, label: `Staying in ${monthName(m.month)}`, p: m, you: m.you })) :
+  a.seasons.map((s) => ({ key: s.season, label: `Staying in ${s.season}`, p: s, you: s.you }));
+  const toggle = (k: string) => setOpen((o) => { const n = new Set(o); n.has(k) ? n.delete(k) : n.add(k); return n; });
   return (
-    <section className="space-y-3">
-      <div>
-        <h2 className="text-[18px] font-semibold text-[#222222]">{a.name}: what competitors sold</h2>
-        <p className="text-[13px] text-[#717171]">
-          {plural(a.total.bookings, 'booking')}, {plural(a.total.nights, 'night')}, about {money(a.total.revenue, a.currency)}{a.total.estimated ? '*' : ''}
-          {a.since ? ` since ${day(a.since)}` : ''} · booked a median {a.total.median_lead_days == null ? '–' : plural(a.total.median_lead_days, 'day')} ahead · stays of {a.total.avg_stay ?? '–'} nights
-        </p>
-        {a.you && a.you.bookings > 0 &&
-        <p className="text-[13px] text-[#222222]">
-            You, from Smoobu, all channels: {plural(a.you.bookings, 'booking')}, {plural(a.you.nights, 'night')}, {money(a.you.revenue, a.currency)}
-            {a.you.avg_nightly ? ` at ${money(a.you.avg_nightly, a.currency)} a night` : ''}
-            {a.you.median_lead_days != null ? ` · booked a median ${plural(a.you.median_lead_days, 'day')} ahead` : ''}
-          </p>
-        }
-      </div>
-
-      {a.leaders.length > 0 &&
-      <div>
-          <div className={label}>Price leader</div>
-          <div className={`${card} divide-y divide-[#F0F0F0]`}>
-            {a.leaders.map((l) =>
-          <div key={l.name} className="px-4 py-3">
-                <div className="text-[15px] font-semibold text-[#222222]">{l.name}</div>
-                <div className="text-[13px] text-[#717171]">
-                  {plural(l.bookings, 'booking')}, {plural(l.nights, 'night')} · about {money(l.revenue, a.currency)}{l.estimated ? '*' : ''}
-                  {l.avg_nightly ? ` at ${money(l.avg_nightly, a.currency)} a night` : ''}
-                  {l.median_lead_days != null ? ` · booked ${plural(l.median_lead_days, 'day')} ahead` : ''}
-                  {l.asking ? ` · asks ${money(l.asking, a.currency)} now` : ''}
-                </div>
-              </div>
-          )}
-          </div>
-          <p className="text-[12px] text-[#B0B0B0] mt-1.5">Priced far above the rest, so left out of the medians below. It is the ceiling, not the market.</p>
-        </div>
-      }
-
-      {a.suggestions.length > 0 &&
-      <div className={`${card} divide-y divide-[#F0F0F0]`}>
-          {a.suggestions.map((s, i) =>
-        <div key={i} className="px-4 py-3 flex gap-3 text-[14px] text-[#222222]">
-              <Lightbulb className="w-4 h-4 text-[#C9A227] shrink-0 mt-0.5" />
-              <span>{s.text}</span>
+    <div className={`${card} divide-y divide-[#F0F0F0]`}>
+      {rows.map((r) => {
+        const expandable = Boolean(r.sales && r.sales.length);
+        const isOpen = expandable && (exporting || open.has(r.key));
+        const Chevron = isOpen ? ChevronDown : ChevronRight;
+        return (
+          <div key={r.key} className="px-4 py-3">
+            <button
+              type="button"
+              disabled={!expandable}
+              onClick={() => toggle(r.key)}
+              className="w-full text-left flex items-center gap-1.5 text-[14px] font-semibold text-[#222222]">
+              {expandable && <Chevron data-no-export className="w-4 h-4 text-[#B0B0B0] shrink-0" />}
+              {r.label}
+            </button>
+            <div className="mt-1 text-[13px] text-[#222222] leading-[1.5]">
+              <div><span className="text-[#717171]">Competitors: </span><Figures p={r.p} currency={a.currency} /></div>
+              <div><span className="text-[#0F6E56] font-semibold">You: </span><Figures p={r.you} currency={a.currency} /></div>
+              {r.p.top_listing && <div className="text-[#717171]">Sold most: {r.p.top_listing.name}, {plural(r.p.top_listing.nights, 'night')}</div>}
             </div>
-        )}
-        </div>
-      }
+            {isOpen &&
+            <div className="mt-2 pl-3 border-l-2 border-[#F0F0F0]">
+                {r.sales!.map((s, i) => <SaleLine key={i} s={s} currency={a.currency} />)}
+              </div>
+            }
+          </div>);
+      })}
+    </div>);
+}
 
+/** Week, month or season, with a switch; every one of them in a saved copy. */
+export function SalesByPeriod({ a, exporting = false }: { a: Analysis; exporting?: boolean }) {
+  const [view, setView] = useState<View>('week');
+  if (exporting) {
+    return (
+      <div className="space-y-4">
+        {VIEWS.map(([v, name]) =>
+        <div key={v}>
+            <div className="text-[13px] font-semibold text-[#717171] pb-1.5">{name}</div>
+            <PeriodList a={a} view={v} exporting />
+          </div>
+        )}
+      </div>);
+  }
+  return (
+    <div className="space-y-2">
       <div className="flex gap-1 bg-[#EFEFEF] rounded-[10px] p-1 w-fit">
-        {(['week', 'month', 'season'] as View[]).map((v) =>
+        {VIEWS.map(([v, name]) =>
         <button
           key={v}
           onClick={() => setView(v)}
           className={`px-3 py-1 rounded-[8px] text-[13px] font-semibold ${view === v ? 'bg-white text-[#222222] shadow-sm' : 'text-[#717171]'}`}>
-            {v === 'week' ? 'Per week' : v === 'month' ? 'Per month' : 'Per season'}
+            {name}
           </button>
         )}
       </div>
-      <PeriodTable a={a} view={view} />
-
-      {view === 'week' && latest &&
-      <div>
-          <div className={label}>Sold in the week of {day(latest.week)}</div>
-          <div className={card}>
-            {latest.sales.map((s, i) =>
-          <div key={i} className={`px-4 py-2.5 ${i ? 'border-t border-[#F0F0F0]' : ''}`}>
-                <div className="text-[14px] font-medium text-[#222222]">
-                  {s.name}
-                  {s.own && <span className="ml-2 text-[11px] font-semibold text-[#0F6E56]">YOURS{s.channel ? ` · ${s.channel}` : ''}</span>}
-                  {s.leader && <span className="ml-2 text-[11px] font-semibold text-[#C9A227]">PRICE LEADER</span>}
-                </div>
-                <div className="text-[12px] text-[#717171]">
-                  {day(s.check_in)}–{day(s.check_out)} · {s.nights} night{s.nights === 1 ? '' : 's'}
-                  {s.lead_days != null ? ` · booked ${plural(s.lead_days, 'day')} ahead` : ''}
-                  {s.nightly != null ? ` · ${money(s.nightly, a.currency)} a night${s.estimated ? '*' : ''}` : ''}
-                </div>
-              </div>
-          )}
-          </div>
-        </div>
-      }
-
-      <div>
-        <div className={label}>Who sells the most</div>
-        <div className={`${card} overflow-x-auto`}>
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="text-[12px] text-[#717171]">
-                <th className="font-medium px-3 py-2 text-left">Competitor</th>
-                <th className="font-medium px-3 py-2 text-right">Bookings</th>
-                <th className="font-medium px-3 py-2 text-right">Nights</th>
-                <th className="font-medium px-3 py-2 text-right whitespace-nowrap">Sold for</th>
-                <th className="font-medium px-3 py-2 text-right whitespace-nowrap">Per night</th>
-              </tr>
-            </thead>
-            <tbody>
-              {a.listings.map((l) =>
-              <tr key={l.name} className="border-t border-[#F0F0F0]">
-                  <td className={`px-3 py-2 ${l.is_own ? 'font-semibold' : ''}`}>
-                    {l.name}
-                    {l.is_benchmark && <span className="ml-1.5 text-[11px] font-semibold text-[#FF385C]">BENCHMARK</span>}
-                    {l.is_leader && <span className="ml-1.5 text-[11px] font-semibold text-[#C9A227]">PRICE LEADER</span>}
-                    {l.is_own && <span className="ml-1.5 text-[11px] font-semibold text-[#0F6E56]">YOURS</span>}
-                  </td>
-                  <td className="px-3 py-2 text-right tabular-nums">{l.bookings}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{l.nights}</td>
-                  <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{money(l.revenue, a.currency)}{l.estimated && l.revenue != null ? '*' : ''}</td>
-                  <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{money(l.avg_nightly, a.currency)}</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-        <p className="text-[12px] text-[#B0B0B0] mt-1.5">
-          * Estimated from the competitor's quote nearest in date where the sold nights were not quoted. Competitor figures are Airbnb asking prices, before fees; yours are what guests paid, from Smoobu. The price leader counts in every list but not in the per-night averages.
-        </p>
-      </div>
-    </section>);
+      <PeriodList key={view} a={a} view={view} exporting={false} />
+    </div>);
 }
 
-export function PeerAnalysis({ propertyId = 0 }: { propertyId?: number }) {
-  const [data, setData] = useState<Analysis[] | null>(null);
-  useEffect(() => {
-    apiGet<{ properties: Analysis[] }>('/api/peers/analysis')
-      .then((d) => setData(d.properties))
-      .catch(() => setData([]));
-  }, []);
-  if (!data) return null;
-  const shown = data.filter((a) => (!propertyId || a.id === propertyId) && a.total.bookings > 0);
-  if (!shown.length) return null;
-  return <div className="space-y-8">{shown.map((a) => <OneProperty key={a.id} a={a} />)}</div>;
+/** The totals since the watch began, theirs and ours, in two lines. */
+export function SalesTotals({ a }: { a: Analysis }) {
+  return (
+    <div className="text-[13px] leading-[1.5]">
+      <div><span className="text-[#717171]">Competitors{a.since ? ` since ${day(a.since)}` : ''}: </span><Figures p={a.total} currency={a.currency} /></div>
+      <div><span className="text-[#0F6E56] font-semibold">You, all channels: </span><Figures p={a.you} currency={a.currency} /></div>
+    </div>);
 }
+
+export function Suggestions({ a }: { a: Analysis }) {
+  if (!a.suggestions.length) return null;
+  return (
+    <div className={`${card} divide-y divide-[#F0F0F0]`}>
+      {a.suggestions.map((s, i) =>
+      <div key={i} className="px-4 py-3 flex gap-3 text-[14px] text-[#222222]">
+          <Lightbulb className="w-4 h-4 text-[#C9A227] shrink-0 mt-0.5" />
+          <span>{s.text}</span>
+        </div>
+      )}
+    </div>);
+}
+
+export const ESTIMATE_NOTE =
+  "* Estimated from the competitor's quote nearest in date where the sold nights were not quoted. Competitor figures are Airbnb asking prices before fees; yours are what guests paid, from Smoobu. A price leader asks more than twice the competitors' median: it counts in every list but not in the per-night averages or the suggestions.";
