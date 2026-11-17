@@ -36,6 +36,47 @@ const SIGNS: Record<string, string> = { ZAR: 'R', EUR: '€', USD: '$', GBP: '£
 const money = (n: number | null | undefined, c: string) =>
   n == null ? '–' : `${SIGNS[c] || `${c} `}${String(Math.round(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}`;
 const day = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' });
+// The run is scheduled at 08:30 on the server's clock (UTC); shown in the
+// viewer's own time.
+const RUN_TIME = new Date(Date.UTC(2026, 0, 1, 8, 30)).toLocaleTimeString('en-ZA', { hour: '2-digit', minute: '2-digit' });
+
+function ConfirmPanel({ kind, name, from, off, form, changes, money, onCancel, onConfirm }: {
+  kind: 'save' | 'send'; name?: string; from: string | null; off: boolean; form: Settings;
+  changes: { up: number; down: number }; money: (n: number) => string;
+  onCancel: () => void; onConfirm: () => void;
+}) {
+  const floors = Object.entries(form.floors || {}).map(([m, v]) => `${MONTHS[Number(m) - 1]} ${money(v)}`).join(', ');
+  const limits = [
+    form.floor ? `never below ${money(form.floor)}${floors ? ` (${floors})` : ''}` : floors ? `floors ${floors}` : null,
+    form.ceiling ? `never above ${money(form.ceiling)}` : null,
+    `at most ${form.max_step}% a day`,
+  ].filter(Boolean).join(', ');
+  const moving = changes.up + changes.down;
+  let title: string, body: string, action: string;
+  if (off) {
+    title = 'Switch automatic pricing off?';
+    body = 'Your prices stay exactly as they are now. Nothing more is sent to Smoobu until you switch it on again.';
+    action = 'Switch off';
+  } else if (kind === 'send') {
+    title = `Send new prices to Smoobu now (${name?.toLowerCase()})?`;
+    body = `About ${moving} night${moving === 1 ? '' : 's'} change on your live calendar straight away — ${changes.up} up, ${changes.down} down — within your limits: ${limits}. Booked and blocked nights are not touched.`;
+    action = 'Send now';
+  } else {
+    title = from ? `Change automatic pricing from ${from.toLowerCase()} to ${name?.toLowerCase()}?` : `Switch automatic pricing on: ${name?.toLowerCase()}?`;
+    body = `From the next run at ${RUN_TIME}, it sends new prices to Smoobu every morning by itself. About ${moving} night${moving === 1 ? '' : 's'} would change at today's market — ${changes.up} up, ${changes.down} down — within your limits: ${limits}. Booked and blocked nights are never touched; you are told what changed after each run.`;
+    action = from ? 'Change it' : 'Switch on';
+  }
+  return (
+    <div role="alertdialog" aria-label={title} className="rounded-[10px] border border-[#222222] bg-[#FAFAFA] p-3">
+      <div className="text-[14px] font-semibold text-[#222222]">{title}</div>
+      <p className="text-[13px] text-[#717171] mt-1">{body}</p>
+      <div className="flex gap-2 mt-3">
+        <button onClick={onConfirm} className={`px-4 h-[36px] rounded-[8px] text-white text-[14px] font-semibold ${off ? 'bg-[#C13515]' : 'bg-[#222222]'}`}>{action}</button>
+        <button onClick={onCancel} className="px-4 h-[36px] rounded-[8px] border border-[#DDDDDD] bg-white text-[14px] font-semibold">Cancel</button>
+      </div>
+    </div>);
+}
+
 const BLURB: Record<Exclude<Mode, 'off'>, string> = {
   occupancy: 'Cheaper, to fill the calendar. Counts a sale four times over.',
   balanced: 'A little under the top price, surer to sell. Counts a sale twice.',
@@ -49,6 +90,9 @@ export function AutoPricing({ propertyId }: { propertyId: number }) {
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const [all, setAll] = useState(false);
+  // Switching on, off or to another mode, and sending now, each wait for
+  // a second tap: prices on a live calendar change without anyone looking.
+  const [confirming, setConfirming] = useState<null | 'save' | 'send'>(null);
 
   const load = useCallback(() => {
     if (!propertyId) return;
@@ -74,7 +118,7 @@ export function AutoPricing({ propertyId }: { propertyId: number }) {
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) { setNote(body.error || 'Could not save.'); return; }
-      setNote(form.mode === 'off' ? 'Saved. Automatic pricing is off.' : 'Saved. It runs every morning at 08:30.');
+      setNote(form.mode === 'off' ? 'Saved. Automatic pricing is off.' : `Saved. It runs every morning at ${RUN_TIME}.`);
       load();
     } finally { setBusy(false); }
   };
@@ -87,6 +131,19 @@ export function AutoPricing({ propertyId }: { propertyId: number }) {
       setNote(res.ok ? `Sent: ${body.changed} night${body.changed === 1 ? '' : 's'} repriced, ${body.up} up, ${body.down} down.` : body.error || 'Could not run.');
       load();
     } finally { setBusy(false); }
+  };
+  // Roughly how many nights a mode would move: the next run's own rule,
+  // a change of 2% or more, worked out here for a mode not yet saved.
+  const changesFor = (mode: Mode) => {
+    if (mode === 'off') return { up: 0, down: 0 };
+    let up = 0, down = 0;
+    for (const n of data.nights) {
+      const r = n.recommended && n.recommended[mode as Exclude<Mode, 'off'>];
+      if (!r || !n.current) continue;
+      if (r.rate >= n.current * 1.02) up++;
+      else if (r.rate <= n.current * 0.98) down++;
+    }
+    return { up, down };
   };
   const set = (k: keyof Settings, v: string) => setForm({ ...form, [k]: k === 'mode' ? v : v === '' ? null : Number(v) } as Settings);
   const setMonth = (m: number, v: string) => {
@@ -186,23 +243,36 @@ export function AutoPricing({ propertyId }: { propertyId: number }) {
 
         <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={save}
-            disabled={busy || !dirty}
+            onClick={() => (form.mode !== saved.mode ? setConfirming('save') : save())}
+            disabled={busy || !dirty || confirming != null}
             className="px-4 h-[38px] rounded-[8px] bg-[#222222] text-white text-[14px] font-semibold disabled:opacity-40">
             Save
           </button>
           {saved.mode !== 'off' &&
           <button
-            onClick={runNow}
-            disabled={busy || dirty}
+            onClick={() => setConfirming('send')}
+            disabled={busy || dirty || confirming != null}
             className="px-4 h-[38px] rounded-[8px] border border-[#DDDDDD] bg-white text-[14px] font-semibold flex items-center gap-1.5 disabled:opacity-40">
               <Zap className="w-4 h-4" /> Send now
             </button>
           }
           <span className="text-[13px] text-[#717171]">
-            {note || (saved.mode === 'off' ? 'Off.' : `On: ${data.modes.find((m) => m.key === saved.mode)?.label.toLowerCase()}, every morning at 08:30.`)}
+            {note || (saved.mode === 'off' ? 'Off.' : `On: ${data.modes.find((m) => m.key === saved.mode)?.label.toLowerCase()}, every morning at ${RUN_TIME}.`)}
           </span>
         </div>
+
+        {confirming &&
+        <ConfirmPanel
+          kind={confirming}
+          name={data.modes.find((m) => m.key === (confirming === 'send' ? saved.mode : form.mode))?.label}
+          from={saved.mode === 'off' ? null : data.modes.find((m) => m.key === saved.mode)?.label || null}
+          off={confirming === 'save' && form.mode === 'off'}
+          form={confirming === 'send' ? saved : form}
+          changes={changesFor(confirming === 'send' ? saved.mode : form.mode)}
+          money={(n) => money(n, c)}
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => { setConfirming(null); if (confirming === 'send') runNow(); else save(); }} />
+        }
       </div>
 
       {/* Night by night. */}
