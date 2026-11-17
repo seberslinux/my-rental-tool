@@ -1040,6 +1040,36 @@ async function runMigrations() {
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_peer_listing_snapshots ON peer_listing_snapshots (listing_id, taken_at DESC)`);
 
+  // Automatic pricing: one row of settings per property, off until a mode
+  // is chosen, and every price it ever sent, kept for good.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS auto_pricing (
+      property_id INTEGER PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
+      mode TEXT NOT NULL DEFAULT 'off',
+      floor REAL,
+      ceiling REAL,
+      max_step REAL NOT NULL DEFAULT 15,
+      horizon INTEGER NOT NULL DEFAULT 180,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS price_changes (
+      id BIGSERIAL PRIMARY KEY,
+      property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+      date TEXT NOT NULL,
+      old_price REAL,
+      new_price REAL NOT NULL,
+      mode TEXT,
+      market REAL,
+      fullness INTEGER,
+      chance REAL,
+      source TEXT NOT NULL DEFAULT 'auto',
+      changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_price_changes ON price_changes (property_id, changed_at DESC)`);
+
   // What was already gathered becomes the start of the record, once.
   await pool.query(`
     INSERT INTO peer_price_history (listing_id, check_in, nights, kind, nightly, total, quoted_at)

@@ -23,6 +23,7 @@ const { getUpcomingSchoolHolidays } = require('../services/school-holidays');
 const { getApiKeyForProperty } = require('../services/api-key-resolver');
 // One place decides who gets told what.
 const { notify } = require('../services/notify');
+const { MODES: PRICING_MODES, pricePlan, targetFor, runAutoPricing } = require('../services/dynamic-pricing');
 
 // Apply property scoping to all routes
 router.use(scopeProperties);
@@ -690,6 +691,75 @@ router.post('/:id/rate-plan/apply', async (req, res) => {
   }
 
   res.json({ ok: true, applied, skipped: rows.length - applied });
+});
+
+/**
+ * Automatic pricing: the three recommendations for every open night, what
+ * each would earn, the settings, and the last changes it sent.
+ */
+router.get('/:id/auto-pricing', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  try {
+    const plan = await pricePlan(Number(req.params.id));
+    if (!plan) return res.status(404).json({ error: 'Property not found' });
+    const changes = await getAll(
+      `SELECT date, old_price, new_price, mode, market, fullness, chance, source, changed_at
+         FROM price_changes WHERE property_id = $1 ORDER BY changed_at DESC, date LIMIT 60`,
+      [req.params.id]
+    );
+    res.json({
+      modes: Object.entries(PRICING_MODES).map(([key, m]) => ({ key, label: m.label })),
+      settings: plan.settings,
+      currency: plan.property.currency,
+      factor: plan.factor,
+      factor_measured: plan.factor_measured,
+      totals: plan.totals,
+      open_nights: plan.open_nights,
+      priced_nights: plan.priced_nights,
+      nights: plan.nights.map((n) => ({ ...n, target: targetFor(n, plan.settings, plan.property.currency) })),
+      changes,
+    });
+  } catch (err) {
+    console.error('Auto pricing read failed:', err.message);
+    res.status(500).json({ error: 'Could not work out the prices' });
+  }
+});
+
+router.put('/:id/auto-pricing', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  const b = req.body || {};
+  const mode = b.mode || 'off';
+  if (mode !== 'off' && !PRICING_MODES[mode]) return res.status(400).json({ error: `Unknown mode: ${mode}` });
+  const num = (v) => (v === '' || v == null ? null : Number(v));
+  const floor = num(b.floor), ceiling = num(b.ceiling), step = num(b.max_step) ?? 15, horizon = num(b.horizon) ?? 180;
+  if (floor != null && !(floor > 0)) return res.status(400).json({ error: 'The floor must be above zero' });
+  if (mode !== 'off' && floor == null) return res.status(400).json({ error: 'Set a floor before switching automatic pricing on' });
+  if (ceiling != null && floor != null && ceiling <= floor) return res.status(400).json({ error: 'The ceiling must be above the floor' });
+  if (!(step >= 1 && step <= 50)) return res.status(400).json({ error: 'The daily limit must be between 1% and 50%' });
+  if (!(horizon >= 14 && horizon <= 180)) return res.status(400).json({ error: 'Price between 14 and 180 days ahead' });
+  await run(
+    `INSERT INTO auto_pricing (property_id, mode, floor, ceiling, max_step, horizon, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NOW())
+     ON CONFLICT (property_id) DO UPDATE SET mode = EXCLUDED.mode, floor = EXCLUDED.floor, ceiling = EXCLUDED.ceiling,
+       max_step = EXCLUDED.max_step, horizon = EXCLUDED.horizon, updated_at = NOW()`,
+    [req.params.id, mode, floor, ceiling, step, horizon]
+  );
+  res.json({ ok: true });
+});
+
+/** Run it now for this property, as the morning run would. */
+router.post('/:id/auto-pricing/run', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  try {
+    const [r] = await runAutoPricing({ propertyId: Number(req.params.id) });
+    if (!r) return res.status(400).json({ error: 'Automatic pricing is off for this property' });
+    if (r.skipped) return res.status(400).json({ error: r.skipped });
+    if (r.error) return res.status(502).json({ error: `Smoobu refused it: ${r.error}`, changed: r.changed });
+    res.json({ ok: true, ...r });
+  } catch (err) {
+    console.error('Auto pricing run failed:', err.message);
+    res.status(500).json({ error: 'Could not run automatic pricing' });
+  }
 });
 
 router.put('/:id/rates', async (req, res) => {
