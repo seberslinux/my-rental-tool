@@ -143,7 +143,7 @@ function PositionChart({ row, height }: { row: PeerSummaryRow; height: number })
       </p>
       {leaders.length > 0 &&
       <button
-        data-no-export
+       
         onClick={(e) => { e.stopPropagation(); setHideLeaders((v) => !v); }}
         className="mt-1.5 text-[12px] font-semibold text-[#222222] underline underline-offset-2">
           {hideLeaders ? `Show ${leaders.map((l) => l.name).join(', ')}` : `Hide the price leader (${leaders.map((l) => l.name).join(', ')})`}

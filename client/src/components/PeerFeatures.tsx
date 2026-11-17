@@ -84,7 +84,7 @@ export function FeaturesBlock({ p, isAdmin }: { p: FeatureProps; isAdmin: boolea
       <section className="space-y-2">
         <h3 className="text-[16px] font-semibold text-[#222222]">What features earn</h3>
         <p className="text-[13px] text-[#717171]">The listings' details are read once a week. None read yet.</p>
-        {isAdmin && <button data-no-export onClick={readNow} className="px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] bg-white text-[13px] font-semibold">Read listing details now</button>}
+        {isAdmin && <button onClick={readNow} className="px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] bg-white text-[13px] font-semibold">Read listing details now</button>}
         {busy && <p className="text-[13px] text-[#717171]">{busy}</p>}
       </section>);
   }
@@ -168,10 +168,10 @@ export function FeaturesBlock({ p, isAdmin }: { p: FeatureProps; isAdmin: boolea
     </section>);
 }
 
-/** Everything the watch has gathered, as CSV. For us, not for a saved copy. */
+/** Everything the watch has gathered, as CSV. */
 export function RecordDownloads() {
   return (
-    <section data-no-export>
+    <section>
       <div className={label}>The record</div>
       <div className={`${card} px-4 py-3`}>
         <p className="text-[13px] text-[#717171] mb-2">Everything the watch has gathered, kept for good. Download as CSV:</p>

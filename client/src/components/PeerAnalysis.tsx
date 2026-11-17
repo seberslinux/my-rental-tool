@@ -70,9 +70,8 @@ function SaleLine({ s, currency }: { s: Sale; currency: string }) {
 type View = 'week' | 'month' | 'season';
 const VIEWS: [View, string][] = [['week', 'Per week'], ['month', 'Per month'], ['season', 'Per season']];
 
-function PeriodList({ a, view, exporting }: { a: Analysis; view: View; exporting: boolean }) {
-  // The latest week opens by itself; the rest on a tap. A saved copy
-  // opens them all, since nobody can tap a file.
+function PeriodList({ a, view }: { a: Analysis; view: View }) {
+  // The latest week opens by itself; the rest on a tap.
   const [open, setOpen] = useState<Set<string>>(() => new Set(a.weeks.length ? [a.weeks[0].week] : []));
   const rows: { key: string; label: string; p: Period; you?: Period; sales?: Sale[] }[] =
   view === 'week' ? a.weeks.map((w) => ({ key: w.week, label: `Booked ${weekSpan(w.week)}`, p: w, you: w.you, sales: w.sales })) :
@@ -83,7 +82,7 @@ function PeriodList({ a, view, exporting }: { a: Analysis; view: View; exporting
     <div className={`${card} divide-y divide-[#F0F0F0]`}>
       {rows.map((r) => {
         const expandable = Boolean(r.sales && r.sales.length);
-        const isOpen = expandable && (exporting || open.has(r.key));
+        const isOpen = expandable && open.has(r.key);
         const Chevron = isOpen ? ChevronDown : ChevronRight;
         return (
           <div key={r.key} className="px-4 py-3">
@@ -92,7 +91,7 @@ function PeriodList({ a, view, exporting }: { a: Analysis; view: View; exporting
               disabled={!expandable}
               onClick={() => toggle(r.key)}
               className="w-full text-left flex items-center gap-1.5 text-[14px] font-semibold text-[#222222]">
-              {expandable && <Chevron data-no-export className="w-4 h-4 text-[#B0B0B0] shrink-0" />}
+              {expandable && <Chevron className="w-4 h-4 text-[#B0B0B0] shrink-0" />}
               {r.label}
             </button>
             <div className="mt-1 text-[13px] text-[#222222] leading-[1.5]">
@@ -110,20 +109,9 @@ function PeriodList({ a, view, exporting }: { a: Analysis; view: View; exporting
     </div>);
 }
 
-/** Week, month or season, with a switch; every one of them in a saved copy. */
-export function SalesByPeriod({ a, exporting = false }: { a: Analysis; exporting?: boolean }) {
+/** Week, month or season, with a switch. */
+export function SalesByPeriod({ a }: { a: Analysis }) {
   const [view, setView] = useState<View>('week');
-  if (exporting) {
-    return (
-      <div className="space-y-4">
-        {VIEWS.map(([v, name]) =>
-        <div key={v}>
-            <div className="text-[13px] font-semibold text-[#717171] pb-1.5">{name}</div>
-            <PeriodList a={a} view={v} exporting />
-          </div>
-        )}
-      </div>);
-  }
   return (
     <div className="space-y-2">
       <div className="flex gap-1 bg-[#EFEFEF] rounded-[10px] p-1 w-fit">
@@ -136,7 +124,7 @@ export function SalesByPeriod({ a, exporting = false }: { a: Analysis; exporting
           </button>
         )}
       </div>
-      <PeriodList key={view} a={a} view={view} exporting={false} />
+      <PeriodList key={view} a={a} view={view} />
     </div>);
 }
 
