@@ -15,11 +15,12 @@
  *
  * ## The model
  *
- * For a night, the market is the competitors' nightly rate for that date
- * (their quotes for the nearest stay of the same kind, weekend or
- * weekday, the price leader left out, each with its own cleaning fee and
- * the service fee taken off) and how full they are that night. Our rate
- * is set against it as a ratio, r = our nightly rate / market.
+ * For a night, the market is what a typical stay costs at the competitors
+ * for that date — their quotes for the nearest stay of the same kind,
+ * weekend or weekday, rebuilt for our typical stay length with each one's
+ * own cleaning fee, the price leader left out — and how full they are
+ * that night. Our total for the same stay is set against it as a ratio,
+ * r = our stay total / market, and the rate is what makes that total.
  *
  * The chance of selling is  P · 1 / (1 + (r / r50)^S).
  *
@@ -210,15 +211,18 @@ async function pricePlan(propertyId, { today = new Date().toISOString().slice(0,
     takenOn.set(c.date, t);
   }
 
-  // Prices compared as nightly rates, theirs and ours alike. Airbnb shows
-  // a stay all-in — the nights, the cleaning fee and its own fees — so a
-  // quote is taken apart the same way for everybody: the one-off cleaning
-  // fee off, the rest over the nights, the service fee off. What is left
-  // is the nightly rate, the number we set in Smoobu; for us, the cleaning
-  // and the markup are added back on the way to the guest.
+  // A guest compares what the whole stay costs, so that is what competes:
+  // the total for a typical stay, ours against theirs, cleaning and all.
+  // A competitor's quote is taken apart — its own one-off cleaning fee off,
+  // the rest over the nights — and put back together for the typical
+  // stay. Ours is our rate with the channel markup, times the nights, plus
+  // our cleaning. A dear cleaning fee then counts against us exactly as it
+  // does with a guest, and a stay twice as long halves its weight.
   //
   // Each competitor's own cleaning fee, measured weekly; one not yet
-  // measured takes the competitors' average, and failing that ours.
+  // measured takes the competitors' average, and failing that ours. Ours
+  // is what our own listing measures — what a guest pays on top of the
+  // nights — or, until then, what our quotes imply.
   const markup = 1 + (Number(property.guest_markup_airbnb) || 0) / 100;
   const { cleaningFees } = require('./peer-cleaning');
   const fees = await cleaningFees([Number(propertyId)]);
@@ -235,9 +239,20 @@ async function pricePlan(propertyId, { today = new Date().toISOString().slice(0,
   const peerAverage = fees.average.get(Number(propertyId));
   const cleaningOf = (listingId) => (fees.byListing.has(listingId) ? fees.byListing.get(listingId).fee
     : peerAverage ? peerAverage.average : ownCleaning);
-  const nightlyRate = (q) => Math.max(0, (q.nightly * q.nights - cleaningOf(q.listing_id)) / q.nights / markup);
-  // What a guest sees a night of ours at, on a two-night stay.
-  const guestNight = (rate) => rate * markup + ownCleaning / STAY_NIGHTS;
+  // The typical stay: the median of our own bookings over the last year.
+  const stayRow = await getOne(
+    `SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY length_of_stay) AS n FROM bookings
+      WHERE property_id = $1 AND status = 'confirmed' AND COALESCE(platform, '') NOT ILIKE 'blocked%'
+        AND length_of_stay BETWEEN 1 AND 30 AND substring(check_in, 1, 10) >= $2`,
+    [propertyId, addDays(today, -365)]
+  );
+  const stay = clamp(Math.round(Number(stayRow && stayRow.n) || STAY_NIGHTS), 2, 7);
+  const theirStay = (q) => {
+    const cleaning = cleaningOf(q.listing_id);
+    return Math.max(0, (q.nightly * q.nights - cleaning) / q.nights) * stay + cleaning;
+  };
+  const ourStay = (rate) => rate * markup * stay + ownCleaning;
+  const rateFor = (total) => Math.max(0, (total - ownCleaning) / (markup * stay));
 
   const rates = await getAll(
     `SELECT date, price, available FROM daily_rates WHERE property_id = $1 AND date BETWEEN $2 AND $3 ORDER BY date`,
@@ -263,10 +278,9 @@ async function pricePlan(propertyId, { today = new Date().toISOString().slice(0,
       const gap = Math.abs(daysBetween(q.check_in, date));
       if (gap > 10) continue;
       const seen = near.get(q.listing_id);
-      if (!seen || gap < seen.gap) near.set(q.listing_id, { gap, nightly: q.nightly, rate: nightlyRate(q) });
+      if (!seen || gap < seen.gap) near.set(q.listing_id, { gap, total: theirStay(q) });
     }
-    const market = median([...near.values()].map((v) => v.rate));
-    const marketAllIn = median([...near.values()].map((v) => v.nightly));
+    const market = median([...near.values()].map((v) => v.total));
     const full = takenOn.get(date);
     const current = Number(r.price) || null;
     const base = { date, kind, current, competitors: near.size, floor: floorFor(date, s) };
@@ -276,17 +290,23 @@ async function pricePlan(propertyId, { today = new Date().toISOString().slice(0,
     }
     const fullness = full.taken / full.of;
     const lead = daysBetween(today, date);
-    const rec = recommendNight({ market, fullness, lead, floor: floorFor(date, s) || 0, ceiling: s.ceiling || Infinity });
+    const rec = recommendNight({
+      market, fullness, lead,
+      floor: floorFor(date, s) ? ourStay(floorFor(date, s)) : 0,
+      ceiling: s.ceiling ? ourStay(s.ceiling) : Infinity,
+    });
     if (!rec) { nights.push({ ...base, skip: 'floor above ceiling' }); continue; }
     nights.push({
       ...base,
       lead,
-      market: round(marketAllIn),
-      market_rate: round(market),
+      // The competitors' typical stay in total, and what that is in our rate.
+      market: round(market),
+      market_rate: round(rateFor(market)),
+      ours_total: current ? round(ourStay(current)) : null,
       fullness: Math.round(fullness * 100),
-      current_chance: current ? chanceAt(current / market, fullness, lead) : null,
+      current_chance: current ? chanceAt(ourStay(current) / market, fullness, lead) : null,
       recommended: Object.fromEntries(Object.entries(rec).map(([m, v]) => [m, {
-        rate: round(v.price), guest: round(guestNight(v.price)), chance: Math.round(v.chance * 100) / 100,
+        rate: round(rateFor(v.price)), total: round(v.price), chance: Math.round(v.chance * 100) / 100,
       }])),
     });
   }
@@ -312,6 +332,7 @@ async function pricePlan(propertyId, { today = new Date().toISOString().slice(0,
     conversion: {
       markup: Math.round((markup - 1) * 1000) / 10,
       cleaning: Math.round(ownCleaning),
+      stay,
       competitors_cleaning: peerAverage ? peerAverage.average : null,
       competitors_measured: peerAverage ? peerAverage.measured : 0,
     },

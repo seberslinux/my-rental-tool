@@ -17,7 +17,7 @@ type Mode = 'off' | 'occupancy' | 'balanced' | 'revenue';
 interface Rec { rate: number; chance: number; }
 interface Night {
   date: string; kind: string; current: number | null; competitors: number; floor?: number | null; skip?: string;
-  lead?: number; market?: number; market_rate?: number; fullness?: number;
+  lead?: number; market?: number; market_rate?: number; ours_total?: number | null; fullness?: number;
   recommended?: Record<Exclude<Mode, 'off'>, Rec>; target: number | null;
 }
 interface Settings { mode: Mode; floor: number | null; floors: Record<number, number>; ceiling: number | null; max_step: number; horizon: number; }
@@ -25,7 +25,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 interface Change { date: string; old_price: number | null; new_price: number; mode: string; market: number | null; fullness: number | null; changed_at: string; }
 interface Data {
   modes: { key: Exclude<Mode, 'off'>; label: string }[];
-  settings: Settings; currency: string; conversion: { markup: number; cleaning: number; competitors_cleaning: number | null; competitors_measured: number };
+  settings: Settings; currency: string; conversion: { markup: number; cleaning: number; stay: number; competitors_cleaning: number | null; competitors_measured: number };
   totals: Record<'current' | Exclude<Mode, 'off'>, { nights: number; money: number }>;
   open_nights: number; priced_nights: number; nights: Night[]; changes: Change[];
 }
@@ -224,7 +224,7 @@ export function AutoPricing({ propertyId }: { propertyId: number }) {
                     </span>
                   </div>
                   <div className="text-[12px] text-[#717171] tabular-nums">
-                    Market {money(n.market_rate, c)} · {n.fullness}% of competitors full · {n.lead} days out{n.floor ? ` · floor ${money(n.floor, c)}` : ''}
+                    {data.conversion.stay} nights: competitors {money(n.market, c)}, yours {money(n.ours_total, c)} · {n.fullness}% of competitors full · {n.lead} days out{n.floor ? ` · floor ${money(n.floor, c)}` : ''}
                   </div>
                   <div className="text-[12px] text-[#222222] tabular-nums">
                     Most nights {money(r.occupancy.rate, c)} <span className="text-[#B0B0B0]">({Math.round(r.occupancy.chance * 100)}%)</span>
@@ -236,10 +236,11 @@ export function AutoPricing({ propertyId }: { propertyId: number }) {
           </div>
           <p className="text-[12px] text-[#B0B0B0] mt-1.5">
             Prices in your rate. The market is the competitors' median asking price for the nearest stay of the same kind,
-            the price leader left out. Airbnb shows every listing all-in, so each quote is taken apart the same way: its own
-            one-off cleaning fee off (measured weekly{data.conversion.competitors_cleaning != null ? `; competitors average ${money(data.conversion.competitors_cleaning, c)} over ${data.conversion.competitors_measured}` : ''}),
-            the rest over the nights, the {data.conversion.markup}% service fee off. Your rate is compared on the same footing; a guest
-            sees it with the markup and your {money(data.conversion.cleaning, c)} cleaning added back.
+            the price leader left out. A guest compares what the whole stay costs, so totals compete: the competitors'
+            median for a {data.conversion.stay}-night stay (your typical stay), each with its own cleaning fee
+            {data.conversion.competitors_cleaning != null ? `(average ${money(data.conversion.competitors_cleaning, c)}, measured weekly)` : ''},
+            against yours: your rate with the {data.conversion.markup}% markup over {data.conversion.stay} nights plus your {money(data.conversion.cleaning, c)} cleaning.
+            The prices shown are the rates that make each total.
           </p>
           {!all && data.priced_nights > shown.length &&
           <button onClick={() => setAll(true)} className="mt-1 text-[13px] font-semibold underline underline-offset-2">Show all {data.priced_nights} nights</button>
