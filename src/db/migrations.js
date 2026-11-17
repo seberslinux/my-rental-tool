@@ -1069,6 +1069,8 @@ async function runMigrations() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_price_changes ON price_changes (property_id, changed_at DESC)`);
+  // A floor per month, where set; the general floor covers the rest.
+  await pool.query(`ALTER TABLE auto_pricing ADD COLUMN IF NOT EXISTS floors JSONB NOT NULL DEFAULT '{}'::jsonb`);
 
   // What was already gathered becomes the start of the record, once.
   await pool.query(`

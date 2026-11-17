@@ -16,11 +16,12 @@ import { apiGet } from '../data/session';
 type Mode = 'off' | 'occupancy' | 'balanced' | 'revenue';
 interface Rec { rate: number; chance: number; }
 interface Night {
-  date: string; kind: string; current: number | null; competitors: number; skip?: string;
+  date: string; kind: string; current: number | null; competitors: number; floor?: number | null; skip?: string;
   lead?: number; market?: number; market_rate?: number; fullness?: number;
   recommended?: Record<Exclude<Mode, 'off'>, Rec>; target: number | null;
 }
-interface Settings { mode: Mode; floor: number | null; ceiling: number | null; max_step: number; horizon: number; }
+interface Settings { mode: Mode; floor: number | null; floors: Record<number, number>; ceiling: number | null; max_step: number; horizon: number; }
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 interface Change { date: string; old_price: number | null; new_price: number; mode: string; market: number | null; fullness: number | null; changed_at: string; }
 interface Data {
   modes: { key: Exclude<Mode, 'off'>; label: string }[];
@@ -88,6 +89,11 @@ export function AutoPricing({ propertyId }: { propertyId: number }) {
     } finally { setBusy(false); }
   };
   const set = (k: keyof Settings, v: string) => setForm({ ...form, [k]: k === 'mode' ? v : v === '' ? null : Number(v) } as Settings);
+  const setMonth = (m: number, v: string) => {
+    const floors = { ...form.floors };
+    if (v === '') delete floors[m]; else floors[m] = Number(v);
+    setForm({ ...form, floors });
+  };
 
   const shown = data.nights.filter((n) => n.recommended).slice(0, all ? undefined : 21);
   const current = data.totals.current;
@@ -141,11 +147,11 @@ export function AutoPricing({ propertyId }: { propertyId: number }) {
         {/* Guardrails. */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {([
-            ['floor', 'Never below', 'rate'],
+            ['floor', 'Floor, other months', 'rate'],
             ['ceiling', 'Never above', 'no limit'],
             ['max_step', 'Move at most, per day', '%'],
             ['horizon', 'Days ahead', 'days'],
-          ] as [keyof Settings, string, string][]).map(([k, l, ph]) =>
+          ] as [Exclude<keyof Settings, 'mode' | 'floors'>, string, string][]).map(([k, l, ph]) =>
           <label key={k} className="block">
               <span className="block text-[12px] text-[#717171] mb-1">{l}{k === 'max_step' ? ' (%)' : ''}</span>
               <input
@@ -156,8 +162,26 @@ export function AutoPricing({ propertyId }: { propertyId: number }) {
             </label>
           )}
         </div>
-        {form.mode !== 'off' && !form.floor &&
-        <p className="text-[13px] text-[#C13515] flex items-center gap-1.5"><AlertCircle className="w-4 h-4" /> Set a floor before switching it on.</p>
+
+        {/* A floor per month: summer and winter are not the same night. */}
+        <div>
+          <div className="text-[12px] text-[#717171] mb-1">Floor by month — leave a month blank to use the floor above</div>
+          <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+            {MONTHS.map((name, i) =>
+            <label key={name} className="block">
+                <span className="block text-[11px] text-[#717171] mb-0.5">{name}</span>
+                <input
+                type="number" inputMode="numeric" placeholder={form.floor ? String(form.floor) : '–'}
+                value={form.floors[i + 1] ?? ''}
+                onChange={(e) => setMonth(i + 1, e.target.value)}
+                aria-label={`Floor for ${name}`}
+                className="w-full h-[34px] px-1.5 border border-[#DDDDDD] rounded-[8px] text-[13px] tabular-nums" />
+              </label>
+            )}
+          </div>
+        </div>
+        {form.mode !== 'off' && !form.floor && MONTHS.some((_, i) => !form.floors[i + 1]) &&
+        <p className="text-[13px] text-[#C13515] flex items-center gap-1.5"><AlertCircle className="w-4 h-4" /> Set a floor for the other months before switching it on.</p>
         }
 
         <div className="flex flex-wrap items-center gap-2">
@@ -200,7 +224,7 @@ export function AutoPricing({ propertyId }: { propertyId: number }) {
                     </span>
                   </div>
                   <div className="text-[12px] text-[#717171] tabular-nums">
-                    Market {money(n.market_rate, c)} · {n.fullness}% of competitors full · {n.lead} days out
+                    Market {money(n.market_rate, c)} · {n.fullness}% of competitors full · {n.lead} days out{n.floor ? ` · floor ${money(n.floor, c)}` : ''}
                   </div>
                   <div className="text-[12px] text-[#222222] tabular-nums">
                     Most nights {money(r.occupancy.rate, c)} <span className="text-[#B0B0B0]">({Math.round(r.occupancy.chance * 100)}%)</span>

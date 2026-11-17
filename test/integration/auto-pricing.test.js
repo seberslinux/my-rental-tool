@@ -144,3 +144,27 @@ test('when Smoobu refuses, it stops and says so', async () => {
   const logged = await pool.query('SELECT COUNT(*)::int AS n FROM price_changes');
   assert.equal(logged.rows[0].n, 0, 'nothing logged that was not sent');
 });
+
+test("each month keeps its own floor", async () => {
+  const { admin, lodge } = await setup();
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const month = Number(inDays(1).slice(5, 7));
+  await agent.put(`/api/properties/${lodge.id}/auto-pricing`)
+    .send({ mode: 'occupancy', floor: 1200, floors: { [month]: 2200 }, max_step: 50, horizon: DAYS }).expect(200);
+  await agent.put(`/api/properties/${lodge.id}/auto-pricing`)
+    .send({ mode: 'occupancy', floor: 1200, floors: { [month]: 2200 }, ceiling: 2100 }).expect(400, /above every floor/);
+  await agent.put(`/api/properties/${lodge.id}/auto-pricing`)
+    .send({ mode: 'occupancy', floors: { [month]: 2200 } }).expect(400, /every month/);
+
+  const r = recorder();
+  await runAutoPricing({ today, setRates: r.setRates, notifyImpl: noNotes });
+  const sent = r.calls.flatMap((c) => c.dates.map((d) => ({ d, price: c.price })));
+  const inMonth = sent.filter((x) => Number(x.d.slice(5, 7)) === month);
+  assert.ok(inMonth.length > 0);
+  assert.ok(inMonth.every((x) => x.price >= 2200), 'this month never under its own floor');
+  assert.ok(sent.filter((x) => Number(x.d.slice(5, 7)) !== month).every((x) => x.price >= 1200), 'the rest under the general one');
+
+  const { body } = await agent.get(`/api/properties/${lodge.id}/auto-pricing`).expect(200);
+  assert.deepEqual(body.settings.floors, { [month]: 2200 });
+});

@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { recommendNight, targetFor } = require('../src/services/dynamic-pricing');
+const { recommendNight, targetFor, floorFor, hasFloor } = require('../src/services/dynamic-pricing');
 
 /**
  * The pricing model on its own: three prices for a night, from the
@@ -53,4 +53,21 @@ test('what is sent: within the daily step, above the floor, below the ceiling, a
   assert.equal(targetFor(night, { ...s, mode: 'occupancy' }, 'ZAR'), null, 'R10 is not worth sending');
   assert.equal(targetFor(night, { ...s, mode: 'off' }, 'ZAR'), null);
   assert.equal(targetFor({ current: 2000 }, s, 'ZAR'), null, 'no recommendation, no change');
+});
+
+test("a month's own floor wins over the general one; a blank month falls back to it", () => {
+  const s = { mode: 'revenue', floor: 1500, floors: { 12: 3000, 1: 2800 }, ceiling: null, max_step: 50 };
+  assert.equal(floorFor('2026-12-24', s), 3000);
+  assert.equal(floorFor('2027-01-10', s), 2800);
+  assert.equal(floorFor('2027-06-10', s), 1500);
+  const night = (date) => ({ date, current: 2000, recommended: { revenue: { rate: 1600 } } });
+  assert.equal(targetFor(night('2026-12-24'), s, 'ZAR'), 3000, 'up to December\'s floor, past the daily step');
+  assert.equal(targetFor(night('2027-06-10'), s, 'ZAR'), 1600, 'June has only the general floor of R1 500, so R1 600 stands');
+});
+
+test('switching on needs a general floor, or one for every month', () => {
+  assert.equal(hasFloor({ floor: 1500, floors: {} }), true);
+  assert.equal(hasFloor({ floor: null, floors: { 12: 3000 } }), false);
+  const all = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, 2000]));
+  assert.equal(hasFloor({ floor: null, floors: all }), true);
 });

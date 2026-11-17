@@ -23,7 +23,7 @@ const { getUpcomingSchoolHolidays } = require('../services/school-holidays');
 const { getApiKeyForProperty } = require('../services/api-key-resolver');
 // One place decides who gets told what.
 const { notify } = require('../services/notify');
-const { MODES: PRICING_MODES, pricePlan, targetFor, runAutoPricing } = require('../services/dynamic-pricing');
+const { MODES: PRICING_MODES, pricePlan, targetFor, runAutoPricing, hasFloor } = require('../services/dynamic-pricing');
 
 // Apply property scoping to all routes
 router.use(scopeProperties);
@@ -732,17 +732,29 @@ router.put('/:id/auto-pricing', async (req, res) => {
   if (mode !== 'off' && !PRICING_MODES[mode]) return res.status(400).json({ error: `Unknown mode: ${mode}` });
   const num = (v) => (v === '' || v == null ? null : Number(v));
   const floor = num(b.floor), ceiling = num(b.ceiling), step = num(b.max_step) ?? 15, horizon = num(b.horizon) ?? 180;
+  // A floor per month, 1–12, where set; blank months fall back to the general floor.
+  const floors = {};
+  for (const [m, v] of Object.entries(b.floors || {})) {
+    const month = Number(m), value = num(v);
+    if (!(month >= 1 && month <= 12)) return res.status(400).json({ error: `Unknown month: ${m}` });
+    if (value == null) continue;
+    if (!(value > 0)) return res.status(400).json({ error: 'A month floor must be above zero' });
+    floors[month] = value;
+  }
   if (floor != null && !(floor > 0)) return res.status(400).json({ error: 'The floor must be above zero' });
-  if (mode !== 'off' && floor == null) return res.status(400).json({ error: 'Set a floor before switching automatic pricing on' });
-  if (ceiling != null && floor != null && ceiling <= floor) return res.status(400).json({ error: 'The ceiling must be above the floor' });
+  if (mode !== 'off' && !hasFloor({ floor, floors })) {
+    return res.status(400).json({ error: 'Set a floor (or one for every month) before switching automatic pricing on' });
+  }
+  const highest = Math.max(floor || 0, ...Object.values(floors));
+  if (ceiling != null && ceiling <= highest) return res.status(400).json({ error: 'The ceiling must be above every floor' });
   if (!(step >= 1 && step <= 50)) return res.status(400).json({ error: 'The daily limit must be between 1% and 50%' });
   if (!(horizon >= 14 && horizon <= 180)) return res.status(400).json({ error: 'Price between 14 and 180 days ahead' });
   await run(
-    `INSERT INTO auto_pricing (property_id, mode, floor, ceiling, max_step, horizon, updated_at)
-     VALUES ($1, $2, $3, $4, $5, $6, NOW())
-     ON CONFLICT (property_id) DO UPDATE SET mode = EXCLUDED.mode, floor = EXCLUDED.floor, ceiling = EXCLUDED.ceiling,
-       max_step = EXCLUDED.max_step, horizon = EXCLUDED.horizon, updated_at = NOW()`,
-    [req.params.id, mode, floor, ceiling, step, horizon]
+    `INSERT INTO auto_pricing (property_id, mode, floor, floors, ceiling, max_step, horizon, updated_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+     ON CONFLICT (property_id) DO UPDATE SET mode = EXCLUDED.mode, floor = EXCLUDED.floor, floors = EXCLUDED.floors,
+       ceiling = EXCLUDED.ceiling, max_step = EXCLUDED.max_step, horizon = EXCLUDED.horizon, updated_at = NOW()`,
+    [req.params.id, mode, floor, JSON.stringify(floors), ceiling, step, horizon]
   );
   res.json({ ok: true });
 });

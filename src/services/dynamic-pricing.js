@@ -40,7 +40,8 @@
  * ## Guardrails, in the runner
  *
  * The model proposes; the runner disposes. A price never goes below the
- * property's floor or above its ceiling, never moves more than the daily
+ * property's floor for that month (or its general floor) or above its
+ * ceiling, never moves more than the daily
  * step from what it is now, and a booked or blocked night is never
  * touched. Every change is logged with its reason, and the owner is told
  * what changed. A property is off until somebody chooses a mode for it.
@@ -75,7 +76,19 @@ const MODEL = {
   R_STEP: 0.01,
 };
 
-const DEFAULTS = { mode: 'off', floor: null, ceiling: null, max_step: 15, horizon: 180 };
+const DEFAULTS = { mode: 'off', floor: null, floors: {}, ceiling: null, max_step: 15, horizon: 180 };
+
+/**
+ * The floor for a night: its month's, where one is set, else the general
+ * floor. December in Cape Town and June are not the same night, and one
+ * floor for both is either too low for summer or too high for winter.
+ */
+function floorFor(date, s) {
+  const month = Number(String(date).slice(5, 7));
+  const own = s.floors && Number(s.floors[month]);
+  return own > 0 ? own : s.floor || null;
+}
+const hasFloor = (s) => Boolean(s.floor) || [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].every((m) => Number(s.floors && s.floors[m]) > 0);
 const MIN_COMPETITORS = 3;
 const DAY = 86400000;
 const addDays = (ymd, n) => new Date(Date.parse(`${ymd}T00:00:00Z`) + n * DAY).toISOString().slice(0, 10);
@@ -133,13 +146,14 @@ const roundTo = (currency) => (n) => {
 };
 
 async function settingsFor(propertyId) {
-  const row = await getOne('SELECT mode, floor, ceiling, max_step, horizon FROM auto_pricing WHERE property_id = $1', [propertyId]);
+  const row = await getOne('SELECT mode, floor, floors, ceiling, max_step, horizon FROM auto_pricing WHERE property_id = $1', [propertyId]);
   const floorRule = await getOne(`SELECT params FROM rate_strategies WHERE property_id = $1 AND strategy = 'floor'`, [propertyId]);
   const ruleFloor = Number(floorRule && floorRule.params && floorRule.params.min_price) || null;
   const s = { ...DEFAULTS, ...(row || {}) };
   return {
     mode: MODES[s.mode] ? s.mode : 'off',
     floor: s.floor != null ? Number(s.floor) : ruleFloor,
+    floors: Object.fromEntries(Object.entries(s.floors || {}).filter(([m, v]) => Number(m) >= 1 && Number(m) <= 12 && Number(v) > 0).map(([m, v]) => [Number(m), Number(v)])),
     ceiling: s.ceiling != null ? Number(s.ceiling) : null,
     max_step: Number(s.max_step),
     horizon: Number(s.horizon),
@@ -235,7 +249,7 @@ async function pricePlan(propertyId, { today = new Date().toISOString().slice(0,
     const market = median([...near.values()].map((v) => v.nightly));
     const full = takenOn.get(date);
     const current = Number(r.price) || null;
-    const base = { date, kind, current, competitors: near.size };
+    const base = { date, kind, current, competitors: near.size, floor: floorFor(date, s) };
     if (!market || near.size < MIN_COMPETITORS || !full || full.of < MIN_COMPETITORS) {
       nights.push({ ...base, skip: 'too little market data' });
       continue;
@@ -244,7 +258,7 @@ async function pricePlan(propertyId, { today = new Date().toISOString().slice(0,
     const lead = daysBetween(today, date);
     const rec = recommendNight({
       market, fullness, lead,
-      floor: s.floor ? s.floor * factor : 0,
+      floor: floorFor(date, s) ? floorFor(date, s) * factor : 0,
       ceiling: s.ceiling ? s.ceiling * factor : Infinity,
     });
     if (!rec) { nights.push({ ...base, skip: 'floor above ceiling' }); continue; }
@@ -291,7 +305,8 @@ function targetFor(night, s, currency) {
     const step = s.max_step / 100;
     target = clamp(target, night.current * (1 - step), night.current * (1 + step));
   }
-  if (s.floor) target = Math.max(target, s.floor);
+  const floor = night.floor !== undefined ? night.floor : floorFor(night.date, s);
+  if (floor) target = Math.max(target, floor);
   if (s.ceiling) target = Math.min(target, s.ceiling);
   target = round(target);
   if (night.current && Math.abs(target - night.current) < Math.max(round(night.current * 0.02), currency === 'ZAR' ? 10 : 5)) return null;
@@ -313,7 +328,7 @@ async function runAutoPricing({ today = new Date().toISOString().slice(0, 10), p
   const results = [];
   for (const { property_id: id } of props) {
     const s = await settingsFor(id);
-    if (s.mode === 'off' || !s.floor) { results.push({ id, skipped: 'no floor set' }); continue; }
+    if (s.mode === 'off' || !hasFloor(s)) { results.push({ id, skipped: 'no floor set' }); continue; }
     const plan = await pricePlan(id, { today, settings: s });
     if (!plan) continue;
     const changes = [];
@@ -372,4 +387,4 @@ async function defaultSetRates(property, dates, price) {
   return smoobu.setRatesForDates(property.smoobu_id, dates, price, apiKey);
 }
 
-module.exports = { MODES, MODEL, DEFAULTS, recommendNight, chanceAt, halfway, mostLikely, pricePlan, targetFor, runAutoPricing, settingsFor };
+module.exports = { MODES, MODEL, DEFAULTS, floorFor, hasFloor, recommendNight, chanceAt, halfway, mostLikely, pricePlan, targetFor, runAutoPricing, settingsFor };
