@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, ArrowRight, Check, RefreshCw, Send, Save } from 'lucide-react';
 import { apiGet, Unauthorized } from '../data/session';
+import { AutoPricing } from './AutoPricing';
 
 /**
  * Everything about what a night costs, in one place.
@@ -337,6 +338,8 @@ export function RatesPage({ initialPropertyId = 0 }: {
             {properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         }
+
+        {propertyId > 0 && <AutoPricing propertyId={propertyId} />}
 
         {/* 1. What a night is worth. */}
         <div className={SECTION}>What a night is worth</div>

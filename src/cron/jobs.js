@@ -333,4 +333,19 @@ cron.schedule('15 5 * * *', async () => {
   }
 });
 
+/**
+ * 08:30 daily: automatic pricing, after the morning's competitor read and
+ * prices are in. Only properties with a mode chosen; the rest are off.
+ */
+cron.schedule('30 8 * * *', async () => {
+  try {
+    const { runAutoPricing } = require('../services/dynamic-pricing');
+    for (const r of await runAutoPricing()) {
+      console.log(`Auto pricing ${r.id}: ${r.skipped || `${r.changed} changed (${r.up || 0} up, ${r.down || 0} down)${r.error ? `, stopped: ${r.error}` : ''}`}.`);
+    }
+  } catch (err) {
+    console.error(`Auto pricing cron error: ${err.message}`);
+  }
+});
+
 console.log('Cron jobs scheduled (SAST/UTC+2).');
