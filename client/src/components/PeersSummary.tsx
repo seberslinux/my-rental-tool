@@ -143,6 +143,7 @@ function PositionChart({ row, height }: { row: PeerSummaryRow; height: number })
       </p>
       {leaders.length > 0 &&
       <button
+        data-no-export
         onClick={(e) => { e.stopPropagation(); setHideLeaders((v) => !v); }}
         className="mt-1.5 text-[12px] font-semibold text-[#222222] underline underline-offset-2">
           {hideLeaders ? `Show ${leaders.map((l) => l.name).join(', ')}` : `Hide the price leader (${leaders.map((l) => l.name).join(', ')})`}
@@ -151,8 +152,8 @@ function PositionChart({ row, height }: { row: PeerSummaryRow; height: number })
     </div>);
 }
 
-export function PeersSummaryCards({ rows, propertyId = 0, onOpen, height = 240 }: {
-  rows: PeerSummaryRow[]; propertyId?: number; onOpen?: () => void; height?: number;
+export function PeersSummaryCards({ rows, propertyId = 0, onOpen, height = 240, showName = true }: {
+  rows: PeerSummaryRow[]; propertyId?: number; onOpen?: () => void; height?: number; showName?: boolean;
 }) {
   const shown = rows.filter((r) => !propertyId || r.id === propertyId);
   if (!shown.length) return null;
@@ -168,7 +169,7 @@ export function PeersSummaryCards({ rows, propertyId = 0, onOpen, height = 240 }
             className={`${card} px-4 py-3 ${onOpen ? 'cursor-pointer active:bg-[#F7F7F7]' : ''}`}
             onClick={onOpen}>
             <div className="flex items-center justify-between gap-2 mb-1">
-              <span className="text-[15px] font-semibold text-[#222222] truncate">{p.name}</span>
+              <span className="text-[15px] font-semibold text-[#222222] truncate">{showName ? p.name : 'Where you stand'}</span>
               <span className="flex items-center gap-1.5 shrink-0">
                 {near && <span className={`text-[12px] font-semibold px-2 py-0.5 rounded-full ${near.cls}`}>{near.text}</span>}
                 {onOpen && <ChevronRight className="w-4 h-4 text-[#B0B0B0]" />}

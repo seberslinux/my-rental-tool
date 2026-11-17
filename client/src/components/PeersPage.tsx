@@ -1,9 +1,9 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { ExternalLink, RefreshCw } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Download, ExternalLink, RefreshCw } from 'lucide-react';
 import { apiGet } from '../data/session';
 import { PeersSummaryCards, PeerSummaryRow, money } from './PeersSummary';
-import { PeerAnalysis } from './PeerAnalysis';
-import { PeerFeatures } from './PeerFeatures';
+import { Analysis, ESTIMATE_NOTE, ListingRow, SalesByPeriod, SalesTotals, Suggestions, plural } from './PeerAnalysis';
+import { FeatureProps, FeaturesBlock, RecordDownloads } from './PeerFeatures';
 
 /**
  * How we are selling against the listings we compete with.
@@ -38,11 +38,6 @@ const label = 'text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B
 const monthName = (ym: string) =>
   new Date(`${ym}-01T00:00:00`).toLocaleDateString('en-ZA', { month: 'short' });
 const pct = (v: number | null) => (v == null ? '–' : `${v}%`);
-
-function span(a: string, b: string) {
-  const f = (d: string, m: boolean) => new Date(`${d}T00:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', ...(m ? { month: 'short' } : {}) });
-  return `${f(a, a.slice(0, 7) !== b.slice(0, 7))}–${f(b, true)}`;
-}
 
 function ago(iso: string) {
   const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -132,45 +127,129 @@ function PriceTable({ title, dates, median, own, benchmark, currency }: {
     </div>);
 }
 
+/** The first stay still for sale among those quoted, and its price. */
+function nextAsk(quotes: (Quote | null)[] | undefined, dates: string[] | undefined) {
+  const i = (quotes || []).findIndex((q) => q && q.open && q.nightly);
+  return i < 0 || !dates ? null : { date: dates[i], nightly: (quotes as Quote[])[i].nightly };
+}
+
 /**
- * What this listing asks next, per night: its first weekend and first
- * weekday stay still on sale among the eight quoted. Every competitor's
- * own number, not just the median — a listing far above or below the
- * rest is visible here and only blurs into the median above.
+ * Every listing compared, on one row each: where it stands now (nights
+ * taken in the next 30 days, what it asks for the next free weekend) and
+ * what it has sold since the watch began, with how far ahead. The name
+ * opens the listing on Airbnb. Ours from Smoobu, all channels.
  */
-function RowPrices({ listing, prices, currency }: { listing: Listing; prices: Prices; currency?: string }) {
-  const first = (quotes: (Quote | null)[], dates: string[]) => {
-    const i = quotes.findIndex((q) => q && q.open && q.nightly);
-    return i < 0 ? null : { date: dates[i], nightly: (quotes[i] as Quote).nightly };
-  };
-  const we = first(listing.weekend || [], prices?.weekends || []);
-  const wd = first(listing.weekday || [], prices?.weekdays || []);
-  if (!prices || (!prices.weekends.length && !prices.weekdays.length)) return null;
+function CompetitorTable({ p, a }: { p: PropertyPeers; a: Analysis | undefined }) {
+  const sold = new Map<string, ListingRow>((a?.listings || []).map((l) => [l.is_own ? '__own' : l.name, l]));
+  const leaders = new Set((a?.leaders || []).map((l) => l.name));
+  const rows = p.listings.map((l) => {
+    const s = sold.get(l.is_own ? '__own' : l.name);
+    return {
+      l, s,
+      taken: l.open_30 == null ? null : Math.round(100 * (30 - l.open_30) / 30),
+      ask: nextAsk(l.weekend, p.prices?.weekends),
+      leader: Boolean(s?.is_leader) || leaders.has(l.name),
+    };
+  }).sort((x, y) => (y.s?.nights || 0) - (x.s?.nights || 0) || (y.taken ?? -1) - (x.taken ?? -1));
+  const th = 'font-medium px-3 py-2 text-right whitespace-nowrap';
+  const td = 'px-3 py-2 text-right tabular-nums whitespace-nowrap';
   return (
-    <span className="text-[12px] text-[#222222] block mt-0.5">
-      <span className="text-[#717171]">Per night: </span>
-      weekend {we ? <>{dayMonth(we.date)} <span className="font-semibold tabular-nums whitespace-nowrap">{money(we.nightly, currency)}</span></> : <span className="text-[#717171]">sold out</span>}
-      <span className="text-[#B0B0B0]"> · </span>
-      weekday {wd ? <>{dayMonth(wd.date)} <span className="font-semibold tabular-nums whitespace-nowrap">{money(wd.nightly, currency)}</span></> : <span className="text-[#717171]">sold out</span>}
-    </span>);
+    <div className={`${card} overflow-x-auto`}>
+      <table className="w-full text-[13px]">
+        <thead>
+          <tr className="text-[12px] text-[#717171] align-bottom">
+            <th className="font-medium px-3 py-2 text-left sticky left-0 bg-white">Listing</th>
+            <th className={th}>Taken<br />next 30 days</th>
+            <th className={th}>Asks<br />next weekend</th>
+            <th className={`${th} border-l border-[#F0F0F0]`}>Bookings</th>
+            <th className={th}>Nights</th>
+            <th className={th}>Sold for</th>
+            <th className={th}>Per night</th>
+            <th className={th}>Booked<br />ahead</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(({ l, s, taken, ask, leader }) =>
+          <tr key={l.id} className={`border-t border-[#F0F0F0] ${l.is_own ? 'bg-[#F4FAF7]' : ''}`}>
+              <td className={`px-3 py-2 sticky left-0 min-w-[150px] max-w-[220px] ${l.is_own ? 'bg-[#F4FAF7]' : 'bg-white'}`}>
+                <a href={l.url} target="_blank" rel="noreferrer" className={`text-[#222222] underline decoration-[#DDDDDD] underline-offset-2 ${l.is_own ? 'font-semibold' : ''}`}>
+                  {l.is_own ? 'You' : l.name}
+                  <ExternalLink className="inline w-3 h-3 ml-1 text-[#B0B0B0] align-[-1px]" />
+                </a>
+                {l.is_own && <span className="block text-[11px] text-[#717171] truncate">{l.name}</span>}
+                {l.is_benchmark && <span className="block text-[11px] font-semibold text-[#FF385C]">BENCHMARK</span>}
+                {leader && <span className="block text-[11px] font-semibold text-[#C9A227]">PRICE LEADER</span>}
+              </td>
+              <td className={td}>{taken == null ? '–' : `${taken}%`}</td>
+              <td className={td}>{ask ? <>{money(ask.nightly, p.currency)}<span className="block text-[11px] text-[#717171]">{dayMonth(ask.date)}</span></> : <span className="text-[#B0B0B0]">{l.read ? 'sold out' : '–'}</span>}</td>
+              <td className={`${td} border-l border-[#F0F0F0]`}>{s ? s.bookings : 0}</td>
+              <td className={td}>{s ? s.nights : 0}</td>
+              <td className={td}>{s && s.revenue != null ? `${money(s.revenue, p.currency)}${s.estimated ? '*' : ''}` : '–'}</td>
+              <td className={td}>{s && s.avg_nightly != null ? money(s.avg_nightly, p.currency) : '–'}</td>
+              <td className={td}>{s && s.median_lead_days != null ? (s.median_lead_days === 0 ? 'same day' : plural(s.median_lead_days, 'day')) : '–'}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>);
+}
+
+const dateTime = (iso: string) => new Date(iso).toLocaleString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+/**
+ * The page as one file to share: the same tables, every period and week
+ * opened, the Airbnb links kept, the buttons left out. It carries its
+ * own styles, so it opens anywhere without the app.
+ */
+function savePage(root: HTMLElement, filename: string, title: string) {
+  let css = '';
+  for (const sheet of Array.from(document.styleSheets)) {
+    try { css += Array.from(sheet.cssRules).map((r) => r.cssText).join('\n'); } catch { /* another origin's sheet */ }
+  }
+  const copy = root.cloneNode(true) as HTMLElement;
+  copy.querySelectorAll('[data-no-export]').forEach((e) => e.remove());
+  copy.querySelectorAll('a[href]').forEach((el) => {
+    const href = el.getAttribute('href') || '';
+    if (href.startsWith('/')) el.setAttribute('href', `${location.origin}${href}`);
+    el.setAttribute('target', '_blank');
+    el.setAttribute('rel', 'noreferrer');
+  });
+  const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>${css}
+body{margin:0;background:#F7F7F7;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+.recharts-wrapper,.recharts-wrapper svg{max-width:100%;height:auto}</style></head><body>${copy.outerHTML}</body></html>`;
+  const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
 export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: number; isAdmin?: boolean }) {
   const [data, setData] = useState<{ properties: PropertyPeers[]; summary?: PeerSummaryRow[]; last_run: Run | null } | null>(null);
+  const [analysis, setAnalysis] = useState<Analysis[]>([]);
+  const [features, setFeatures] = useState<FeatureProps[]>([]);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
 
   const load = useCallback(() => {
     apiGet<{ properties: PropertyPeers[]; summary?: PeerSummaryRow[]; last_run: Run | null }>('/api/peers')
       .then((d) => { setData(d); setError(''); })
       .catch(() => setError('Could not load the competitors.'));
+    apiGet<{ properties: Analysis[] }>('/api/peers/analysis').then((d) => setAnalysis(d.properties)).catch(() => setAnalysis([]));
+    apiGet<{ properties: FeatureProps[] }>('/api/peers/features').then((d) => setFeatures(d.properties)).catch(() => setFeatures([]));
   }, []);
   useEffect(() => { load(); }, [load]);
 
   const [pricing, setPricing] = useState('');
   const readPrices = async () => {
     const res = await fetch('/api/peers/prices', { method: 'POST', credentials: 'same-origin' });
-    setPricing(res.ok ? 'Reading prices in the background — a few minutes. Reload to see them.' :
+    setPricing(res.ok ? 'Reading prices in the background — about an hour. Reload to see them.' :
     res.status === 409 ? 'Prices are already being read.' : 'Could not start reading prices.');
   };
 
@@ -189,125 +268,136 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
 
   const shown = data.properties.filter((p) => !propertyId || p.id === propertyId);
   const run = data.last_run;
+  const names = shown.map((p) => p.name).join(', ');
+  const stamp = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
+
+  const download = () => {
+    setExporting(true);
+    // Let every period and week open before the copy is taken.
+    setTimeout(() => {
+      if (root.current) savePage(root.current, `Competitors - ${names} - ${stamp}.html`, `Competitors: ${names}`);
+      setExporting(false);
+    }, 150);
+  };
 
   return (
-    <div className="p-4 bg-[#F7F7F7] min-h-full space-y-6 max-w-[900px]">
-      <div className="flex items-center gap-2">
-        <p className="flex-1 min-w-0 text-[13px] text-[#717171]">
-          {run ?
-          <>Read from Airbnb {ago(run.finished_at)} · {run.listings_ok} listings
-              {run.listings_failed ? <span className="text-[#C13515]"> · {run.listings_failed} could not be read</span> : null}</> :
-          'Not read yet. It reads at 06:00, 13:00 and 20:00; sales show from the second reading.'}
-        </p>
-        {isAdmin &&
-        <button
-          onClick={readNow}
-          disabled={busy}
-          className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] bg-white text-[13px] font-semibold disabled:opacity-50">
-            <RefreshCw className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} /> {busy ? 'Reading… about a minute' : 'Read now'}
-          </button>
+    <div ref={root} className="p-4 bg-[#F7F7F7] min-h-full space-y-8 max-w-[900px]">
+      <div className="space-y-2">
+        {exporting &&
+        <div>
+            <h1 className="text-[22px] font-bold text-[#222222]">Competitors: {names}</h1>
+            {run && <p className="text-[13px] text-[#717171]">Read from Airbnb {dateTime(run.finished_at)} · {run.listings_ok} listings</p>}
+          </div>
         }
-        {isAdmin &&
-        <button
-          onClick={readPrices}
-          className="shrink-0 px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] bg-white text-[13px] font-semibold">
-            Read prices
+        <div data-no-export className="flex flex-wrap items-center gap-2">
+          <p className="flex-1 min-w-[180px] text-[13px] text-[#717171]">
+            {run ?
+            <>Read from Airbnb {ago(run.finished_at)} · {run.listings_ok} listings
+                {run.listings_failed ? <span className="text-[#C13515]"> · {run.listings_failed} could not be read</span> : null}</> :
+            'Not read yet. It reads at 06:00, 13:00 and 20:00; sales show from the second reading.'}
+          </p>
+          <button
+            onClick={download}
+            disabled={exporting}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] bg-white text-[13px] font-semibold disabled:opacity-50">
+            <Download className="w-3.5 h-3.5" /> Download to share
           </button>
+          {isAdmin &&
+          <button
+            onClick={readNow}
+            disabled={busy}
+            className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] bg-white text-[13px] font-semibold disabled:opacity-50">
+              <RefreshCw className={`w-3.5 h-3.5 ${busy ? 'animate-spin' : ''}`} /> {busy ? 'Reading…' : 'Read now'}
+            </button>
+          }
+          {isAdmin &&
+          <button
+            onClick={readPrices}
+            className="shrink-0 px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] bg-white text-[13px] font-semibold">
+              Read prices
+            </button>
+          }
+        </div>
+        {pricing && <p data-no-export className="text-[13px] text-[#717171]">{pricing}</p>}
+        {run && run.error && run.listings_ok === 0 &&
+        <p data-no-export className="text-[13px] text-[#C13515]">{run.error}</p>
         }
       </div>
-      {pricing && <p className="text-[13px] text-[#717171]">{pricing}</p>}
-      {run && run.error && run.listings_ok === 0 &&
-      <p className="text-[13px] text-[#C13515]">{run.error}</p>
-      }
 
-      {/* The answer first: are we filling like the competitors? The
-          month-by-month detail is below for each property. */}
-      {data.summary && data.summary.length > 0 &&
-      <div>
-          <div className={label}>Summary</div>
-          <PeersSummaryCards rows={data.summary} propertyId={propertyId} height={300} />
-        </div>
-      }
+      {shown.map((p) => {
+        const a = analysis.find((x) => x.id === p.id);
+        const f = features.find((x) => x.id === p.id);
+        const summary = (data.summary || []).filter((r) => r.id === p.id);
+        return (
+          <section key={p.id} className="space-y-6">
+            <h2 className="text-[20px] font-bold text-[#222222]">{p.name}</h2>
 
-      {/* What they sold, by week, month and season, with what to do about it. */}
-      <PeerAnalysis propertyId={propertyId} />
-
-      {/* What a renovation should aim at, and the record behind it all. */}
-      <PeerFeatures propertyId={propertyId} isAdmin={isAdmin} />
-
-      {shown.map((p) =>
-      <section key={p.id} className="space-y-3">
-          <h2 className="text-[18px] font-semibold text-[#222222]">{p.name}</h2>
-
-          <SoldTable p={p} />
-
-          {p.prices && (p.prices.weekends.length > 0 || p.prices.weekdays.length > 0) ?
-        <div>
-              <div className={label}>Price per night, {p.guests || 2} guests</div>
-              <div className="space-y-3">
-                <PriceTable
-              title="Weekend (Fri)"
-              dates={p.prices.weekends}
-              median={p.prices.weekend_median}
-              currency={p.currency}
-              own={p.own?.weekend}
-              benchmark={p.benchmark ? { name: p.benchmark.name, quotes: p.benchmark.weekend } : null} />
-                <PriceTable
-              title="Weekday (Mon)"
-              dates={p.prices.weekdays}
-              median={p.prices.weekday_median}
-              currency={p.currency}
-              own={p.own?.weekday}
-              benchmark={p.benchmark ? { name: p.benchmark.name, quotes: p.benchmark.weekday } : null} />
+            {/* Where we stand, as one picture. */}
+            {summary.length > 0 &&
+            <div>
+                <div className={label}>At a glance</div>
+                <PeersSummaryCards rows={summary} propertyId={p.id} height={300} showName={false} />
               </div>
-            </div> :
-        <p className="text-[13px] text-[#717171]">Prices are read once a day at 06:30.</p>
-        }
+            }
 
-          <div>
-            <div className={label}>New bookings, last 14 days</div>
-            <div className={card}>
-              {p.recent.length === 0 ?
-            <p className="px-4 py-3 text-[14px] text-[#717171]">None found yet.</p> :
-            p.recent.map((s, i) =>
-            <div key={s.id} className={`px-4 py-2.5 flex items-baseline justify-between gap-3 ${i ? 'border-t border-[#F0F0F0]' : ''}`}>
-                    <span className="text-[14px] text-[#222222] min-w-0 truncate">
-                      <span className="font-medium">{s.name}</span> · {span(s.check_in, s.check_out)} · {s.nights} night{s.nights === 1 ? '' : 's'}
-                      {s.nightly ? ` · about ${money(s.nightly, p.currency)} a night` : ''}
-                    </span>
-                    <span className="text-[12px] text-[#717171] shrink-0">{ago(s.detected_at)}</span>
-                  </div>
-            )}
-            </div>
-          </div>
+            {/* What the numbers say to do. */}
+            {a && a.suggestions.length > 0 &&
+            <div>
+                <div className={label}>What to do</div>
+                <Suggestions a={a} />
+              </div>
+            }
 
-          <div>
-            <div className={label}>Listings compared</div>
-            <div className={card}>
-              {p.listings.map((l, i) =>
-            <a
-              key={l.id}
-              href={l.url}
-              target="_blank"
-              rel="noreferrer"
-              className={`px-4 py-2.5 flex items-center justify-between gap-3 ${i ? 'border-t border-[#F0F0F0]' : ''}`}>
-                  <span className="min-w-0">
-                    <span className="text-[14px] text-[#222222] truncate block">
-                      {l.name}
-                      {l.is_own && <span className="ml-2 text-[11px] font-semibold text-[#0F6E56]">YOURS</span>}
-                      {l.is_benchmark && <span className="ml-2 text-[11px] font-semibold text-[#FF385C]">BENCHMARK</span>}
-                    </span>
-                    <span className="text-[12px] text-[#717171] block">
-                      {l.read ? `${pct(l.months[0])} of ${monthName(p.months[0])} sold · ${l.open_30} night${l.open_30 === 1 ? '' : 's'} open in the next 30 days` : 'Not read yet'}
-                    </span>
-                    {l.read && <RowPrices listing={l} prices={p.prices} currency={p.currency} />}
-                  </span>
-                  <ExternalLink className="w-4 h-4 text-[#B0B0B0] shrink-0" />
-                </a>
-            )}
+            {/* Everybody on one row: now, and what they sold. */}
+            <div>
+              <div className={label}>Competitors</div>
+              {a && a.total.bookings > 0 && <div className="mb-2"><SalesTotals a={a} /></div>}
+              <CompetitorTable p={p} a={a} />
+              <p className="text-[12px] text-[#B0B0B0] mt-1.5">
+                Tap a name to open it on Airbnb. Asking prices for {p.guests || 2} guests. {ESTIMATE_NOTE}
+              </p>
             </div>
-          </div>
-        </section>
-      )}
+
+            {/* When they sold, and for when. */}
+            {a && (a.weeks.length > 0 || a.months.length > 0) &&
+            <div>
+                <div className={label}>Sales</div>
+                <SalesByPeriod a={a} exporting={exporting} />
+              </div>
+            }
+
+            {/* The months and stays ahead. */}
+            <div>
+              <div className={label}>Ahead: nights taken per month</div>
+              <SoldTable p={p} />
+            </div>
+            {p.prices && (p.prices.weekends.length > 0 || p.prices.weekdays.length > 0) &&
+            <div>
+                <div className={label}>Ahead: price per night, {p.guests || 2} guests</div>
+                <div className="space-y-3">
+                  <PriceTable
+                  title="Weekend (Fri)"
+                  dates={p.prices.weekends}
+                  median={p.prices.weekend_median}
+                  currency={p.currency}
+                  own={p.own?.weekend}
+                  benchmark={p.benchmark ? { name: p.benchmark.name, quotes: p.benchmark.weekend } : null} />
+                  <PriceTable
+                  title="Weekday (Mon)"
+                  dates={p.prices.weekdays}
+                  median={p.prices.weekday_median}
+                  currency={p.currency}
+                  own={p.own?.weekday}
+                  benchmark={p.benchmark ? { name: p.benchmark.name, quotes: p.benchmark.weekday } : null} />
+                </div>
+              </div>
+            }
+
+            {/* What a renovation should aim at. */}
+            {f && <FeaturesBlock p={f} isAdmin={isAdmin} />}
+          </section>);
+      })}
+
+      {isAdmin && <RecordDownloads />}
     </div>);
 }

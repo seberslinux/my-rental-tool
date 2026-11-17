@@ -1,6 +1,5 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { Check, Download, Hammer, Minus } from 'lucide-react';
-import { apiGet } from '../data/session';
 
 /**
  * What a renovation should aim at, read from the market.
@@ -19,7 +18,7 @@ interface Feature {
   price_premium: number | null; occupancy_gap: number | null; holders: string[];
 }
 interface Leader { name: string; is_benchmark: boolean; price: number | null; occupancy: number | null; rating: number | null; reviews: number | null; has_and_you_lack: string[]; }
-interface Props {
+export interface FeatureProps {
   id: number; name: string; currency: string;
   snapshots: { taken: number; of: number; latest: string | null };
   you: { rating: number | null; reviews: number | null; category_ratings: Record<string, number> | null; photos: number | null; features: string[] } | null;
@@ -42,7 +41,7 @@ function why(f: Feature, c: string) {
   return `${f.with} of ${f.with + f.without} competitors have it; ${bits.join(' and ')}.`;
 }
 
-function Ratings({ p }: { p: Props }) {
+function Ratings({ p }: { p: FeatureProps }) {
   if (!p.you || !p.you.category_ratings) return null;
   const rows: [string, number | null | undefined, number | null][] = [
     ['Overall', p.you.rating, p.market_median.rating],
@@ -74,7 +73,7 @@ function Ratings({ p }: { p: Props }) {
     </div>);
 }
 
-function OneProperty({ p, isAdmin }: { p: Props; isAdmin: boolean }) {
+export function FeaturesBlock({ p, isAdmin }: { p: FeatureProps; isAdmin: boolean }) {
   const [busy, setBusy] = useState('');
   const readNow = async () => {
     const r = await fetch('/api/peers/snapshots', { method: 'POST', credentials: 'same-origin' });
@@ -83,16 +82,16 @@ function OneProperty({ p, isAdmin }: { p: Props; isAdmin: boolean }) {
   if (!p.snapshots.taken) {
     return (
       <section className="space-y-2">
-        <h2 className="text-[18px] font-semibold text-[#222222]">{p.name}: what features earn</h2>
+        <h3 className="text-[16px] font-semibold text-[#222222]">What features earn</h3>
         <p className="text-[13px] text-[#717171]">The listings' details are read once a week. None read yet.</p>
-        {isAdmin && <button onClick={readNow} className="px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] bg-white text-[13px] font-semibold">Read listing details now</button>}
+        {isAdmin && <button data-no-export onClick={readNow} className="px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] bg-white text-[13px] font-semibold">Read listing details now</button>}
         {busy && <p className="text-[13px] text-[#717171]">{busy}</p>}
       </section>);
   }
   return (
     <section className="space-y-3">
       <div>
-        <h2 className="text-[18px] font-semibold text-[#222222]">{p.name}: what features earn</h2>
+        <h3 className="text-[16px] font-semibold text-[#222222]">What features earn</h3>
         <p className="text-[13px] text-[#717171]">
           From {p.snapshots.taken} of {p.snapshots.of} listings' Airbnb pages, against how each sells. Small groups: read it as a direction, not a law.
         </p>
@@ -169,30 +168,20 @@ function OneProperty({ p, isAdmin }: { p: Props; isAdmin: boolean }) {
     </section>);
 }
 
-export function PeerFeatures({ propertyId = 0, isAdmin = false }: { propertyId?: number; isAdmin?: boolean }) {
-  const [data, setData] = useState<Props[] | null>(null);
-  useEffect(() => {
-    apiGet<{ properties: Props[] }>('/api/peers/features').then((d) => setData(d.properties)).catch(() => setData([]));
-  }, []);
-  if (!data) return null;
-  const shown = data.filter((p) => !propertyId || p.id === propertyId);
+/** Everything the watch has gathered, as CSV. For us, not for a saved copy. */
+export function RecordDownloads() {
   return (
-    <div className="space-y-8">
-      {shown.map((p) => <OneProperty key={p.id} p={p} isAdmin={isAdmin} />)}
-      {isAdmin &&
-      <section>
-          <div className={label}>The record</div>
-          <div className={`${card} px-4 py-3`}>
-            <p className="text-[13px] text-[#717171] mb-2">Everything the watch has gathered, kept for good. Download as CSV:</p>
-            <div className="flex flex-wrap gap-2">
-              {[['bookings', 'Bookings'], ['prices', 'Price history'], ['calendar', 'Calendar changes'], ['snapshots', 'Listing snapshots'], ['listings', 'Listings'], ['runs', 'Reads']].map(([t, n]) =>
-            <a key={t} href={`/api/peers/export/${t}`} className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] text-[13px] font-semibold text-[#222222]">
-                  <Download className="w-3.5 h-3.5" />{n}
-                </a>
-            )}
-            </div>
-          </div>
-        </section>
-      }
-    </div>);
+    <section data-no-export>
+      <div className={label}>The record</div>
+      <div className={`${card} px-4 py-3`}>
+        <p className="text-[13px] text-[#717171] mb-2">Everything the watch has gathered, kept for good. Download as CSV:</p>
+        <div className="flex flex-wrap gap-2">
+          {[['bookings', 'Bookings'], ['prices', 'Price history'], ['calendar', 'Calendar changes'], ['snapshots', 'Listing snapshots'], ['listings', 'Listings'], ['runs', 'Reads']].map(([t, n]) =>
+          <a key={t} href={`/api/peers/export/${t}`} className="flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] text-[13px] font-semibold text-[#222222]">
+              <Download className="w-3.5 h-3.5" />{n}
+            </a>
+          )}
+        </div>
+      </div>
+    </section>);
 }
