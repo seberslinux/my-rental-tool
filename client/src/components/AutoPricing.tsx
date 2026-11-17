@@ -25,7 +25,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 interface Change { date: string; old_price: number | null; new_price: number; mode: string; market: number | null; fullness: number | null; changed_at: string; }
 interface Data {
   modes: { key: Exclude<Mode, 'off'>; label: string }[];
-  settings: Settings; currency: string; conversion: { markup: number; cleaning: number; measured: number };
+  settings: Settings; currency: string; conversion: { markup: number; cleaning: number; competitors_cleaning: number | null; competitors_measured: number };
   totals: Record<'current' | Exclude<Mode, 'off'>, { nights: number; money: number }>;
   open_nights: number; priced_nights: number; nights: Night[]; changes: Change[];
 }
@@ -236,10 +236,10 @@ export function AutoPricing({ propertyId }: { propertyId: number }) {
           </div>
           <p className="text-[12px] text-[#B0B0B0] mt-1.5">
             Prices in your rate. The market is the competitors' median asking price for the nearest stay of the same kind,
-            the price leader left out. Airbnb shows every listing all-in — cleaning and fees included, before taxes — so
-            theirs compare as they are; yours is your rate plus the {data.conversion.markup}% channel markup
-            {data.conversion.cleaning ? <> plus your {money(data.conversion.cleaning, c)} cleaning fee shared over a two-night stay (measured from your own Airbnb listing)</> : ''}.
-            In brackets: the chance it sells at that price. The arrow is what the next run sends, within your limits.
+            the price leader left out. Airbnb shows every listing all-in, so each quote is taken apart the same way: its own
+            one-off cleaning fee off (measured weekly{data.conversion.competitors_cleaning != null ? `; competitors average ${money(data.conversion.competitors_cleaning, c)} over ${data.conversion.competitors_measured}` : ''}),
+            the rest over the nights, the {data.conversion.markup}% service fee off. Your rate is compared on the same footing; a guest
+            sees it with the markup and your {money(data.conversion.cleaning, c)} cleaning added back.
           </p>
           {!all && data.priced_nights > shown.length &&
           <button onClick={() => setAll(true)} className="mt-1 text-[13px] font-semibold underline underline-offset-2">Show all {data.priced_nights} nights</button>

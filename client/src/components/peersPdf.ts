@@ -4,7 +4,7 @@ import type { Analysis, Period } from './PeerAnalysis';
 import { ESTIMATE_NOTE } from './PeerAnalysis';
 import type { FeatureProps } from './PeerFeatures';
 import type { PeerSummaryRow } from './PeersSummary';
-import { PropertyPeers, Quote, Run, competitorRows, daysAhead } from './peersShared';
+import { PropertyPeers, Quote, Run, cleaningSummary, cleaningText, competitorRows, daysAhead } from './peersShared';
 
 /**
  * The Competitors page as a PDF anybody can open: the same figures, laid
@@ -161,11 +161,14 @@ export async function peersPdf({ properties, analysis, features, summary, run, f
       para(`Competitors${a.since ? ` since ${day(a.since)}` : ''}: ${t(a.total)}.`, 8.5, INK);
       para(`You, all channels: ${t(a.you)}.`, 8.5, GREEN);
     }
+    const cleaningLine = cleaningSummary(p, (n) => money(n, c));
+    if (cleaningLine) para(cleaningLine, 8.5, INK);
     const rows = competitorRows(p, a);
     const compBody = rows.map(({ l, s: sold, taken, ask, leader }) => [
         `${l.is_own ? `You (${clean(l.name)})` : clean(l.name)}${l.is_benchmark ? '\nBENCHMARK' : ''}${leader ? '\nPRICE LEADER' : ''}`,
         taken == null ? '–' : `${taken}%`,
         ask ? `${money(ask.nightly, c)}\n${day(ask.date)}` : l.read ? 'sold out' : '–',
+        cleaningText(l.cleaning_fee, (n) => money(n, c)),
         String(sold ? sold.bookings : 0),
         String(sold ? sold.nights : 0),
         sold && sold.revenue != null ? `${money(sold.revenue, c)}${sold.estimated ? '*' : ''}` : '–',
@@ -178,9 +181,9 @@ export async function peersPdf({ properties, analysis, features, summary, run, f
     autoTable(doc, {
       ...tableStyle,
       startY: y,
-      head: [['Listing', 'Taken next 30 days', 'Asks next weekend', 'Bookings', 'Nights', 'Sold for', 'Per night', 'Booked ahead']],
+      head: [['Listing', 'Taken next 30 days', 'Asks next weekend', 'Cleaning (once)', 'Bookings', 'Nights', 'Sold for', 'Per night', 'Booked ahead']],
       body: compBody,
-      columnStyles: { 0: { cellWidth: 48 }, 1: { cellWidth: 18, halign: 'right' }, 2: { cellWidth: 21, halign: 'right' }, 3: { cellWidth: 16, halign: 'right' }, 4: { cellWidth: 13, halign: 'right' }, 5: { cellWidth: 24, halign: 'right' }, 6: { cellWidth: 21, halign: 'right' }, 7: { halign: 'right' } },
+      columnStyles: { 0: { cellWidth: 42 }, 1: { cellWidth: 16, halign: 'right' }, 2: { cellWidth: 19, halign: 'right' }, 3: { cellWidth: 17, halign: 'right' }, 4: { cellWidth: 15, halign: 'right' }, 5: { cellWidth: 12, halign: 'right' }, 6: { cellWidth: 22, halign: 'right' }, 7: { cellWidth: 19, halign: 'right' }, 8: { halign: 'right' } },
       didParseCell: (d) => {
         if (d.section === 'head' && d.column.index > 0) d.cell.styles.halign = 'right';
         if (d.section !== 'body') return;
@@ -194,7 +197,7 @@ export async function peersPdf({ properties, analysis, features, summary, run, f
       },
     });
     after();
-    para('Listing names open the listing on Airbnb.', 7.5, FAINT);
+    para('Listing names open the listing on Airbnb. Prices are all-in as Airbnb shows them (cleaning and fees included, before taxes); cleaning is measured weekly from two back-to-back stays against the same nights as one.', 7.5, FAINT);
 
     // When they sold.
     if (a) {
