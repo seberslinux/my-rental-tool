@@ -15,10 +15,11 @@
  *
  * ## The model
  *
- * For a night, the market is the competitors' asking price for that date
+ * For a night, the market is the competitors' nightly rate for that date
  * (their quotes for the nearest stay of the same kind, weekend or
- * weekday, the price leader left out) and how full they are that night.
- * Our price is set against it as a ratio, r = our guest price / market.
+ * weekday, the price leader left out, each with its own cleaning fee and
+ * the service fee taken off) and how full they are that night. Our rate
+ * is set against it as a ratio, r = our nightly rate / market.
  *
  * The chance of selling is  P · 1 / (1 + (r / r50)^S).
  *
@@ -178,7 +179,7 @@ async function pricePlan(propertyId, { today = new Date().toISOString().slice(0,
   const own = listings.find((l) => l.is_own);
 
   const quotes = peers.length ? await getAll(
-    `SELECT listing_id, to_char(check_in, 'YYYY-MM-DD') AS check_in, kind, nightly FROM peer_prices
+    `SELECT listing_id, to_char(check_in, 'YYYY-MM-DD') AS check_in, kind, nightly, nights FROM peer_prices
       WHERE listing_id = ANY($1::int[]) AND check_in BETWEEN $2::date - 10 AND $3::date + 10`,
     [peers, first, last]
   ) : [];
@@ -209,16 +210,18 @@ async function pricePlan(propertyId, { today = new Date().toISOString().slice(0,
     takenOn.set(c.date, t);
   }
 
-  // What a guest sees on Airbnb for a night against what we send to
-  // Smoobu. Airbnb shows every listing all-in — the nights, the cleaning
-  // fee and its own fees, before taxes, spread over the stay — so the
-  // competitors' prices are already comparable as they stand; only ours
-  // has to be turned back into a rate. That is our rate plus the channel
-  // markup, plus the cleaning fee shared over the nights. The cleaning is
-  // a fixed sum per stay, not a percentage — a ratio would overprice a
-  // cheap night and underprice a dear one — so it is measured as what is
-  // left of our own recent quotes once the markup is taken off.
+  // Prices compared as nightly rates, theirs and ours alike. Airbnb shows
+  // a stay all-in — the nights, the cleaning fee and its own fees — so a
+  // quote is taken apart the same way for everybody: the one-off cleaning
+  // fee off, the rest over the nights, the service fee off. What is left
+  // is the nightly rate, the number we set in Smoobu; for us, the cleaning
+  // and the markup are added back on the way to the guest.
+  //
+  // Each competitor's own cleaning fee, measured weekly; one not yet
+  // measured takes the competitors' average, and failing that ours.
   const markup = 1 + (Number(property.guest_markup_airbnb) || 0) / 100;
+  const { cleaningFees } = require('./peer-cleaning');
+  const fees = await cleaningFees([Number(propertyId)]);
   const ownQuotes = own ? await getAll(
     `SELECT pr.nightly, pr.nights, (d1.price + COALESCE(d2.price, d1.price)) / 2.0 AS rate
        FROM peer_prices pr
@@ -226,12 +229,15 @@ async function pricePlan(propertyId, { today = new Date().toISOString().slice(0,
        LEFT JOIN daily_rates d2 ON d2.property_id = $1 AND d2.date = to_char(pr.check_in + 1, 'YYYY-MM-DD')
       WHERE pr.listing_id = $2 AND d1.price > 0 AND pr.quoted_at > NOW() - INTERVAL '3 days'`, [propertyId, own.id]
   ) : [];
-  const perStay = median(ownQuotes.map((q) => (q.nightly - q.rate * markup) * q.nights));
-  const cleaning = perStay && perStay > 0 ? perStay : 0;
-  // The market is read from two-night stays, so ours is set on the same footing.
-  const share = cleaning / STAY_NIGHTS;
-  const toGuest = (rate) => rate * markup + share;
-  const toRate = (guest) => Math.max(0, (guest - share) / markup);
+  const fromQuotes = median(ownQuotes.map((q) => (q.nightly - q.rate * markup) * q.nights));
+  const ownCleaning = own && fees.byListing.has(own.id) ? fees.byListing.get(own.id).fee
+    : fromQuotes && fromQuotes > 0 ? fromQuotes : 0;
+  const peerAverage = fees.average.get(Number(propertyId));
+  const cleaningOf = (listingId) => (fees.byListing.has(listingId) ? fees.byListing.get(listingId).fee
+    : peerAverage ? peerAverage.average : ownCleaning);
+  const nightlyRate = (q) => Math.max(0, (q.nightly * q.nights - cleaningOf(q.listing_id)) / q.nights / markup);
+  // What a guest sees a night of ours at, on a two-night stay.
+  const guestNight = (rate) => rate * markup + ownCleaning / STAY_NIGHTS;
 
   const rates = await getAll(
     `SELECT date, price, available FROM daily_rates WHERE property_id = $1 AND date BETWEEN $2 AND $3 ORDER BY date`,
@@ -257,9 +263,10 @@ async function pricePlan(propertyId, { today = new Date().toISOString().slice(0,
       const gap = Math.abs(daysBetween(q.check_in, date));
       if (gap > 10) continue;
       const seen = near.get(q.listing_id);
-      if (!seen || gap < seen.gap) near.set(q.listing_id, { gap, nightly: q.nightly });
+      if (!seen || gap < seen.gap) near.set(q.listing_id, { gap, nightly: q.nightly, rate: nightlyRate(q) });
     }
-    const market = median([...near.values()].map((v) => v.nightly));
+    const market = median([...near.values()].map((v) => v.rate));
+    const marketAllIn = median([...near.values()].map((v) => v.nightly));
     const full = takenOn.get(date);
     const current = Number(r.price) || null;
     const base = { date, kind, current, competitors: near.size, floor: floorFor(date, s) };
@@ -269,21 +276,18 @@ async function pricePlan(propertyId, { today = new Date().toISOString().slice(0,
     }
     const fullness = full.taken / full.of;
     const lead = daysBetween(today, date);
-    const rec = recommendNight({
-      market, fullness, lead,
-      floor: floorFor(date, s) ? toGuest(floorFor(date, s)) : 0,
-      ceiling: s.ceiling ? toGuest(s.ceiling) : Infinity,
-    });
+    const rec = recommendNight({ market, fullness, lead, floor: floorFor(date, s) || 0, ceiling: s.ceiling || Infinity });
     if (!rec) { nights.push({ ...base, skip: 'floor above ceiling' }); continue; }
-    const asRate = (guest) => round(toRate(guest));
     nights.push({
       ...base,
       lead,
-      market: round(market),
-      market_rate: round(toRate(market)),
+      market: round(marketAllIn),
+      market_rate: round(market),
       fullness: Math.round(fullness * 100),
-      current_chance: current ? chanceAt(toGuest(current) / market, fullness, lead) : null,
-      recommended: Object.fromEntries(Object.entries(rec).map(([m, v]) => [m, { rate: asRate(v.price), chance: Math.round(v.chance * 100) / 100 }])),
+      current_chance: current ? chanceAt(current / market, fullness, lead) : null,
+      recommended: Object.fromEntries(Object.entries(rec).map(([m, v]) => [m, {
+        rate: round(v.price), guest: round(guestNight(v.price)), chance: Math.round(v.chance * 100) / 100,
+      }])),
     });
   }
 
@@ -305,7 +309,12 @@ async function pricePlan(propertyId, { today = new Date().toISOString().slice(0,
 
   return {
     property, settings: s,
-    conversion: { markup: Math.round((markup - 1) * 1000) / 10, cleaning: Math.round(cleaning), measured: ownQuotes.length },
+    conversion: {
+      markup: Math.round((markup - 1) * 1000) / 10,
+      cleaning: Math.round(ownCleaning),
+      competitors_cleaning: peerAverage ? peerAverage.average : null,
+      competitors_measured: peerAverage ? peerAverage.measured : 0,
+    },
     nights, totals, open_nights: nights.length, priced_nights: priced.length,
   };
 }

@@ -4,7 +4,7 @@ import { apiGet } from '../data/session';
 import { PeersSummaryCards, PeerSummaryRow, money } from './PeersSummary';
 import { Analysis, ESTIMATE_NOTE, SalesByPeriod, SalesTotals, Suggestions } from './PeerAnalysis';
 import { FeatureProps, FeaturesBlock, RecordDownloads } from './PeerFeatures';
-import { PropertyPeers, Quote, Run, competitorRows, daysAhead } from './peersShared';
+import { PropertyPeers, Quote, Run, cleaningSummary, cleaningText, competitorRows, daysAhead } from './peersShared';
 
 /**
  * How we are selling against the listings we compete with.
@@ -128,6 +128,7 @@ function CompetitorTable({ p, a }: { p: PropertyPeers; a: Analysis | undefined }
             <th className="font-medium px-3 py-2 text-left sticky left-0 bg-white">Listing</th>
             <th className={th}>Taken<br />next 30 days</th>
             <th className={th}>Asks<br />next weekend</th>
+            <th className={th}>Cleaning<br />(once)</th>
             <th className={`${th} border-l border-[#F0F0F0]`}>Bookings</th>
             <th className={th}>Nights</th>
             <th className={th}>Sold for</th>
@@ -149,6 +150,7 @@ function CompetitorTable({ p, a }: { p: PropertyPeers; a: Analysis | undefined }
               </td>
               <td className={td}>{taken == null ? '–' : `${taken}%`}</td>
               <td className={td}>{ask ? <>{money(ask.nightly, p.currency)}<span className="block text-[11px] text-[#717171]">{dayMonth(ask.date)}</span></> : <span className="text-[#B0B0B0]">{l.read ? 'sold out' : '–'}</span>}</td>
+              <td className={td}>{cleaningText(l.cleaning_fee, (n) => money(n, p.currency))}</td>
               <td className={`${td} border-l border-[#F0F0F0]`}>{s ? s.bookings : 0}</td>
               <td className={td}>{s ? s.nights : 0}</td>
               <td className={td}>{s && s.revenue != null ? `${money(s.revenue, p.currency)}${s.estimated ? '*' : ''}` : '–'}</td>
@@ -184,6 +186,12 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
     const res = await fetch('/api/peers/prices', { method: 'POST', credentials: 'same-origin' });
     setPricing(res.ok ? 'Reading prices in the background — about an hour. Reload to see them.' :
     res.status === 409 ? 'Prices are already being read.' : 'Could not start reading prices.');
+  };
+
+  const measureCleaning = async () => {
+    const res = await fetch('/api/peers/cleaning', { method: 'POST', credentials: 'same-origin' });
+    setPricing(res.ok ? 'Measuring cleaning fees in the background — a few minutes. Reload to see them.' :
+    res.status === 409 ? 'Cleaning fees are already being measured.' : 'Could not start measuring cleaning fees.');
   };
 
   const readNow = async () => {
@@ -253,6 +261,13 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
               Read prices
             </button>
           }
+          {isAdmin &&
+          <button
+            onClick={measureCleaning}
+            className="shrink-0 px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] bg-white text-[13px] font-semibold">
+              Measure cleaning
+            </button>
+          }
         </div>
         {pricing && <p className="text-[13px] text-[#717171]">{pricing}</p>}
         {run && run.error && run.listings_ok === 0 &&
@@ -288,9 +303,10 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
             <div>
               <div className={label}>Competitors</div>
               {a && a.total.bookings > 0 && <div className="mb-2"><SalesTotals a={a} /></div>}
+              {cleaningSummary(p, (n) => money(n, p.currency)) && <p className="text-[13px] text-[#222222] mb-2">{cleaningSummary(p, (n) => money(n, p.currency))}</p>}
               <CompetitorTable p={p} a={a} />
               <p className="text-[12px] text-[#B0B0B0] mt-1.5">
-                Tap a name to open it on Airbnb. Asking prices for {p.guests || 2} guests. {ESTIMATE_NOTE}
+                Tap a name to open it on Airbnb. Asking prices for {p.guests || 2} guests, all-in as Airbnb shows them (cleaning and fees included, before taxes). Cleaning is measured weekly: two back-to-back stays against the same nights as one. {ESTIMATE_NOTE}
               </p>
             </div>
 

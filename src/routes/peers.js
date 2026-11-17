@@ -209,6 +209,9 @@ router.get('/', scopeProperties, async (req, res) => {
       return taken.has(`${listingId}:${date}`) ? { nightly: null, open: false } : null;
     };
 
+    const { cleaningFees } = require('../services/peer-cleaning');
+    const cleaningOf = await cleaningFees();
+
     const byListing = new Map();
     for (const s of shares) {
       if (!byListing.has(s.listing_id)) byListing.set(s.listing_id, {});
@@ -226,6 +229,9 @@ router.get('/', scopeProperties, async (req, res) => {
           is_own: l.is_own,
           is_benchmark: l.is_benchmark,
           read: Boolean(byListing.get(l.id)),
+          // The one-off cleaning fee as a guest pays it, measured weekly.
+          cleaning_fee: cleaningOf.byListing.has(l.id) ? cleaningOf.byListing.get(l.id).fee : null,
+          cleaning_measured_on: cleaningOf.byListing.has(l.id) ? cleaningOf.byListing.get(l.id).measured_on : null,
           months: months.map((mo) => (m[mo] ? m[mo].sold : null)),
           weekend: weekends.map((d) => priceOf(l.id, 'weekend', d)),
           weekday: weekdays.map((d) => priceOf(l.id, 'weekday', d)),
@@ -254,6 +260,7 @@ router.get('/', scopeProperties, async (req, res) => {
           weekend_median: weekends.map((_, i) => median(peers.map((l) => (l.weekend[i] && l.weekend[i].open ? l.weekend[i].nightly : null)))),
           weekday_median: weekdays.map((_, i) => median(peers.map((l) => (l.weekday[i] && l.weekday[i].open ? l.weekday[i].nightly : null)))),
         },
+        cleaning: cleaningOf.average.get(p.id) || null,
         listings: mine,
         recent: recent.filter((r) => ids.has(r.listing_id)).map((r) => ({
           ...r,
@@ -307,6 +314,18 @@ router.post('/snapshots', requireRole('admin'), (req, res) => {
   res.status(202).json({ started: true });
 });
 
+let cleaning = false;
+router.post('/cleaning', requireRole('admin'), (req, res) => {
+  if (cleaning) return res.status(409).json({ error: 'Cleaning fees are already being measured' });
+  cleaning = true;
+  const { measureCleaningFees } = require('../services/peer-cleaning');
+  measureCleaningFees({ maxAgeDays: 0 })
+    .then((r) => console.log(`Cleaning fees (by hand): ${r.measured} of ${r.due} measured.`))
+    .catch((err) => console.error(`Cleaning fees (by hand) failed: ${err.message}`))
+    .finally(() => { cleaning = false; });
+  res.status(202).json({ started: true });
+});
+
 /**
  * The record, as CSV, for analysis outside the app.
  *
@@ -314,6 +333,10 @@ router.post('/snapshots', requireRole('admin'), (req, res) => {
  * and owning it means being able to take it anywhere.
  */
 const EXPORTS = {
+  cleaning: `SELECT f.id, l.name AS listing, p.name AS property, l.is_own, f.measured_at, f.check_in, f.nights,
+                    f.total_first, f.total_second, f.total_both, f.fee, f.note
+               FROM peer_cleaning_fees f JOIN peer_listings l ON l.id = f.listing_id
+               LEFT JOIN properties p ON p.id = l.property_id ORDER BY f.measured_at, l.id`,
   listings: `SELECT l.id, l.airbnb_id, l.name, p.name AS property, l.is_own, l.is_benchmark, l.active, l.created_at
                FROM peer_listings l LEFT JOIN properties p ON p.id = l.property_id ORDER BY l.id`,
   // A sale is priced only when its nights were quoted before they went.

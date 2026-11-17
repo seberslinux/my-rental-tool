@@ -334,6 +334,20 @@ cron.schedule('15 5 * * *', async () => {
 });
 
 /**
+ * 05:30 daily: the cleaning fee of every listing last measured a week
+ * ago — three quotes each, spread over the days like the snapshots.
+ */
+cron.schedule('30 5 * * *', async () => {
+  try {
+    const { measureCleaningFees } = require('../services/peer-cleaning');
+    const r = await measureCleaningFees();
+    console.log(`Cleaning fees: ${r.measured} of ${r.due} measured.`);
+  } catch (err) {
+    console.error(`Cleaning fees cron error: ${err.message}`);
+  }
+});
+
+/**
  * 08:30 daily: automatic pricing, after the morning's competitor read and
  * prices are in. Only properties with a mode chosen; the rest are off.
  */

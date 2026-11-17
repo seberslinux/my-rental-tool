@@ -115,8 +115,9 @@ test('a night the whole market has sold is priced above a quiet one', async () =
   }
   // Our R2,000 shows on Airbnb at R2,740 a night: R2,410 with the 20.5%
   // markup, and R330 a night of a R660 cleaning fee over two nights.
-  assert.deepEqual(body.conversion, { markup: 20.5, cleaning: 660, measured: DAYS });
-  assert.equal(night(19).market_rate, 2220, 'R3,000 all-in is (3000 − 330) / 1.205 in our rate, not 3000 / 1.37');
+  assert.deepEqual(body.conversion, { markup: 20.5, cleaning: 660, competitors_cleaning: null, competitors_measured: 0 });
+  assert.equal(night(19).market_rate, 2220, 'R3,000 all-in, less a R660 cleaning fee over two nights, less the markup: (6000 − 660) / 2 / 1.205');
+  assert.equal(night(19).recommended.balanced.guest, Math.round((night(19).recommended.balanced.rate * 1.205 + 330) / 10) * 10, 'and ours back to all-in for the guest');
   assert.equal(body.settings.mode, 'off');
   assert.ok(body.totals.revenue.money >= body.totals.occupancy.money, 'most money earns the most');
   assert.ok(body.totals.occupancy.nights >= body.totals.revenue.nights, 'most nights sells the most');
@@ -172,4 +173,54 @@ test("each month keeps its own floor", async () => {
 
   const { body } = await agent.get(`/api/properties/${lodge.id}/auto-pricing`).expect(200);
   assert.deepEqual(body.settings.floors, { [month]: 2200 });
+});
+
+test("each competitor's own measured cleaning fee comes off its price", async () => {
+  const { admin, lodge } = await setup();
+  // Peer 1 charges R0 cleaning, peers 2–4 R1,200; ours R660.
+  const ids = (await pool.query(`SELECT id, name FROM peer_listings WHERE property_id = $1 ORDER BY id`, [lodge.id])).rows;
+  for (const l of ids) {
+    const fee = l.name === 'Our lodge' ? 660 : l.name === 'Peer 1' ? 0 : 1200;
+    await pool.query(
+      `INSERT INTO peer_cleaning_fees (listing_id, check_in, nights, total_first, total_second, total_both, fee) VALUES ($1, $2, 2, 1, 1, 1, $3)`,
+      [l.id, inDays(10), fee]
+    );
+  }
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  const { body } = await agent.get(`/api/properties/${lodge.id}/auto-pricing`).expect(200);
+  assert.equal(body.conversion.competitors_cleaning, 900, 'average of R0, R1,200, R1,200 and R1,200');
+  assert.equal(body.conversion.competitors_measured, 4);
+  // Each R3,000 all-in for two nights: (6000 − 1200) / 2 / 1.205 = 1992 three times, (6000 − 0) / 2 / 1.205 = 2490 once.
+  const night = body.nights.find((n) => n.date === inDays(19));
+  assert.equal(night.market_rate, 1990, 'the median of their nightly rates, each with its own cleaning off');
+  assert.equal(night.market, 3000, 'all-in, as a guest sees it');
+
+  const page = await agent.get('/api/peers').expect(200);
+  const p = page.body.properties[0];
+  assert.deepEqual(p.cleaning, { average: 900, measured: 4, without: 1 });
+  assert.equal(p.listings.find((l) => l.name === 'Peer 1').cleaning_fee, 0);
+  assert.equal(p.listings.find((l) => l.name === 'Peer 2').cleaning_fee, 1200);
+});
+
+test('cleaning fees are measured once a week from three quotes and kept', async () => {
+  await setup();
+  const { measureCleaningFees } = require('../../src/services/peer-cleaning');
+  const asked = [];
+  // Every listing: R2,500 a night plus a R700 cleaning fee per stay.
+  const fetchQuote = async (id, checkIn, checkOut) => {
+    asked.push([id, checkIn, checkOut]);
+    const nights = Math.round((Date.parse(checkOut) - Date.parse(checkIn)) / 86400000);
+    return { nightly: 2500 + 700 / nights, total: 2500 * nights + 700 };
+  };
+  const r = await measureCleaningFees({ fetchQuote, today, pauseMs: 0 });
+  assert.equal(r.due, 5);
+  assert.equal(r.measured, 3, 'Peer 1 is full every night and ours has no calendar here');
+  assert.deepEqual(r.results.filter((x) => x.fee == null).map((x) => x.note), ['no open stretch to quote', 'no open stretch to quote']);
+  assert.equal(asked.length, 9, 'three quotes each');
+  const rows = await pool.query('SELECT fee, nights, total_first, total_second, total_both FROM peer_cleaning_fees');
+  assert.ok(rows.rows.every((x) => Number(x.fee) === 700 && x.nights === 2 && Number(x.total_both) === 10700));
+  const again = await measureCleaningFees({ fetchQuote, today, pauseMs: 0 });
+  assert.equal(again.measured, 0, 'not again within the week');
+  assert.equal(again.due, 2, 'only the two still without a fee are tried again');
 });

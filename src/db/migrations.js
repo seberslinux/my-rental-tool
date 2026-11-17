@@ -1069,6 +1069,23 @@ async function runMigrations() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_price_changes ON price_changes (property_id, changed_at DESC)`);
+  // Each listing's cleaning fee, measured weekly from three quotes and
+  // kept for good, with the totals behind it.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS peer_cleaning_fees (
+      id BIGSERIAL PRIMARY KEY,
+      listing_id INTEGER NOT NULL REFERENCES peer_listings(id) ON DELETE CASCADE,
+      measured_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      check_in DATE NOT NULL,
+      nights INTEGER NOT NULL,
+      total_first REAL,
+      total_second REAL,
+      total_both REAL,
+      fee REAL,
+      note TEXT
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_peer_cleaning_fees ON peer_cleaning_fees (listing_id, measured_at DESC)`);
   // A floor per month, where set; the general floor covers the rest.
   await pool.query(`ALTER TABLE auto_pricing ADD COLUMN IF NOT EXISTS floors JSONB NOT NULL DEFAULT '{}'::jsonb`);
 
