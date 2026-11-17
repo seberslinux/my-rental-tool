@@ -9,9 +9,10 @@ const { runAutoPricing } = require('../../src/services/dynamic-pricing');
 /**
  * Automatic pricing end to end, with Smoobu replaced by a recorder.
  *
- * Four competitors asking R3,000 a night (R2,190 in our rate at the 1.37
- * our own listing's quotes measure), our nights at R2,000, one of them
- * booked. On night 20 every competitor is full; on the others one is.
+ * Four competitors asking R3,000 a night all-in (R2,220 in our rate, once
+ * our 20.5% markup and the R330 a night of cleaning our own quotes show
+ * are taken off), our nights at R2,000, some of them booked. On night 20
+ * every competitor is full; on the others one is.
  */
 
 test.before(() => getApp());
@@ -25,6 +26,7 @@ const weekend = (d) => [5, 6].includes(new Date(`${d}T00:00:00Z`).getUTCDay());
 async function setup() {
   const admin = await seedUser({ role: 'admin' });
   const lodge = await seedProperty({ owner: admin, name: 'Hill Top Lodge' });
+  await pool.query('UPDATE properties SET guest_markup_airbnb = 20.5 WHERE id = $1', [lodge.id]);
   const listing = (id, name, own) => pool.query(
     `INSERT INTO peer_listings (airbnb_id, name, bedrooms, property_id, is_own) VALUES ($1, $2, 2, $3, $4) RETURNING id`,
     [id, name, lodge.id, own]
@@ -111,7 +113,10 @@ test('a night the whole market has sold is priced above a quiet one', async () =
   for (const m of ['occupancy', 'balanced', 'revenue']) {
     assert.ok(night(20).recommended[m].rate > night(19).recommended[m].rate, m);
   }
-  assert.ok(Math.abs(body.factor - 2740 / 2000) < 0.01, 'guest price against our rate, measured from our own quotes');
+  // Our R2,000 shows on Airbnb at R2,740 a night: R2,410 with the 20.5%
+  // markup, and R330 a night of a R660 cleaning fee over two nights.
+  assert.deepEqual(body.conversion, { markup: 20.5, cleaning: 660, measured: DAYS });
+  assert.equal(night(19).market_rate, 2220, 'R3,000 all-in is (3000 − 330) / 1.205 in our rate, not 3000 / 1.37');
   assert.equal(body.settings.mode, 'off');
   assert.ok(body.totals.revenue.money >= body.totals.occupancy.money, 'most money earns the most');
   assert.ok(body.totals.occupancy.nights >= body.totals.revenue.nights, 'most nights sells the most');
