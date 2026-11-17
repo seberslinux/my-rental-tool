@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { getApp, getAgent, resetDb, closePool } = require('../helpers/harness');
 const { seedUser, seedProperty, loginAs } = require('../helpers/seed');
 const { pool } = require('../../src/db/database');
-const { todayISO, inDays } = require('../helpers/dates');
+const { todayISO, inDays, daysAgo } = require('../helpers/dates');
 const { runAutoPricing } = require('../../src/services/dynamic-pricing');
 
 /**
@@ -115,9 +115,11 @@ test('a night the whole market has sold is priced above a quiet one', async () =
   }
   // Our R2,000 shows on Airbnb at R2,740 a night: R2,410 with the 20.5%
   // markup, and R330 a night of a R660 cleaning fee over two nights.
-  assert.deepEqual(body.conversion, { markup: 20.5, cleaning: 660, competitors_cleaning: null, competitors_measured: 0 });
-  assert.equal(night(19).market_rate, 2220, 'R3,000 all-in, less a R660 cleaning fee over two nights, less the markup: (6000 − 660) / 2 / 1.205');
-  assert.equal(night(19).recommended.balanced.guest, Math.round((night(19).recommended.balanced.rate * 1.205 + 330) / 10) * 10, 'and ours back to all-in for the guest');
+  assert.deepEqual(body.conversion, { markup: 20.5, cleaning: 660, stay: 2, competitors_cleaning: null, competitors_measured: 0 });
+  assert.equal(night(19).market, 6000, 'two nights at R3,000 all-in: the stay as a guest pays it');
+  assert.equal(night(19).market_rate, 2220, 'the rate that makes our two nights cost the same: (6000 − 660) / 2 / 1.205');
+  const bal = night(19).recommended.balanced;
+  assert.ok(Math.abs(bal.total - (bal.rate * 1.205 * 2 + 660)) <= 20, 'each recommendation carries the stay total it makes');
   assert.equal(body.settings.mode, 'off');
   assert.ok(body.totals.revenue.money >= body.totals.occupancy.money, 'most money earns the most');
   assert.ok(body.totals.occupancy.nights >= body.totals.revenue.nights, 'most nights sells the most');
@@ -175,8 +177,17 @@ test("each month keeps its own floor", async () => {
   assert.deepEqual(body.settings.floors, { [month]: 2200 });
 });
 
-test("each competitor's own measured cleaning fee comes off its price", async () => {
+test("the stay total competes: each competitor's own cleaning fee, our typical stay", async () => {
   const { admin, lodge } = await setup();
+  // Our typical stay is three nights.
+  for (const [id, ago] of [[880101, 60], [880102, 40]]) {
+    await pool.query(
+      `INSERT INTO bookings (smoobu_id, property_id, guest_name, check_in, check_out, platform, total_price, status,
+                             num_guests, length_of_stay, price_per_night, currency, lead_time_days, created_at)
+       VALUES ($1, $2, 'Past Guest', $3, $4, 'Airbnb', 6000, 'confirmed', 2, 3, 2000, 'ZAR', 10, $3)`,
+      [id, lodge.id, daysAgo(ago), daysAgo(ago - 3)]
+    );
+  }
   // Peer 1 charges R0 cleaning, peers 2–4 R1,200; ours R660.
   const ids = (await pool.query(`SELECT id, name FROM peer_listings WHERE property_id = $1 ORDER BY id`, [lodge.id])).rows;
   for (const l of ids) {
@@ -189,12 +200,15 @@ test("each competitor's own measured cleaning fee comes off its price", async ()
   const agent = await getAgent();
   await loginAs(agent, admin);
   const { body } = await agent.get(`/api/properties/${lodge.id}/auto-pricing`).expect(200);
+  assert.equal(body.conversion.stay, 3, 'the median of our stays: 2, 3 and 3 nights');
   assert.equal(body.conversion.competitors_cleaning, 900, 'average of R0, R1,200, R1,200 and R1,200');
   assert.equal(body.conversion.competitors_measured, 4);
-  // Each R3,000 all-in for two nights: (6000 − 1200) / 2 / 1.205 = 1992 three times, (6000 − 0) / 2 / 1.205 = 2490 once.
+  // Each quotes R6,000 for two nights. For three: R9,000 with no cleaning,
+  // (6000 − 1200) / 2 × 3 + 1200 = R8,400 with R1,200 cleaning.
   const night = body.nights.find((n) => n.date === inDays(19));
-  assert.equal(night.market_rate, 1990, 'the median of their nightly rates, each with its own cleaning off');
-  assert.equal(night.market, 3000, 'all-in, as a guest sees it');
+  assert.equal(night.market, 8400, 'the median three-night stay at the competitors');
+  assert.equal(night.market_rate, 2140, 'the rate that makes ours cost the same: (8400 − 660) / 3 / 1.205');
+  assert.equal(night.ours_total, Math.round((2000 * 1.205 * 3 + 660) / 10) * 10, 'and what ours costs at today\'s rate');
 
   const page = await agent.get('/api/peers').expect(200);
   const p = page.body.properties[0];
