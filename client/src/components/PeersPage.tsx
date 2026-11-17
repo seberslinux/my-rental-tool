@@ -1,9 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Download, ExternalLink, RefreshCw } from 'lucide-react';
 import { apiGet } from '../data/session';
 import { PeersSummaryCards, PeerSummaryRow, money } from './PeersSummary';
-import { Analysis, ESTIMATE_NOTE, ListingRow, SalesByPeriod, SalesTotals, Suggestions, plural } from './PeerAnalysis';
+import { Analysis, ESTIMATE_NOTE, SalesByPeriod, SalesTotals, Suggestions } from './PeerAnalysis';
 import { FeatureProps, FeaturesBlock, RecordDownloads } from './PeerFeatures';
+import { PropertyPeers, Quote, Run, competitorRows, daysAhead } from './peersShared';
 
 /**
  * How we are selling against the listings we compete with.
@@ -13,24 +14,6 @@ import { FeatureProps, FeaturesBlock, RecordDownloads } from './PeerFeatures';
  * too — the same reading as the peer analysis. The first reading only
  * records the calendars; sales appear from the second one on.
  */
-
-interface Quote { nightly: number; open: boolean; }
-interface Listing {
-  id: number; name: string; url: string; is_own: boolean; is_benchmark: boolean;
-  read: boolean; months: (number | null)[]; open_30: number | null;
-  weekend: (Quote | null)[]; weekday: (Quote | null)[];
-}
-interface Sale { id: number; name: string; check_in: string; check_out: string; nights: number; nightly: number | null; detected_at: string; }
-interface Prices {
-  weekends: string[]; weekdays: string[];
-  weekend_median: (number | null)[]; weekday_median: (number | null)[];
-}
-interface PropertyPeers {
-  id: number; name: string; currency?: string; guests?: number; months: string[];
-  own: Listing | null; benchmark: Listing | null; peer_median: (number | null)[];
-  prices: Prices; listings: Listing[]; recent: Sale[];
-}
-interface Run { finished_at: string; listings_ok: number; listings_failed: number; error: string | null; }
 
 const card = 'bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)]';
 const label = 'text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2';
@@ -127,12 +110,6 @@ function PriceTable({ title, dates, median, own, benchmark, currency }: {
     </div>);
 }
 
-/** The first stay still for sale among those quoted, and its price. */
-function nextAsk(quotes: (Quote | null)[] | undefined, dates: string[] | undefined) {
-  const i = (quotes || []).findIndex((q) => q && q.open && q.nightly);
-  return i < 0 || !dates ? null : { date: dates[i], nightly: (quotes as Quote[])[i].nightly };
-}
-
 /**
  * Every listing compared, on one row each: where it stands now (nights
  * taken in the next 30 days, what it asks for the next free weekend) and
@@ -140,17 +117,7 @@ function nextAsk(quotes: (Quote | null)[] | undefined, dates: string[] | undefin
  * opens the listing on Airbnb. Ours from Smoobu, all channels.
  */
 function CompetitorTable({ p, a }: { p: PropertyPeers; a: Analysis | undefined }) {
-  const sold = new Map<string, ListingRow>((a?.listings || []).map((l) => [l.is_own ? '__own' : l.name, l]));
-  const leaders = new Set((a?.leaders || []).map((l) => l.name));
-  const rows = p.listings.map((l) => {
-    const s = sold.get(l.is_own ? '__own' : l.name);
-    return {
-      l, s,
-      taken: l.open_30 == null ? null : Math.round(100 * (30 - l.open_30) / 30),
-      ask: nextAsk(l.weekend, p.prices?.weekends),
-      leader: Boolean(s?.is_leader) || leaders.has(l.name),
-    };
-  }).sort((x, y) => (y.s?.nights || 0) - (x.s?.nights || 0) || (y.taken ?? -1) - (x.taken ?? -1));
+  const rows = competitorRows(p, a);
   const th = 'font-medium px-3 py-2 text-right whitespace-nowrap';
   const td = 'px-3 py-2 text-right tabular-nums whitespace-nowrap';
   return (
@@ -186,7 +153,7 @@ function CompetitorTable({ p, a }: { p: PropertyPeers; a: Analysis | undefined }
               <td className={td}>{s ? s.nights : 0}</td>
               <td className={td}>{s && s.revenue != null ? `${money(s.revenue, p.currency)}${s.estimated ? '*' : ''}` : '–'}</td>
               <td className={td}>{s && s.avg_nightly != null ? money(s.avg_nightly, p.currency) : '–'}</td>
-              <td className={td}>{s && s.median_lead_days != null ? (s.median_lead_days === 0 ? 'same day' : plural(s.median_lead_days, 'day')) : '–'}</td>
+              <td className={td}>{daysAhead(s?.median_lead_days)}</td>
             </tr>
           )}
         </tbody>
@@ -194,39 +161,6 @@ function CompetitorTable({ p, a }: { p: PropertyPeers; a: Analysis | undefined }
     </div>);
 }
 
-const dateTime = (iso: string) => new Date(iso).toLocaleString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-
-/**
- * The page as one file to share: the same tables, every period and week
- * opened, the Airbnb links kept, the buttons left out. It carries its
- * own styles, so it opens anywhere without the app.
- */
-function savePage(root: HTMLElement, filename: string, title: string) {
-  let css = '';
-  for (const sheet of Array.from(document.styleSheets)) {
-    try { css += Array.from(sheet.cssRules).map((r) => r.cssText).join('\n'); } catch { /* another origin's sheet */ }
-  }
-  const copy = root.cloneNode(true) as HTMLElement;
-  copy.querySelectorAll('[data-no-export]').forEach((e) => e.remove());
-  copy.querySelectorAll('a[href]').forEach((el) => {
-    const href = el.getAttribute('href') || '';
-    if (href.startsWith('/')) el.setAttribute('href', `${location.origin}${href}`);
-    el.setAttribute('target', '_blank');
-    el.setAttribute('rel', 'noreferrer');
-  });
-  const esc = (t: string) => t.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>${css}
-body{margin:0;background:#F7F7F7;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-.recharts-wrapper,.recharts-wrapper svg{max-width:100%;height:auto}</style></head><body>${copy.outerHTML}</body></html>`;
-  const url = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
-  const link = document.createElement('a');
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
-}
 
 export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: number; isAdmin?: boolean }) {
   const [data, setData] = useState<{ properties: PropertyPeers[]; summary?: PeerSummaryRow[]; last_run: Run | null } | null>(null);
@@ -235,7 +169,6 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
 
   const load = useCallback(() => {
     apiGet<{ properties: PropertyPeers[]; summary?: PeerSummaryRow[]; last_run: Run | null }>('/api/peers')
@@ -271,25 +204,28 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
   const names = shown.map((p) => p.name).join(', ');
   const stamp = new Date().toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' });
 
-  const download = () => {
+  const download = async () => {
     setExporting(true);
-    // Let every period and week open before the copy is taken.
-    setTimeout(() => {
-      if (root.current) savePage(root.current, `Competitors - ${names} - ${stamp}.html`, `Competitors: ${names}`);
+    try {
+      // Loaded on the tap: the PDF library is large and most visits never print.
+      const { peersPdf } = await import('./peersPdf');
+      await peersPdf({
+        properties: shown,
+        analysis, features, summary: data.summary || [], run,
+        filename: `Competitors - ${names} - ${stamp}.pdf`,
+      });
+    } catch (err) {
+      setPricing('Could not make the PDF.');
+      console.error('PDF failed:', err);
+    } finally {
       setExporting(false);
-    }, 150);
+    }
   };
 
   return (
-    <div ref={root} className="p-4 bg-[#F7F7F7] min-h-full space-y-8 max-w-[900px]">
+    <div className="p-4 bg-[#F7F7F7] min-h-full space-y-8 max-w-[900px]">
       <div className="space-y-2">
-        {exporting &&
-        <div>
-            <h1 className="text-[22px] font-bold text-[#222222]">Competitors: {names}</h1>
-            {run && <p className="text-[13px] text-[#717171]">Read from Airbnb {dateTime(run.finished_at)} · {run.listings_ok} listings</p>}
-          </div>
-        }
-        <div data-no-export className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <p className="flex-1 min-w-[180px] text-[13px] text-[#717171]">
             {run ?
             <>Read from Airbnb {ago(run.finished_at)} · {run.listings_ok} listings
@@ -300,7 +236,7 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
             onClick={download}
             disabled={exporting}
             className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-[8px] border border-[#DDDDDD] bg-white text-[13px] font-semibold disabled:opacity-50">
-            <Download className="w-3.5 h-3.5" /> Download to share
+            <Download className="w-3.5 h-3.5" /> {exporting ? 'Making the PDF…' : 'Download PDF'}
           </button>
           {isAdmin &&
           <button
@@ -318,9 +254,9 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
             </button>
           }
         </div>
-        {pricing && <p data-no-export className="text-[13px] text-[#717171]">{pricing}</p>}
+        {pricing && <p className="text-[13px] text-[#717171]">{pricing}</p>}
         {run && run.error && run.listings_ok === 0 &&
-        <p data-no-export className="text-[13px] text-[#C13515]">{run.error}</p>
+        <p className="text-[13px] text-[#C13515]">{run.error}</p>
         }
       </div>
 
@@ -362,7 +298,7 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
             {a && (a.weeks.length > 0 || a.months.length > 0) &&
             <div>
                 <div className={label}>Sales</div>
-                <SalesByPeriod a={a} exporting={exporting} />
+                <SalesByPeriod a={a} />
               </div>
             }
 
