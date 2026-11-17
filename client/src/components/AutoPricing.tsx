@@ -25,7 +25,7 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 interface Change { date: string; old_price: number | null; new_price: number; mode: string; market: number | null; fullness: number | null; changed_at: string; }
 interface Data {
   modes: { key: Exclude<Mode, 'off'>; label: string }[];
-  settings: Settings; currency: string; factor: number; factor_measured: boolean;
+  settings: Settings; currency: string; conversion: { markup: number; cleaning: number; measured: number };
   totals: Record<'current' | Exclude<Mode, 'off'>, { nights: number; money: number }>;
   open_nights: number; priced_nights: number; nights: Night[]; changes: Change[];
 }
@@ -236,7 +236,9 @@ export function AutoPricing({ propertyId }: { propertyId: number }) {
           </div>
           <p className="text-[12px] text-[#B0B0B0] mt-1.5">
             Prices in your rate. The market is the competitors' median asking price for the nearest stay of the same kind,
-            the price leader left out, brought to your rate at {data.factor}× ({data.factor_measured ? 'measured from your own Airbnb listing' : 'your Airbnb markup'}).
+            the price leader left out. Airbnb shows every listing all-in — cleaning and fees included, before taxes — so
+            theirs compare as they are; yours is your rate plus the {data.conversion.markup}% channel markup
+            {data.conversion.cleaning ? <> plus your {money(data.conversion.cleaning, c)} cleaning fee shared over a two-night stay (measured from your own Airbnb listing)</> : ''}.
             In brackets: the chance it sells at that price. The arrow is what the next run sends, within your limits.
           </p>
           {!all && data.priced_nights > shown.length &&
