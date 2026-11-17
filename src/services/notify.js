@@ -110,6 +110,9 @@ const EVENTS = {
   peer_check_failed: { severity: 'attention' },
   // Monday's summary of what the competitors sold the week before.
   peer_weekly: { severity: 'info' },
+  // Automatic pricing sent new prices, or Smoobu refused them.
+  prices_updated: { severity: 'info' },
+  prices_failed: { severity: 'attention' },
 
   // The cleaner's own. Each of these replaces a bare whatsapp.sendMessage
   // that reported nothing and was recorded nowhere — which is how every
