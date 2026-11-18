@@ -157,7 +157,7 @@ export async function peersPdf({ properties, analysis, features, summary, run, f
     const cleaningLine = cleaningSummary(p, (n) => money(n, c));
     const stay = defaultStay(p);
     if (stay) {
-      const { rows: stayRows, median: stayMedian, share } = stayTable(p, a, stay);
+      const { rows: stayRows, median: stayMedian, markup } = stayTable(p, a, stay);
       heading(`Price for the same stay: two nights from ${day(stay.date)}`);
       if (cleaningLine) para(cleaningLine, 8.5, INK);
       const stayBody: any[][] = stayRows.map(({ l, b, booked, leader }) => [
@@ -170,7 +170,7 @@ export async function peersPdf({ properties, analysis, features, summary, run, f
       autoTable(doc, {
         ...tableStyle,
         startY: y,
-        head: [['Listing', 'Nightly (no fees)', 'Cleaning & stay fees (once)', 'Airbnb fees a night', 'Total, 2 nights']],
+        head: [['Listing', 'Nightly (base)', 'Cleaning & stay fees (once)', 'Channel markup a night', 'Total, 2 nights']],
         body: stayBody,
         columnStyles: { 0: { cellWidth: 62 }, 1: { halign: 'right', fontStyle: 'bold' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
         didParseCell: (d) => {
@@ -187,7 +187,7 @@ export async function peersPdf({ properties, analysis, features, summary, run, f
         },
       });
       after();
-      para(`Total = 2 × nightly + cleaning & stay fees + 2 × Airbnb fees: the all-in price Airbnb shows, before taxes. Cleaning & stay fees are measured weekly per listing (~ is the competitors' average until one is). Airbnb's fees are ${Math.round(share * 1000) / 10}% of the nights${p.airbnb_fee_measured ? ', as it kept on your own Airbnb bookings' : ''}. Listing names open the listing on Airbnb.`, 7.5, FAINT);
+      para(`Total = 2 × (nightly + channel markup) + cleaning & stay fees: the all-in price Airbnb shows, before taxes. Cleaning & stay fees are measured weekly per listing (~ is the competitors' average until one is). The nightly is the guest's nightly ÷ ${1 + markup / 100} (your ${markup}% Airbnb markup, the same for everyone), so yours is your Smoobu rate. Listing names open the listing on Airbnb.`, 7.5, FAINT);
     }
 
     // What each has sold since the watch began.
