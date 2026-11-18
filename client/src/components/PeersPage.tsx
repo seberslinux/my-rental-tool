@@ -126,7 +126,7 @@ function StayTable({ p, a }: { p: PropertyPeers; a: Analysis | undefined }) {
   const [pick, setPick] = useState(first ? `${first.kind}:${first.i}` : '');
   const chosen = dates.find((d) => `${d.kind}:${d.i}` === pick) || first;
   if (!chosen) return <p className="text-[13px] text-[#717171]">No prices read yet.</p>;
-  const { rows, median, share } = stayTable(p, a, chosen);
+  const { rows, median, markup } = stayTable(p, a, chosen);
   const m = (n: number) => money(n, p.currency);
   const th = 'font-medium px-3 py-2 text-right whitespace-nowrap';
   const td = 'px-3 py-2 text-right tabular-nums whitespace-nowrap';
@@ -145,9 +145,9 @@ function StayTable({ p, a }: { p: PropertyPeers; a: Analysis | undefined }) {
           <thead>
             <tr className="text-[12px] text-[#717171] align-bottom">
               <th className="font-medium px-3 py-2 text-left sticky left-0 bg-white">Listing</th>
-              <th className={th}>Nightly<br />(no fees)</th>
+              <th className={th}>Nightly<br />(base)</th>
               <th className={th}>Cleaning &amp;<br />stay fees (once)</th>
-              <th className={th}>Airbnb fees<br />a night</th>
+              <th className={th}>Channel markup<br />a night</th>
               <th className={th}>Total,<br />2 nights</th>
             </tr>
           </thead>
@@ -176,9 +176,9 @@ function StayTable({ p, a }: { p: PropertyPeers; a: Analysis | undefined }) {
         </table>
       </div>
       <p className="text-[12px] text-[#B0B0B0]">
-        Total = 2 × nightly + cleaning &amp; stay fees + 2 × Airbnb fees: the all-in price Airbnb shows, before taxes.
+        Total = 2 × (nightly + channel markup) + cleaning &amp; stay fees: the all-in price Airbnb shows, before taxes.
         Cleaning &amp; stay fees (cleaning, linen and the like) are measured weekly per listing; ~ is the competitors' average until one is.
-        Airbnb's fees are {Math.round(share * 1000) / 10}% of the nights{p.airbnb_fee_measured ? ', as it kept on your own Airbnb bookings' : ' (its standard rate)'}. The median leaves you and the price leader out.
+        The nightly is the guest's nightly ÷ {1 + markup / 100} (your {markup}% Airbnb markup, the same for everyone), so yours is your Smoobu rate. The median leaves you and the price leader out.
       </p>
     </div>);
 }

@@ -22,7 +22,7 @@ export interface PropertyPeers {
   own: Listing | null; benchmark: Listing | null; peer_median: (number | null)[];
   prices: Prices; listings: Listing[]; recent: Sale[];
   cleaning?: { average: number; measured: number; without: number } | null;
-  airbnb_fee?: number; airbnb_fee_measured?: boolean;
+  airbnb_markup?: number;
 }
 export interface Run { finished_at: string; listings_ok: number; listings_failed: number; error: string | null; }
 
@@ -75,23 +75,28 @@ export const daysAhead = (n: number | null | undefined) =>
 /**
  * A two-night stay taken apart, as Airbnb charges it:
  *
- *   total = 2 × nightly + cleaning & stay fees + 2 × Airbnb fees a night
+ *   total = 2 × nightly × (1 + markup) + cleaning & stay fees
  *
- * The total is the all-in quote. The cleaning and stay fees (cleaning,
- * linen and the like, once per stay) are measured per listing. Airbnb's
- * share is what it kept of our own Airbnb bookings, applied to the
- * nights; what is left is the nightly price without any fees — the
- * number that compares.
+ * The total is the all-in quote; the cleaning and stay fees (cleaning,
+ * linen and the like, once per stay) are measured per listing. What is
+ * left over the two nights is the nightly a guest sees, and Smoobu built
+ * it from the base up — base × (1 + markup) — so the base comes back by
+ * dividing: guest nightly ÷ (1 + markup). Never by taking a percentage
+ * off the guest price: a markup is a share of the base and a commission
+ * a share of the price, and the two do not cancel. For us this is our
+ * Smoobu rate to the rand; for a competitor, the same steps with the same
+ * markup, so every row is on one footing.
  */
 export interface Breakdown { nightly: number; cleaning: number; fees: number; total: number; cleaningMeasured: boolean; }
 export const STAY = 2;
 
-export function breakdown(allInNightly: number, cleaning: number | null | undefined, share: number, fallbackCleaning = 0): Breakdown {
+export function breakdown(allInNightly: number, cleaning: number | null | undefined, markupPercent: number, fallbackCleaning = 0): Breakdown {
   const total = allInNightly * STAY;
   const measured = cleaning != null;
   const c = Math.min(measured ? cleaning as number : fallbackCleaning, total);
-  const fees = (share * (total - c)) / STAY;
-  return { nightly: (total - c) / STAY - fees, cleaning: c, fees, total, cleaningMeasured: measured };
+  const guestNightly = (total - c) / STAY;
+  const nightly = guestNightly / (1 + markupPercent / 100);
+  return { nightly, cleaning: c, fees: guestNightly - nightly, total, cleaningMeasured: measured };
 }
 
 export interface StayRow { l: Listing; b: Breakdown | null; booked: boolean; leader: boolean; }
@@ -113,14 +118,14 @@ export function defaultStay(p: PropertyPeers) {
 
 /** Every listing's two-night stay on one date, cheapest total first, with the competitors' median. */
 export function stayTable(p: PropertyPeers, a: Analysis | undefined, stay: { kind: 'weekend' | 'weekday'; i: number }) {
-  const share = p.airbnb_fee ?? 0.155;
+  const markup = p.airbnb_markup ?? 0;
   const leaders = new Set((a?.leaders || []).map((l) => l.name));
   const rows: StayRow[] = p.listings.map((l) => {
     const q = (stay.kind === 'weekend' ? l.weekend : l.weekday)?.[stay.i] || null;
     const leader = leaders.has(l.name);
     if (!q) return { l, b: null, booked: false, leader };
     if (!q.open || !q.nightly) return { l, b: null, booked: true, leader };
-    return { l, b: breakdown(q.nightly, l.cleaning_fee, share, p.cleaning?.average ?? 0), booked: false, leader };
+    return { l, b: breakdown(q.nightly, l.cleaning_fee, markup, p.cleaning?.average ?? 0), booked: false, leader };
   }).sort((x, y) => (x.b ? x.b.total : Infinity) - (y.b ? y.b.total : Infinity) || Number(y.booked) - Number(x.booked));
   const peers = rows.filter((r) => r.b && !r.l.is_own && !r.leader).map((r) => r.b as Breakdown);
   const med = (xs: number[]) => {
@@ -135,13 +140,13 @@ export function stayTable(p: PropertyPeers, a: Analysis | undefined, stay: { kin
     fees: med(peers.map((b) => b.fees)) as number,
     total: med(peers.map((b) => b.total)) as number,
   } : null;
-  return { rows, median, share };
+  return { rows, median, markup };
 }
 
 /** A listing's nightly price without fees or cleaning for one quote, or null. */
 export function nightlyNoFees(p: PropertyPeers, l: Listing, q: Quote | null | undefined) {
   if (!q || !q.open || !q.nightly) return null;
-  return breakdown(q.nightly, l.cleaning_fee, p.airbnb_fee ?? 0.155, p.cleaning?.average ?? 0).nightly;
+  return breakdown(q.nightly, l.cleaning_fee, p.airbnb_markup ?? 0, p.cleaning?.average ?? 0).nightly;
 }
 
 /** Rows for a price table: you, the benchmark and the competitors' median, nightly without fees. */
