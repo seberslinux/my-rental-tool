@@ -4,7 +4,7 @@ import type { Analysis, Period } from './PeerAnalysis';
 import { ESTIMATE_NOTE } from './PeerAnalysis';
 import type { FeatureProps } from './PeerFeatures';
 import type { PeerSummaryRow } from './PeersSummary';
-import { PropertyPeers, Quote, Run, cleaningSummary, cleaningText, competitorRows, daysAhead } from './peersShared';
+import { PropertyPeers, Run, cleaningSummary, competitorRows, daysAhead, defaultStay, nightlyRows, stayTable } from './peersShared';
 
 /**
  * The Competitors page as a PDF anybody can open: the same figures, laid
@@ -153,22 +153,55 @@ export async function peersPdf({ properties, analysis, features, summary, run, f
       });
     }
 
-    // Every listing on one row.
-    heading('Competitors');
+    // The same two-night stay at every listing, taken apart.
+    const cleaningLine = cleaningSummary(p, (n) => money(n, c));
+    const stay = defaultStay(p);
+    if (stay) {
+      const { rows: stayRows, median: stayMedian, share } = stayTable(p, a, stay);
+      heading(`Price for the same stay: two nights from ${day(stay.date)}`);
+      if (cleaningLine) para(cleaningLine, 8.5, INK);
+      const stayBody: any[][] = stayRows.map(({ l, b, booked, leader }) => [
+        `${l.is_own ? `You (${clean(l.name)})` : clean(l.name)}${l.is_benchmark ? '\nBENCHMARK' : ''}${leader ? '\nPRICE LEADER' : ''}`,
+        ...(b ? [money(b.nightly, c), `${b.cleaning ? money(b.cleaning, c) : 'none'}${b.cleaningMeasured ? '' : '~'}`, money(b.fees, c), money(b.total, c)]
+          : [{ content: booked ? 'booked those nights' : 'not quoted', colSpan: 4, styles: { textColor: FAINT, fontStyle: 'normal', halign: 'left' } }]),
+      ]);
+      if (stayMedian) stayBody.push(['Competitors (median)', money(stayMedian.nightly, c), money(stayMedian.cleaning, c), money(stayMedian.fees, c), money(stayMedian.total, c)]);
+      const stayOf = (raw: unknown) => stayRows[stayBody.indexOf(raw as any[])];
+      autoTable(doc, {
+        ...tableStyle,
+        startY: y,
+        head: [['Listing', 'Nightly (no fees)', 'Cleaning & stay fees (once)', 'Airbnb fees a night', 'Total, 2 nights']],
+        body: stayBody,
+        columnStyles: { 0: { cellWidth: 62 }, 1: { halign: 'right', fontStyle: 'bold' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' } },
+        didParseCell: (d) => {
+          if (d.section === 'head' && d.column.index > 0) d.cell.styles.halign = 'right';
+          if (d.section !== 'body') return;
+          const r = stayOf(d.row.raw);
+          if (r && r.l.is_own) d.cell.styles.fillColor = OWN_ROW;
+          if (r && d.column.index === 0) d.cell.styles.textColor = BLUE;
+          if (!r) { d.cell.styles.textColor = MUTED; d.cell.styles.lineWidth = { top: 0.5 } as any; }
+        },
+        didDrawCell: (d) => {
+          const r = d.section === 'body' && d.column.index === 0 ? stayOf(d.row.raw) : null;
+          if (r) doc.link(d.cell.x, d.cell.y, d.cell.width, d.cell.height, { url: r.l.url });
+        },
+      });
+      after();
+      para(`Total = 2 × nightly + cleaning & stay fees + 2 × Airbnb fees: the all-in price Airbnb shows, before taxes. Cleaning & stay fees are measured weekly per listing (~ is the competitors' average until one is). Airbnb's fees are ${Math.round(share * 1000) / 10}% of the nights${p.airbnb_fee_measured ? ', as it kept on your own Airbnb bookings' : ''}. Listing names open the listing on Airbnb.`, 7.5, FAINT);
+    }
+
+    // What each has sold since the watch began.
+    heading('What they sold');
     if (a && a.total.bookings > 0) {
       const t = (q: Period | undefined) => (!q || !q.bookings ? 'nothing sold' :
         `${q.bookings} bookings, ${q.nights} nights, ${money(q.revenue, c)}${q.estimated ? '*' : ''}${q.avg_nightly != null ? ` at ${money(q.avg_nightly, c)} a night` : ''}${q.median_lead_days != null ? `, booked ${daysAhead(q.median_lead_days)} ahead` : ''}`);
       para(`Competitors${a.since ? ` since ${day(a.since)}` : ''}: ${t(a.total)}.`, 8.5, INK);
       para(`You, all channels: ${t(a.you)}.`, 8.5, GREEN);
     }
-    const cleaningLine = cleaningSummary(p, (n) => money(n, c));
-    if (cleaningLine) para(cleaningLine, 8.5, INK);
     const rows = competitorRows(p, a);
-    const compBody = rows.map(({ l, s: sold, taken, ask, leader }) => [
+    const compBody = rows.map(({ l, s: sold, taken, leader }) => [
         `${l.is_own ? `You (${clean(l.name)})` : clean(l.name)}${l.is_benchmark ? '\nBENCHMARK' : ''}${leader ? '\nPRICE LEADER' : ''}`,
         taken == null ? '–' : `${taken}%`,
-        ask ? `${money(ask.nightly, c)}\n${day(ask.date)}` : l.read ? 'sold out' : '–',
-        cleaningText(l.cleaning_fee, (n) => money(n, c)),
         String(sold ? sold.bookings : 0),
         String(sold ? sold.nights : 0),
         sold && sold.revenue != null ? `${money(sold.revenue, c)}${sold.estimated ? '*' : ''}` : '–',
@@ -181,9 +214,9 @@ export async function peersPdf({ properties, analysis, features, summary, run, f
     autoTable(doc, {
       ...tableStyle,
       startY: y,
-      head: [['Listing', 'Taken next 30 days', 'Asks next weekend', 'Cleaning (once)', 'Bookings', 'Nights', 'Sold for', 'Per night', 'Booked ahead']],
+      head: [['Listing', 'Taken next 30 days', 'Bookings', 'Nights', 'Sold for', 'Per night', 'Booked ahead']],
       body: compBody,
-      columnStyles: { 0: { cellWidth: 42 }, 1: { cellWidth: 16, halign: 'right' }, 2: { cellWidth: 19, halign: 'right' }, 3: { cellWidth: 17, halign: 'right' }, 4: { cellWidth: 15, halign: 'right' }, 5: { cellWidth: 12, halign: 'right' }, 6: { cellWidth: 22, halign: 'right' }, 7: { cellWidth: 19, halign: 'right' }, 8: { halign: 'right' } },
+      columnStyles: { 0: { cellWidth: 56 }, 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right' }, 6: { halign: 'right' } },
       didParseCell: (d) => {
         if (d.section === 'head' && d.column.index > 0) d.cell.styles.halign = 'right';
         if (d.section !== 'body') return;
@@ -197,7 +230,7 @@ export async function peersPdf({ properties, analysis, features, summary, run, f
       },
     });
     after();
-    para('Listing names open the listing on Airbnb. Prices are all-in as Airbnb shows them (cleaning and fees included, before taxes); cleaning is measured weekly from two back-to-back stays against the same nights as one.', 7.5, FAINT);
+    para("Competitors' sales count their cleaning once per stay.", 7.5, FAINT);
 
     // When they sold.
     if (a) {
@@ -284,13 +317,10 @@ export async function peersPdf({ properties, analysis, features, summary, run, f
     });
     after();
 
-    const priceTable = (title: string, dates: string[], median: (number | null)[], own: (Quote | null)[] | undefined, bench: (Quote | null)[] | undefined) => {
+    const priceTable = (title: string, kind: 'weekend' | 'weekday') => {
+      const { dates, rows: priceRows } = nightlyRows(p, a, kind);
       if (!dates.length) return;
-      const cell = (q: Quote | null | undefined) => (!q ? '–' : q.open ? money(q.nightly, c) : 'sold');
-      const body: string[][] = [];
-      if (own) body.push(['You', ...dates.map((_, i) => cell(own[i]))]);
-      if (bench && p.benchmark) body.push([clean(p.benchmark.name), ...dates.map((_, i) => cell(bench[i]))]);
-      body.push(['Others (median)', ...median.map((v) => money(v, c))]);
+      const body = priceRows.map((r) => [clean(r.name), ...r.values.map((v) => (v == null ? '–' : v === 'sold' ? 'sold' : money(v, c)))]);
       autoTable(doc, {
         ...tableStyle,
         startY: y,
@@ -305,9 +335,9 @@ export async function peersPdf({ properties, analysis, features, summary, run, f
       after();
     };
     if (p.prices && (p.prices.weekends.length || p.prices.weekdays.length)) {
-      heading(`Ahead: price per night, ${p.guests || 2} guests`);
-      priceTable('Weekend (Fri)', p.prices.weekends, p.prices.weekend_median, p.own?.weekend, p.benchmark?.weekend);
-      priceTable('Weekday (Mon)', p.prices.weekdays, p.prices.weekday_median, p.own?.weekday, p.benchmark?.weekday);
+      heading(`Ahead: nightly price without fees or cleaning, ${p.guests || 2} guests`);
+      priceTable('Weekend (Fri)', 'weekend');
+      priceTable('Weekday (Mon)', 'weekday');
     }
 
     // What a renovation should aim at.

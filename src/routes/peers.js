@@ -211,6 +211,13 @@ router.get('/', scopeProperties, async (req, res) => {
 
     const { cleaningFees } = require('../services/peer-cleaning');
     const cleaningOf = await cleaningFees();
+    // Airbnb's share of a booking, from our own Airbnb bookings (what it
+    // kept over what the guest paid): the fee part of everybody's price.
+    const feeShare = new Map((await getAll(
+      `SELECT property_id, percentile_cont(0.5) WITHIN GROUP (ORDER BY commission / total_price) AS share
+         FROM bookings WHERE platform ILIKE 'airbnb%' AND status = 'confirmed' AND total_price > 0 AND commission > 0
+        GROUP BY property_id`
+    )).map((r) => [r.property_id, Number(r.share)]));
 
     const byListing = new Map();
     for (const s of shares) {
@@ -261,6 +268,9 @@ router.get('/', scopeProperties, async (req, res) => {
           weekday_median: weekdays.map((_, i) => median(peers.map((l) => (l.weekday[i] && l.weekday[i].open ? l.weekday[i].nightly : null)))),
         },
         cleaning: cleaningOf.average.get(p.id) || null,
+        // Airbnb's share: measured where we have Airbnb bookings, its standard 15.5% otherwise.
+        airbnb_fee: feeShare.get(p.id) || 0.155,
+        airbnb_fee_measured: feeShare.has(p.id),
         listings: mine,
         recent: recent.filter((r) => ids.has(r.listing_id)).map((r) => ({
           ...r,

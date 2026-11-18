@@ -4,7 +4,7 @@ import { apiGet } from '../data/session';
 import { PeersSummaryCards, PeerSummaryRow, money } from './PeersSummary';
 import { Analysis, ESTIMATE_NOTE, SalesByPeriod, SalesTotals, Suggestions } from './PeerAnalysis';
 import { FeatureProps, FeaturesBlock, RecordDownloads } from './PeerFeatures';
-import { PropertyPeers, Quote, Run, cleaningSummary, cleaningText, competitorRows, daysAhead } from './peersShared';
+import { Listing, PropertyPeers, Run, cleaningSummary, competitorRows, daysAhead, defaultStay, nightlyRows, stayDates, stayTable } from './peersShared';
 
 /**
  * How we are selling against the listings we compete with.
@@ -66,19 +66,19 @@ function SoldTable({ p }: { p: PropertyPeers }) {
 const dayMonth = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
 
 /**
- * Asking price per night for the same stay, side by side.
+ * Nightly price without fees or cleaning for the same stay, side by side.
  *
  * A stay that has already sold shows as "sold": the price it was on sale
  * for is not what anybody can book it for now, and leaving it in would
  * make a full competitor look cheap or dear by accident.
  */
-function PriceTable({ title, dates, median, own, benchmark, currency }: {
-  title: string; dates: string[]; median: (number | null)[]; currency?: string;
-  own: (Quote | null)[] | undefined; benchmark: { name: string; quotes: (Quote | null)[] } | null;
+function PriceTable({ title, dates, rows, currency }: {
+  title: string; dates: string[]; currency?: string;
+  rows: { name: string; mine?: boolean; values: (number | 'sold' | null)[] }[];
 }) {
   if (!dates.length) return null;
-  const cell = (q: Quote | null | undefined) =>
-    !q ? '–' : q.open ? money(q.nightly, currency) : <span className="text-[#B0B0B0]">sold</span>;
+  const cell = (v: number | 'sold' | null) =>
+    v == null ? '–' : v === 'sold' ? <span className="text-[#B0B0B0]">sold</span> : money(v, currency);
   return (
     <div className={`${card} overflow-x-auto`}>
       <table className="w-full text-[14px]">
@@ -89,34 +89,102 @@ function PriceTable({ title, dates, median, own, benchmark, currency }: {
           </tr>
         </thead>
         <tbody>
-          {own &&
-          <tr className="border-t border-[#F0F0F0]">
-              <td className="px-4 py-2 font-semibold">You</td>
-              {dates.map((_, i) => <td key={i} className="px-2 py-2 text-right tabular-nums whitespace-nowrap">{cell(own[i])}</td>)}
+          {rows.map((r) =>
+          <tr key={r.name} className="border-t border-[#F0F0F0]">
+              <td className={`px-4 py-2 max-w-[160px] truncate ${r.mine ? 'font-semibold' : ''}`}>{r.name}</td>
+              {r.values.map((v, i) => <td key={i} className="px-2 py-2 text-right tabular-nums whitespace-nowrap">{cell(v)}</td>)}
             </tr>
-          }
-          {benchmark &&
-          <tr className="border-t border-[#F0F0F0]">
-              <td className="px-4 py-2 max-w-[160px] truncate">{benchmark.name}</td>
-              {dates.map((_, i) => <td key={i} className="px-2 py-2 text-right tabular-nums whitespace-nowrap">{cell(benchmark.quotes[i])}</td>)}
-            </tr>
-          }
-          <tr className="border-t border-[#F0F0F0]">
-            <td className="px-4 py-2">Others (median)</td>
-            {median.map((v, i) => <td key={i} className="px-2 py-2 text-right tabular-nums whitespace-nowrap">{v == null ? '–' : money(v, currency)}</td>)}
-          </tr>
+          )}
         </tbody>
       </table>
     </div>);
 }
 
+/** The listing's name, linking to Airbnb, with its tags. */
+function NameCell({ l, leader }: { l: Listing; leader: boolean }) {
+  return (
+    <td className={`px-3 py-2 sticky left-0 min-w-[150px] max-w-[220px] ${l.is_own ? 'bg-[#F4FAF7]' : 'bg-white'}`}>
+      <a href={l.url} target="_blank" rel="noreferrer" className={`text-[#222222] underline decoration-[#DDDDDD] underline-offset-2 ${l.is_own ? 'font-semibold' : ''}`}>
+        {l.is_own ? 'You' : l.name}
+        <ExternalLink className="inline w-3 h-3 ml-1 text-[#B0B0B0] align-[-1px]" />
+      </a>
+      {l.is_own && <span className="block text-[11px] text-[#717171] truncate">{l.name}</span>}
+      {l.is_benchmark && <span className="block text-[11px] font-semibold text-[#FF385C]">BENCHMARK</span>}
+      {leader && <span className="block text-[11px] font-semibold text-[#C9A227]">PRICE LEADER</span>}
+    </td>);
+}
+
 /**
- * Every listing compared, on one row each: where it stands now (nights
- * taken in the next 30 days, what it asks for the next free weekend) and
- * what it has sold since the watch began, with how far ahead. The name
- * opens the listing on Airbnb. Ours from Smoobu, all channels.
+ * The same two-night stay at every listing, taken apart so it compares:
+ * the nightly price without fees, the cleaning and stay fees charged once,
+ * Airbnb's fees a night, and the total a guest pays. One date for all,
+ * chosen from the quoted Fridays and Mondays.
  */
-function CompetitorTable({ p, a }: { p: PropertyPeers; a: Analysis | undefined }) {
+function StayTable({ p, a }: { p: PropertyPeers; a: Analysis | undefined }) {
+  const dates = stayDates(p);
+  const first = defaultStay(p);
+  const [pick, setPick] = useState(first ? `${first.kind}:${first.i}` : '');
+  const chosen = dates.find((d) => `${d.kind}:${d.i}` === pick) || first;
+  if (!chosen) return <p className="text-[13px] text-[#717171]">No prices read yet.</p>;
+  const { rows, median, share } = stayTable(p, a, chosen);
+  const m = (n: number) => money(n, p.currency);
+  const th = 'font-medium px-3 py-2 text-right whitespace-nowrap';
+  const td = 'px-3 py-2 text-right tabular-nums whitespace-nowrap';
+  const weekday = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString('en-ZA', { weekday: 'short', day: 'numeric', month: 'short' });
+  return (
+    <div className="space-y-2">
+      <label className="flex items-center gap-2 text-[13px] text-[#717171]">
+        Two nights from
+        <select value={`${chosen.kind}:${chosen.i}`} onChange={(e) => setPick(e.target.value)}
+          className="h-[32px] px-2 border border-[#DDDDDD] rounded-[8px] text-[13px] bg-white text-[#222222]">
+          {dates.map((d) => <option key={`${d.kind}:${d.i}`} value={`${d.kind}:${d.i}`}>{weekday(d.date)}</option>)}
+        </select>
+      </label>
+      <div className={`${card} overflow-x-auto`}>
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="text-[12px] text-[#717171] align-bottom">
+              <th className="font-medium px-3 py-2 text-left sticky left-0 bg-white">Listing</th>
+              <th className={th}>Nightly<br />(no fees)</th>
+              <th className={th}>Cleaning &amp;<br />stay fees (once)</th>
+              <th className={th}>Airbnb fees<br />a night</th>
+              <th className={th}>Total,<br />2 nights</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(({ l, b, booked, leader }) =>
+            <tr key={l.id} className={`border-t border-[#F0F0F0] ${l.is_own ? 'bg-[#F4FAF7]' : ''}`}>
+                <NameCell l={l} leader={leader} />
+                {b ? <>
+                  <td className={`${td} font-semibold`}>{m(b.nightly)}</td>
+                  <td className={td}>{b.cleaning ? m(b.cleaning) : 'none'}{b.cleaningMeasured ? '' : '~'}</td>
+                  <td className={td}>{m(b.fees)}</td>
+                  <td className={td}>{m(b.total)}</td>
+                </> : <td colSpan={4} className="px-3 py-2 text-left text-[#B0B0B0]">{booked ? 'booked those nights' : 'not quoted'}</td>}
+              </tr>
+            )}
+            {median &&
+            <tr className="border-t-2 border-[#E0E0E0]">
+                <td className="px-3 py-2 sticky left-0 bg-white text-[#717171]">Competitors (median)</td>
+                <td className={`${td} font-semibold`}>{m(median.nightly)}</td>
+                <td className={td}>{m(median.cleaning)}</td>
+                <td className={td}>{m(median.fees)}</td>
+                <td className={td}>{m(median.total)}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[12px] text-[#B0B0B0]">
+        Total = 2 × nightly + cleaning &amp; stay fees + 2 × Airbnb fees: the all-in price Airbnb shows, before taxes.
+        Cleaning &amp; stay fees (cleaning, linen and the like) are measured weekly per listing; ~ is the competitors' average until one is.
+        Airbnb's fees are {Math.round(share * 1000) / 10}% of the nights{p.airbnb_fee_measured ? ', as it kept on your own Airbnb bookings' : ' (its standard rate)'}. The median leaves you and the price leader out.
+      </p>
+    </div>);
+}
+
+/** What each listing has sold since the watch began, and how far ahead. */
+function SalesTable({ p, a }: { p: PropertyPeers; a: Analysis | undefined }) {
   const rows = competitorRows(p, a);
   const th = 'font-medium px-3 py-2 text-right whitespace-nowrap';
   const td = 'px-3 py-2 text-right tabular-nums whitespace-nowrap';
@@ -127,9 +195,7 @@ function CompetitorTable({ p, a }: { p: PropertyPeers; a: Analysis | undefined }
           <tr className="text-[12px] text-[#717171] align-bottom">
             <th className="font-medium px-3 py-2 text-left sticky left-0 bg-white">Listing</th>
             <th className={th}>Taken<br />next 30 days</th>
-            <th className={th}>Asks<br />next weekend</th>
-            <th className={th}>Cleaning<br />(once)</th>
-            <th className={`${th} border-l border-[#F0F0F0]`}>Bookings</th>
+            <th className={th}>Bookings</th>
             <th className={th}>Nights</th>
             <th className={th}>Sold for</th>
             <th className={th}>Per night</th>
@@ -137,21 +203,11 @@ function CompetitorTable({ p, a }: { p: PropertyPeers; a: Analysis | undefined }
           </tr>
         </thead>
         <tbody>
-          {rows.map(({ l, s, taken, ask, leader }) =>
+          {rows.map(({ l, s, taken, leader }) =>
           <tr key={l.id} className={`border-t border-[#F0F0F0] ${l.is_own ? 'bg-[#F4FAF7]' : ''}`}>
-              <td className={`px-3 py-2 sticky left-0 min-w-[150px] max-w-[220px] ${l.is_own ? 'bg-[#F4FAF7]' : 'bg-white'}`}>
-                <a href={l.url} target="_blank" rel="noreferrer" className={`text-[#222222] underline decoration-[#DDDDDD] underline-offset-2 ${l.is_own ? 'font-semibold' : ''}`}>
-                  {l.is_own ? 'You' : l.name}
-                  <ExternalLink className="inline w-3 h-3 ml-1 text-[#B0B0B0] align-[-1px]" />
-                </a>
-                {l.is_own && <span className="block text-[11px] text-[#717171] truncate">{l.name}</span>}
-                {l.is_benchmark && <span className="block text-[11px] font-semibold text-[#FF385C]">BENCHMARK</span>}
-                {leader && <span className="block text-[11px] font-semibold text-[#C9A227]">PRICE LEADER</span>}
-              </td>
+              <NameCell l={l} leader={leader} />
               <td className={td}>{taken == null ? '–' : `${taken}%`}</td>
-              <td className={td}>{ask ? <>{money(ask.nightly, p.currency)}<span className="block text-[11px] text-[#717171]">{dayMonth(ask.date)}</span></> : <span className="text-[#B0B0B0]">{l.read ? 'sold out' : '–'}</span>}</td>
-              <td className={td}>{cleaningText(l.cleaning_fee, (n) => money(n, p.currency))}</td>
-              <td className={`${td} border-l border-[#F0F0F0]`}>{s ? s.bookings : 0}</td>
+              <td className={td}>{s ? s.bookings : 0}</td>
               <td className={td}>{s ? s.nights : 0}</td>
               <td className={td}>{s && s.revenue != null ? `${money(s.revenue, p.currency)}${s.estimated ? '*' : ''}` : '–'}</td>
               <td className={td}>{s && s.avg_nightly != null ? money(s.avg_nightly, p.currency) : '–'}</td>
@@ -162,7 +218,6 @@ function CompetitorTable({ p, a }: { p: PropertyPeers; a: Analysis | undefined }
       </table>
     </div>);
 }
-
 
 export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: number; isAdmin?: boolean }) {
   const [data, setData] = useState<{ properties: PropertyPeers[]; summary?: PeerSummaryRow[]; last_run: Run | null } | null>(null);
@@ -301,12 +356,16 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
 
             {/* Everybody on one row: now, and what they sold. */}
             <div>
-              <div className={label}>Competitors</div>
-              {a && a.total.bookings > 0 && <div className="mb-2"><SalesTotals a={a} /></div>}
+              <div className={label}>Price for the same stay</div>
               {cleaningSummary(p, (n) => money(n, p.currency)) && <p className="text-[13px] text-[#222222] mb-2">{cleaningSummary(p, (n) => money(n, p.currency))}</p>}
-              <CompetitorTable p={p} a={a} />
+              <StayTable p={p} a={a} />
+            </div>
+            <div>
+              <div className={label}>What they sold</div>
+              {a && a.total.bookings > 0 && <div className="mb-2"><SalesTotals a={a} /></div>}
+              <SalesTable p={p} a={a} />
               <p className="text-[12px] text-[#B0B0B0] mt-1.5">
-                Tap a name to open it on Airbnb. Asking prices for {p.guests || 2} guests, all-in as Airbnb shows them (cleaning and fees included, before taxes). Cleaning is measured weekly: two back-to-back stays against the same nights as one. {ESTIMATE_NOTE}
+                Tap a name to open it on Airbnb. Prices for {p.guests || 2} guests. Competitors' sales count their cleaning once per stay. {ESTIMATE_NOTE}
               </p>
             </div>
 
@@ -325,22 +384,10 @@ export function PeersPage({ propertyId = 0, isAdmin = false }: { propertyId?: nu
             </div>
             {p.prices && (p.prices.weekends.length > 0 || p.prices.weekdays.length > 0) &&
             <div>
-                <div className={label}>Ahead: price per night, {p.guests || 2} guests</div>
+                <div className={label}>Ahead: nightly price without fees or cleaning, {p.guests || 2} guests</div>
                 <div className="space-y-3">
-                  <PriceTable
-                  title="Weekend (Fri)"
-                  dates={p.prices.weekends}
-                  median={p.prices.weekend_median}
-                  currency={p.currency}
-                  own={p.own?.weekend}
-                  benchmark={p.benchmark ? { name: p.benchmark.name, quotes: p.benchmark.weekend } : null} />
-                  <PriceTable
-                  title="Weekday (Mon)"
-                  dates={p.prices.weekdays}
-                  median={p.prices.weekday_median}
-                  currency={p.currency}
-                  own={p.own?.weekday}
-                  benchmark={p.benchmark ? { name: p.benchmark.name, quotes: p.benchmark.weekday } : null} />
+                  <PriceTable title="Weekend (Fri)" currency={p.currency} {...nightlyRows(p, a, 'weekend')} />
+                  <PriceTable title="Weekday (Mon)" currency={p.currency} {...nightlyRows(p, a, 'weekday')} />
                 </div>
               </div>
             }
