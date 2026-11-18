@@ -546,6 +546,18 @@ router.post('/:id/rate-plan/preview', async (req, res) => {
  * bookings. A property with none returns an empty object, which the
  * screen shows as nothing rather than as zero.
  */
+/** The VAT a channel adds to its commission, per channel: its own rate, else the property's. */
+async function commissionVat(propertyId) {
+  const p = await getOne('SELECT vat_rate, vat_airbnb, vat_booking, vat_vrbo FROM properties WHERE id = $1', [propertyId]);
+  if (!p) return {};
+  const general = Number(p.vat_rate) || 0;
+  return {
+    airbnb: Number(p.vat_airbnb) || general,
+    booking: Number(p.vat_booking) || general,
+    vrbo: Number(p.vat_vrbo) || general,
+  };
+}
+
 router.get('/:id/observed-markup', async (req, res) => {
   if (denyIfOutOfScope(req, res, req.params.id)) return;
 
@@ -587,7 +599,7 @@ router.get('/:id/observed-markup', async (req, res) => {
   // drift. The screen has to be able to say which is which.
   res.json({
     observed: observedMarkup({ bookings, rates }),
-    commissions: measuredCommission(everyBooking),
+    commissions: measuredCommission(everyBooking, { vat: await commissionVat(req.params.id) }),
     rated_nights: dates.length,
   });
 });
