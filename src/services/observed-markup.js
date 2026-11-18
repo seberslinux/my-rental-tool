@@ -246,8 +246,18 @@ function requiredMarkup(commissionPercent) {
  * reported no commission are left out rather than counted as zero —
  * "did not say" is not "took nothing", and averaging the two together
  * reports a channel as cheaper than it is.
+ *
+ * And the VAT on it. A channel charges VAT on its commission and hides
+ * it in the fees, so the real cut is the commission plus that VAT — 15%
+ * on Booking.com is 17.25%. Airbnb's figure in Smoobu is its host fee
+ * with the VAT already in it (15.5% plus VAT is the 17.83% it reports);
+ * Booking.com's is the bare commission, so the VAT is added here, at the
+ * property's rate for that channel. Without it the screen asked for a
+ * 17.6% markup on Booking.com where 20.85% is the least that clears it.
  */
-function measuredCommission(bookings = []) {
+const VAT_INCLUDED = { airbnb: true };
+
+function measuredCommission(bookings = [], { vat = {} } = {}) {
   const samples = {};
 
   for (const b of bookings) {
@@ -270,13 +280,16 @@ function measuredCommission(bookings = []) {
 
   const out = {};
   for (const [key, shares] of Object.entries(samples)) {
-    const mid = median(shares);
+    const vatRate = VAT_INCLUDED[key] ? 0 : Number(vat[key]) || 0;
+    const mid = median(shares) * (1 + vatRate / 100);
     const commission = Math.round(mid * 1000) / 10;
     out[key] = {
       commission,
+      // The VAT added on top of what the channel reported, in percent.
+      vat_added: vatRate,
       bookings: shares.length,
-      low: Math.round(Math.min(...shares) * 1000) / 10,
-      high: Math.round(Math.max(...shares) * 1000) / 10,
+      low: Math.round(Math.min(...shares) * (1 + vatRate / 100) * 1000) / 10,
+      high: Math.round(Math.max(...shares) * (1 + vatRate / 100) * 1000) / 10,
       // What the markup has to be for the payout to clear the base.
       required_markup: requiredMarkup(commission),
     };

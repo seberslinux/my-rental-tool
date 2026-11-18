@@ -299,3 +299,16 @@ test('the spread is reported so one renegotiated rate is visible', () => {
   assert.equal(out.booking.low, 15);
   assert.equal(out.booking.high, 20);
 });
+
+test("Booking.com's commission carries the VAT it charges on top; Airbnb's already has it", () => {
+  const out = measuredCommission([
+    { platform: 'Booking.com', status: 'confirmed', total_price: 6307.5, commission: 946.12 },
+    { platform: 'Booking.com', status: 'confirmed', total_price: 6802.5, commission: 1020.38 },
+    { platform: 'Airbnb', status: 'confirmed', total_price: 13521, commission: 2332.37 },
+  ], { vat: { airbnb: 15, booking: 15 } });
+  assert.ok(Math.abs(out.booking.commission - 17.25) <= 0.1, `15% plus 15% VAT on it is 17.25%, got ${out.booking.commission}`);
+  assert.equal(out.booking.vat_added, 15);
+  assert.ok(out.booking.required_markup >= 20.7 && out.booking.required_markup <= 20.9, `about 20.85%, not 17.6%; got ${out.booking.required_markup}`);
+  assert.ok(Math.abs(out.airbnb.commission - 17.25) <= 0.1, "Airbnb's host fee already includes the VAT");
+  assert.equal(out.airbnb.vat_added, 0);
+});
