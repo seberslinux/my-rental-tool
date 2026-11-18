@@ -251,6 +251,14 @@ async function bookingAnalysis({ scope = null, today = new Date().toISOString().
     [today]
   );
 
+  // Each listing's measured cleaning fee; the competitors' average where
+  // one is not measured yet, nothing where none is.
+  const { cleaningFees } = require('./peer-cleaning');
+  const fees = await cleaningFees(props.map((p) => p.id));
+  const propertyOf = new Map(rows.map((r) => [r.listing_id, r.property_id]));
+  const cleaningFor = (listingId) => (fees.byListing.has(listingId) ? fees.byListing.get(listingId).fee
+    : (fees.average.get(propertyOf.get(listingId)) || {}).average || 0);
+
   return props.map((p) => {
     const side = hemisphere(p);
     const money = moneyIn(p.currency);
@@ -268,13 +276,17 @@ async function bookingAnalysis({ scope = null, today = new Date().toISOString().
     // the price suggestions leave it out.
     const sales = all.map((r) => {
       const nightly = r.nightly != null ? r.nightly : r.est_nightly ?? latest.get(r.listing_id) ?? null;
+      // A quote is a two-night stay all-in, so its nightly carries half a
+      // cleaning fee. A sale is its nights without that, and the fee once.
+      const cleaning = cleaningFor(r.listing_id);
+      const revenue = nightly != null ? Math.max(0, nightly - cleaning / 2) * r.nights + cleaning : null;
       return {
         ...r,
         leader: outlierIds.has(r.listing_id),
         nightly_sold: r.nightly,
-        nightly_used: nightly,
+        nightly_used: revenue != null ? Math.round(revenue / r.nights) : null,
         estimated: r.nightly == null,
-        revenue: nightly != null ? nightly * r.nights : null,
+        revenue,
       };
     });
     const market = sales.filter((s) => !s.leader);
