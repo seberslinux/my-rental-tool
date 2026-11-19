@@ -17,6 +17,7 @@
  *   vat_airbnb / _booking / _vrbo,
  *   property_vat_rate (legacy fallback),
  *   converted_commission (Smoobu fallback when no property rate is set)
+ *   fee_total_pct (the fee table's total for the booking's date — wins when set)
  *
  * Direct bookings incur no deductions.
  */
@@ -32,6 +33,9 @@ function calcDeductions(b) {
   else if (platform.includes('booking')) { commRate = b.prop_commission_booking || 0; bankRate = b.bank_charge_booking || 0; vatRate = b.vat_booking || 0; }
   else if (platform.includes('vrbo')) { commRate = b.prop_commission_vrbo || 0; bankRate = b.bank_charge_vrbo || 0; vatRate = b.vat_vrbo || 0; }
   if (isDirect) return 0;
+  // The fee table's total for this booking — the row in force the day it
+  // was made — where the property has one; the columns below otherwise.
+  if (b.fee_total_pct != null && Number.isFinite(Number(b.fee_total_pct))) return rev * Number(b.fee_total_pct) / 100;
   // Fall back to legacy vat_rate if per-platform not set
   if (vatRate === 0) vatRate = b.property_vat_rate || 0;
   // If no property-level commission configured, fall back to Smoobu commission

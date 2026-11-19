@@ -35,6 +35,7 @@ const { syncRates } = require('../services/rate-sync');
 // than growing its own, so a booking cannot be worth one number here and
 // another in a report.
 const { calcDeductions } = require('../services/analytics-calc');
+const { BOOKING_FEE_SQL } = require('../services/channel-fees');
 const { recent: recentNotifications } = require('../services/notify');
 const { STILL_ON_SQL } = require('../services/job-life');
 
@@ -53,7 +54,8 @@ const FEE_COLUMNS = `
   p.commission_booking       AS prop_commission_booking,
   p.commission_vrbo          AS prop_commission_vrbo,
   p.bank_charge_airbnb, p.bank_charge_booking, p.bank_charge_vrbo,
-  p.vat_airbnb, p.vat_booking, p.vat_vrbo`;
+  p.vat_airbnb, p.vat_booking, p.vat_vrbo,
+  ${BOOKING_FEE_SQL}`;
 
 // Sync properties — uses the requesting user's API key (or env var fallback)
 router.post('/sync/properties', requireRole('admin'), async (req, res) => {
