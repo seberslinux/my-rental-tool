@@ -23,7 +23,7 @@ const { getUpcomingSchoolHolidays } = require('../services/school-holidays');
 const { getApiKeyForProperty } = require('../services/api-key-resolver');
 // One place decides who gets told what.
 const { notify } = require('../services/notify');
-const { feesFor, saveFees } = require('../services/channel-fees');
+const { feesFor, saveFees, removeFee } = require('../services/channel-fees');
 const { MODES: PRICING_MODES, pricePlan, targetFor, runAutoPricing, hasFloor } = require('../services/dynamic-pricing');
 
 // Apply property scoping to all routes
@@ -620,6 +620,16 @@ router.put('/:id/channel-fees', async (req, res) => {
     res.json({ channels: await feesFor(req.params.id) });
   } catch (err) {
     res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not save the fees' });
+  }
+});
+
+router.delete('/:id/channel-fees/:channel/:from', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  try {
+    await removeFee(req.params.id, req.params.channel, req.params.from);
+    res.json({ channels: await feesFor(req.params.id) });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not remove the fee' });
   }
 });
 

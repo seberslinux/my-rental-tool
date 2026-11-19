@@ -8,10 +8,15 @@ import { apiGet } from '../data/session';
  * total fees is their sum, and total markup = 1 / (1 − total fees) − 1 is
  * what Smoobu must add to the base for the payout to be the base again.
  * Beside it, the markup Smoobu adds today and what that pays out.
+ *
+ * Each row applies from a date (empty: from the start). A change of fee is
+ * a new row with a later date, so every booking keeps the fees of the day
+ * it was made.
  */
 
+interface Version { valid_from: string | null; commission: number; bank_charges: number; total_fees: number; }
 interface Row {
-  channel: string; label: string;
+  channel: string; label: string; valid_from: string | null; history: Version[];
   commission: number | null; vat_on_commission: number | null; bank_charges: number | null;
   total_fees: number | null; total_markup: number | null; smoobu_markup: number; payout: number | null; vat_rate: number;
 }
@@ -20,6 +25,7 @@ const CARD = 'bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1
 const SECTION = 'text-[12px] font-semibold uppercase tracking-[0.5px] text-[#B0B0B0] pb-2';
 const pct = (n: number | null | undefined) => (n == null ? '–' : `${Math.round(n * 100) / 100}%`);
 const FIELDS: [keyof Row, string][] = [['commission', 'Commission'], ['bank_charges', 'Bank charges']];
+const day = (iso: string | null) => (iso ? new Date(`${iso}T12:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short', year: 'numeric' }) : 'the start');
 
 export function ChannelFees({ propertyId }: { propertyId: number }) {
   const [rows, setRows] = useState<Row[] | null>(null);
@@ -30,7 +36,7 @@ export function ChannelFees({ propertyId }: { propertyId: number }) {
     apiGet<{ channels: Row[] }>(`/api/properties/${propertyId}/channel-fees`).then((d) => {
       setRows(d.channels);
       setDraft(Object.fromEntries(d.channels.map((r) => [r.channel,
-        Object.fromEntries(FIELDS.map(([k]) => [k, r[k] == null ? '' : String(r[k])]))])));
+        { ...Object.fromEntries(FIELDS.map(([k]) => [k, r[k] == null ? '' : String(r[k])])), valid_from: r.valid_from || '' }])));
     }).catch(() => setNote('Could not load the fees.'));
   }, [propertyId]);
   useEffect(() => { setNote(''); load(); }, [load]);
@@ -49,7 +55,8 @@ export function ChannelFees({ propertyId }: { propertyId: number }) {
   const save = async () => {
     setNote('');
     const channels = rows.filter((r) => filled(r.channel)).map((r) => ({
-      channel: r.channel, ...Object.fromEntries(FIELDS.map(([k]) => [k, Number(draft[r.channel][k]) || 0])),
+      channel: r.channel, valid_from: draft[r.channel].valid_from || null,
+      ...Object.fromEntries(FIELDS.map(([k]) => [k, Number(draft[r.channel][k]) || 0])),
     }));
     const res = await fetch(`/api/properties/${propertyId}/channel-fees`, {
       method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ channels }),
@@ -59,6 +66,15 @@ export function ChannelFees({ propertyId }: { propertyId: number }) {
     setNote('Saved. Net revenue now uses these fees.');
     load();
   };
+  const remove = async (channel: string, from: string | null) => {
+    setNote('');
+    const res = await fetch(`/api/properties/${propertyId}/channel-fees/${channel}/${from || 'start'}`, { method: 'DELETE', credentials: 'same-origin' });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) { setNote(body.error || 'Could not remove.'); return; }
+    setNote('Removed. The row before it applies again.');
+    load();
+  };
+  const earlier = rows.filter((r) => r.history.length > 1);
 
   return (
     <div className="mb-8">
@@ -68,6 +84,7 @@ export function ChannelFees({ propertyId }: { propertyId: number }) {
           <thead>
             <tr className="text-[12px] text-[#717171] align-bottom">
               <th className="font-medium px-3 py-2 text-left">Channel</th>
+              <th className="font-medium px-2 py-2 text-left whitespace-nowrap">From</th>
               <th className="font-medium px-2 py-2 text-right whitespace-nowrap">Commission</th>
               <th className="font-medium px-2 py-2 text-right whitespace-nowrap">VAT on commission ({vatRate}%)</th>
               <th className="font-medium px-2 py-2 text-right whitespace-nowrap">Bank charges</th>
@@ -85,6 +102,13 @@ export function ChannelFees({ propertyId }: { propertyId: number }) {
               return (
                 <tr key={r.channel} className="border-t border-[#F0F0F0]">
                   <td className="px-3 py-2 font-medium whitespace-nowrap">{r.label}</td>
+                  <td className="px-2 py-1.5">
+                    <input
+                      type="date" aria-label={`${r.label} From`} title="Empty: from the start"
+                      value={draft[r.channel]?.valid_from ?? ''}
+                      onChange={(e) => setDraft({ ...draft, [r.channel]: { ...draft[r.channel], valid_from: e.target.value } })}
+                      className="w-[140px] h-[32px] px-1.5 border border-[#DDDDDD] rounded-[6px] tabular-nums" />
+                  </td>
                   {(['commission', 'vat', 'bank_charges'] as const).map((k) => k === 'vat' ?
                   <td key={k} className="px-2 py-2 text-right tabular-nums text-[#717171]">{filled(r.channel) ? pct(l.vat) : '–'}</td> :
                   <td key={k} className="px-2 py-1.5 text-right">
@@ -109,10 +133,26 @@ export function ChannelFees({ propertyId }: { propertyId: number }) {
         <button onClick={save} className="px-4 h-[36px] rounded-[8px] bg-[#222222] text-white text-[14px] font-semibold">Save fees</button>
         <span className="text-[13px] text-[#717171]">{note}</span>
       </div>
+      {earlier.length > 0 && (
+        <div className="mt-3 text-[13px]">
+          <div className="text-[12px] text-[#717171] mb-1">Every row each channel has had — a booking uses the one in force on the day it was made</div>
+          {earlier.map((r) => (
+            <div key={r.channel} className="flex gap-3 py-0.5">
+              <span className="font-medium w-[90px] shrink-0">{r.label}</span>
+              <div className="flex flex-col gap-0.5">
+              {r.history.slice().reverse().map((h) => (
+                <span key={h.valid_from || 'start'} className="tabular-nums">
+                  from {day(h.valid_from)}: {pct(h.commission)} + {pct(h.bank_charges)} = {pct(h.total_fees)}
+                  {' '}<button onClick={() => remove(r.channel, h.valid_from)} className="text-[#C13515] underline">remove</button>
+                </span>))}
+              </div>
+            </div>))}
+        </div>)}
       <p className="text-[12px] text-[#B0B0B0] mt-1.5">
         Each as a % of what the guest pays, from the channel's invoices; VAT on commission is {vatRate}% of the commission. Total markup = 1 ÷ (1 − total fees) − 1: the least
         Smoobu must add to your rate for the payout to be your rate. Red: the Smoobu markup is below it. Discounts such as
-        Genius are not fees and are not in this table.
+        Genius are not fees and are not in this table. When a fee changes, enter the new figures with the date it starts:
+        bookings made before it keep the old fees.
       </p>
     </div>);
 }
