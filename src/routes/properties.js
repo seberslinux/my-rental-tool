@@ -23,6 +23,7 @@ const { getUpcomingSchoolHolidays } = require('../services/school-holidays');
 const { getApiKeyForProperty } = require('../services/api-key-resolver');
 // One place decides who gets told what.
 const { notify } = require('../services/notify');
+const { feesFor, saveFees } = require('../services/channel-fees');
 const { MODES: PRICING_MODES, pricePlan, targetFor, runAutoPricing, hasFloor } = require('../services/dynamic-pricing');
 
 // Apply property scoping to all routes
@@ -602,6 +603,24 @@ router.get('/:id/observed-markup', async (req, res) => {
     commissions: measuredCommission(everyBooking, { vat: await commissionVat(req.params.id) }),
     rated_nights: dates.length,
   });
+});
+
+/** The channel fee table: commission, VAT on it, bank charges, totals. */
+router.get('/:id/channel-fees', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  const fees = await feesFor(req.params.id);
+  if (!fees) return res.status(404).json({ error: 'Property not found' });
+  res.json({ channels: fees });
+});
+
+router.put('/:id/channel-fees', async (req, res) => {
+  if (denyIfOutOfScope(req, res, req.params.id)) return;
+  try {
+    await saveFees(req.params.id, (req.body && req.body.channels) || []);
+    res.json({ channels: await feesFor(req.params.id) });
+  } catch (err) {
+    res.status(err.status || 500).json({ error: err.status ? err.message : 'Could not save the fees' });
+  }
 });
 
 router.get('/:id/rate-strategies', async (req, res) => {

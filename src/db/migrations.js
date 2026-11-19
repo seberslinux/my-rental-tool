@@ -1086,6 +1086,18 @@ async function runMigrations() {
     )
   `);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_peer_cleaning_fees ON peer_cleaning_fees (listing_id, measured_at DESC)`);
+  // What each channel keeps, per property — the one source of every fee.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS channel_fees (
+      property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+      channel TEXT NOT NULL,
+      commission REAL NOT NULL DEFAULT 0,
+      vat_on_commission REAL NOT NULL DEFAULT 0,
+      bank_charges REAL NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (property_id, channel)
+    )
+  `);
   // A floor per month, where set; the general floor covers the rest.
   await pool.query(`ALTER TABLE auto_pricing ADD COLUMN IF NOT EXISTS floors JSONB NOT NULL DEFAULT '{}'::jsonb`);
 
