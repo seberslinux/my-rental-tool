@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, ArrowRight, Check, RefreshCw, Send, Save } from 'lucide-react';
 import { apiGet, Unauthorized } from '../data/session';
 import { AutoPricing } from './AutoPricing';
+import { ChannelFees } from './ChannelFees';
 
 /**
  * Everything about what a night costs, in one place.
@@ -368,6 +369,8 @@ export function RatesPage({ initialPropertyId = 0 }: {
             </div>
           )}
         </div>
+
+        {propertyId > 0 && <ChannelFees propertyId={propertyId} />}
 
         {/* 2. What each channel adds on top. */}
         <div className={SECTION}>What each channel adds</div>
