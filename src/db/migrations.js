@@ -1098,6 +1098,19 @@ async function runMigrations() {
       PRIMARY KEY (property_id, channel)
     )
   `);
+  // Fees change over time (a programme joined, a rate renegotiated): each
+  // row applies from its date, and a booking takes the row in force on the
+  // day it was made. Rows from before dates existed apply from the start.
+  await pool.query(`ALTER TABLE channel_fees ADD COLUMN IF NOT EXISTS valid_from DATE NOT NULL DEFAULT '2000-01-01'`);
+  await pool.query(`
+    DO $$ BEGIN
+      IF (SELECT COUNT(*) FROM information_schema.key_column_usage
+           WHERE constraint_name = 'channel_fees_pkey' AND table_name = 'channel_fees') = 2 THEN
+        ALTER TABLE channel_fees DROP CONSTRAINT channel_fees_pkey;
+        ALTER TABLE channel_fees ADD PRIMARY KEY (property_id, channel, valid_from);
+      END IF;
+    END $$;
+  `);
   // A floor per month, where set; the general floor covers the rest.
   await pool.query(`ALTER TABLE auto_pricing ADD COLUMN IF NOT EXISTS floors JSONB NOT NULL DEFAULT '{}'::jsonb`);
 

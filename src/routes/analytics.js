@@ -1,4 +1,5 @@
 const express = require('express');
+const { BOOKING_FEE_SQL } = require('../services/channel-fees');
 const router = express.Router();
 const { getAll, getOne, run, transaction } = require('../db/database');
 const smoobu = require('../services/smoobu');
@@ -384,7 +385,7 @@ router.get('/data', async (req, res) => {
   // All confirmed bookings (excluding calendar blocks)
   const BLOCKED_FILTER = ` AND b.platform NOT IN ('Blocked channel', 'Blocked channel auto')`;
   const allBookings = await getAll(
-    `SELECT b.*, p.name as property_name, p.base_price as property_base_price, p.base_currency as property_base_currency, p.vat_rate as property_vat_rate, p.vat_airbnb, p.vat_booking, p.vat_vrbo, p.commission_airbnb as prop_commission_airbnb, p.commission_booking as prop_commission_booking, p.commission_vrbo as prop_commission_vrbo, p.bank_charge_airbnb, p.bank_charge_booking, p.bank_charge_vrbo FROM bookings b
+    `SELECT b.*, p.name as property_name, p.base_price as property_base_price, p.base_currency as property_base_currency, p.vat_rate as property_vat_rate, p.vat_airbnb, p.vat_booking, p.vat_vrbo, p.commission_airbnb as prop_commission_airbnb, p.commission_booking as prop_commission_booking, p.commission_vrbo as prop_commission_vrbo, p.bank_charge_airbnb, p.bank_charge_booking, p.bank_charge_vrbo, ${BOOKING_FEE_SQL} FROM bookings b
      JOIN properties p ON b.property_id = p.id
      WHERE b.status = 'confirmed'${BLOCKED_FILTER}${bookingFilters}
      ORDER BY b.check_in ASC`,

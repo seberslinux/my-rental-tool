@@ -22,6 +22,27 @@
 
 const { getAll, getOne, run } = require('../db/database');
 
+/**
+ * A booking's total fees, in percent, from the row in force on the day it
+ * was made — as SQL, for every query that feeds calcDeductions. Expects the
+ * booking as `b` and its property as `p`; NULL where the property has no
+ * row for the channel (or the booking is direct), and calcDeductions then
+ * falls back to the property's columns.
+ */
+const BOOKING_FEE_SQL = `(
+  SELECT f.commission * (1 + COALESCE(NULLIF(p.vat_rate, 0), 15) / 100.0) + f.bank_charges
+    FROM channel_fees f
+   WHERE f.property_id = p.id
+     AND f.channel = CASE
+           WHEN b.platform ILIKE '%direct%' THEN NULL
+           WHEN b.platform ILIKE '%airbnb%' THEN 'airbnb'
+           WHEN b.platform ILIKE '%booking%' THEN 'booking'
+           WHEN b.platform ILIKE '%vrbo%' OR b.platform ILIKE '%homeaway%' THEN 'vrbo'
+         END
+     AND f.valid_from <= COALESCE(NULLIF(substring(b.created_at, 1, 10), '')::date, CURRENT_DATE)
+   ORDER BY f.valid_from DESC LIMIT 1
+) AS fee_total_pct`;
+
 const CHANNELS = [
   { key: 'airbnb', label: 'Airbnb' },
   { key: 'booking', label: 'Booking.com' },
@@ -53,37 +74,72 @@ function legacyColumns({ commission = 0, bank_charges = 0 }, vatRate = 15) {
   };
 }
 
+const START = '2000-01-01';
+const ymd = (d) => String(d).slice(0, 10);
+const today = () => new Date().toISOString().slice(0, 10);
+
+/**
+ * Each channel's row in force today, with every row it has had — newest
+ * first — so the screen can show what applied when.
+ */
 async function feesFor(propertyId) {
   const property = await getOne(
     'SELECT id, COALESCE(NULLIF(vat_rate, 0), 15) AS vat_rate, guest_markup_airbnb, guest_markup_booking, guest_markup_vrbo FROM properties WHERE id = $1', [propertyId]
   );
   if (!property) return null;
-  const rows = new Map((await getAll(
-    'SELECT channel, commission, vat_on_commission, bank_charges, updated_at FROM channel_fees WHERE property_id = $1', [propertyId]
-  )).map((r) => [r.channel, r]));
+  const all = await getAll(
+    `SELECT channel, to_char(valid_from, 'YYYY-MM-DD') AS valid_from, commission, bank_charges, updated_at FROM channel_fees
+      WHERE property_id = $1 ORDER BY channel, valid_from DESC`, [propertyId]
+  );
+  const vatRate = Number(property.vat_rate);
+  const shape = (r) => {
+    const values = { commission: Number(r.commission), vat_on_commission: vatOn(r.commission, vatRate), bank_charges: Number(r.bank_charges) };
+    const from = ymd(r.valid_from);
+    return { valid_from: from === START ? null : from, ...values, ...totals(values) };
+  };
   return CHANNELS.map(({ key, label }) => {
-    const r = rows.get(key);
-    const values = r ? {
-      commission: Number(r.commission), vat_on_commission: vatOn(r.commission, property.vat_rate), bank_charges: Number(r.bank_charges),
-    } : null;
+    const rows = all.filter((r) => r.channel === key);
+    const now = rows.find((r) => ymd(r.valid_from) <= today()) || null;
+    const current = now ? shape(now) : null;
     const smoobu = Number(property[`guest_markup_${key}`]) || 0;
-    const t = values ? totals(values) : { total_fees: null, total_markup: null };
     return {
-      channel: key, label, ...(values || { commission: null, vat_on_commission: null, bank_charges: null }), ...t,
+      channel: key, label,
+      ...(current || { valid_from: null, commission: null, vat_on_commission: null, bank_charges: null, total_fees: null, total_markup: null }),
       smoobu_markup: smoobu,
       // The payout per rand of base at today's Smoobu markup.
-      payout: values && t.total_fees != null ? round((1 + smoobu / 100) * (1 - t.total_fees / 100), 4) : null,
-      vat_rate: Number(property.vat_rate),
-      updated_at: r ? r.updated_at : null,
+      payout: current ? round((1 + smoobu / 100) * (1 - current.total_fees / 100), 4) : null,
+      vat_rate: vatRate,
+      history: rows.map(shape),
     };
   });
 }
 
+/** The legacy columns follow the row in force today. */
+async function syncLegacy(propertyId, channel, vatRate) {
+  const now = await getOne(
+    `SELECT commission, bank_charges FROM channel_fees WHERE property_id = $1 AND channel = $2 AND valid_from <= CURRENT_DATE
+      ORDER BY valid_from DESC LIMIT 1`, [propertyId, channel]
+  );
+  if (!now) return;
+  const legacy = legacyColumns({ commission: now.commission, bank_charges: now.bank_charges }, vatRate);
+  await run(
+    `UPDATE properties SET commission_${channel} = $2, vat_${channel} = $3, bank_charge_${channel} = $4 WHERE id = $1`,
+    [propertyId, legacy.commission, legacy.vat, legacy.bank]
+  );
+}
+
+/**
+ * Save rows. A row without a date applies from the start; one with a date
+ * applies from that day, leaving the rows before it as they were — so a
+ * change of fee never rewrites the bookings made under the old one.
+ */
 async function saveFees(propertyId, entries = []) {
   const p = await getOne('SELECT COALESCE(NULLIF(vat_rate, 0), 15) AS vat_rate FROM properties WHERE id = $1', [propertyId]);
   const vatRate = Number(p ? p.vat_rate : 15);
   for (const e of entries) {
     if (!KEYS.includes(e.channel)) throw Object.assign(new Error(`Unknown channel: ${e.channel}`), { status: 400 });
+    const from = e.valid_from ? String(e.valid_from).slice(0, 10) : START;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) throw Object.assign(new Error('The date must be YYYY-MM-DD'), { status: 400 });
     const nums = ['commission', 'bank_charges'].map((k) => Number(e[k] ?? 0));
     if (nums.some((n) => !Number.isFinite(n) || n < 0 || n > 60)) {
       throw Object.assign(new Error('Each fee must be between 0% and 60%'), { status: 400 });
@@ -94,18 +150,23 @@ async function saveFees(propertyId, entries = []) {
       throw Object.assign(new Error('The fees cannot add up to 100% or more'), { status: 400 });
     }
     await run(
-      `INSERT INTO channel_fees (property_id, channel, commission, vat_on_commission, bank_charges, updated_at)
-       VALUES ($1, $2, $3, $4, $5, NOW())
-       ON CONFLICT (property_id, channel) DO UPDATE SET commission = EXCLUDED.commission,
+      `INSERT INTO channel_fees (property_id, channel, valid_from, commission, vat_on_commission, bank_charges, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       ON CONFLICT (property_id, channel, valid_from) DO UPDATE SET commission = EXCLUDED.commission,
          vat_on_commission = EXCLUDED.vat_on_commission, bank_charges = EXCLUDED.bank_charges, updated_at = NOW()`,
-      [propertyId, e.channel, commission, vatOnCommission, bankCharges]
+      [propertyId, e.channel, from, commission, vatOnCommission, bankCharges]
     );
-    const legacy = legacyColumns({ commission, bank_charges: bankCharges }, vatRate);
-    await run(
-      `UPDATE properties SET commission_${e.channel} = $2, vat_${e.channel} = $3, bank_charge_${e.channel} = $4 WHERE id = $1`,
-      [propertyId, legacy.commission, legacy.vat, legacy.bank]
-    );
+    await syncLegacy(propertyId, e.channel, vatRate);
   }
 }
 
-module.exports = { CHANNELS, totals, legacyColumns, vatOn, feesFor, saveFees };
+/** Remove one dated row (a mistake); the row before it applies again. */
+async function removeFee(propertyId, channel, validFrom) {
+  if (!KEYS.includes(channel)) throw Object.assign(new Error(`Unknown channel: ${channel}`), { status: 400 });
+  const from = validFrom && validFrom !== 'start' ? String(validFrom).slice(0, 10) : START;
+  await run('DELETE FROM channel_fees WHERE property_id = $1 AND channel = $2 AND valid_from = $3', [propertyId, channel, from]);
+  const p = await getOne('SELECT COALESCE(NULLIF(vat_rate, 0), 15) AS vat_rate FROM properties WHERE id = $1', [propertyId]);
+  await syncLegacy(propertyId, channel, Number(p ? p.vat_rate : 15));
+}
+
+module.exports = { CHANNELS, BOOKING_FEE_SQL, totals, legacyColumns, vatOn, feesFor, saveFees, removeFee };
