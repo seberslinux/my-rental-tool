@@ -9,6 +9,7 @@ const mock = require('../helpers/mock-smoobu');
 const smoobu = require('../../src/services/smoobu');
 const paystack = require('../../src/services/paystack');
 const notifyModule = require('../../src/services/notify');
+const accounts = require('../../src/services/payment-accounts');
 const { pool } = require('../../src/db/database');
 
 const SECRET = 'sk_test_payment_links';
@@ -27,6 +28,11 @@ function fakePaystack(url, opts) {
   if (url.endsWith('/transaction/initialize')) {
     data = { authorization_url: `https://checkout.paystack.test/${body.reference}`, reference: body.reference };
     paystackState.amount = paystackState.amount ?? body.amount;
+  } else if (url.endsWith('/balance')) {
+    if (opts.headers.Authorization === 'Bearer sk_test_rejected') {
+      return Promise.resolve({ ok: false, status: 401, json: async () => ({ status: false, message: 'Invalid key' }) });
+    }
+    data = [{ currency: 'ZAR', balance: 0 }];
   } else if (url.includes('/transaction/verify/')) {
     data = { status: paystackState.status, amount: paystackState.amount, currency: 'ZAR', paid_at: new Date().toISOString() };
   }
@@ -37,7 +43,6 @@ test.before(async () => { app = await getApp(); });
 test.beforeEach(async () => {
   await resetDb();
   mock.reset();
-  process.env.PAYSTACK_SECRET_KEY = SECRET;
   process.env.SMOOBU_DIRECT_CHANNEL_ID = '3697409';
   paystackCalls = [];
   paystackState = { status: 'success', amount: null };
@@ -50,13 +55,13 @@ test.beforeEach(async () => {
 test.after(async () => {
   paystack.setFetch(null);
   notifyModule.notify = originalNotify;
-  delete process.env.PAYSTACK_SECRET_KEY;
   delete process.env.SMOOBU_DIRECT_CHANNEL_ID;
   await closePool();
 });
 
-async function lodgeWithRates(owner, prices) {
-  const lodge = await seedProperty({ owner, name: 'Hill Top Lodge' });
+async function lodgeWithRates(owner, prices, { name = 'Hill Top Lodge', key = SECRET } = {}) {
+  const lodge = await seedProperty({ owner, name });
+  if (key) await accounts.connect(lodge.id, { secretKey: key, accountName: 'Joint account' });
   await pool.query('UPDATE properties SET guest_markup_airbnb = 20.5 WHERE id = $1', [lodge.id]);
   const listing = (await pool.query(
     `INSERT INTO peer_listings (airbnb_id, name, property_id, is_own) VALUES ($1, 'The Hill Top Lodge', $2, TRUE) RETURNING id`,
@@ -174,7 +179,7 @@ test('the webhook alone books a payment, and an unsigned webhook is refused', as
   await loginAs(agent, admin);
   const { body: link } = await agent.post('/api/payment-links').send(linkBody(lodge)).expect(201);
   await request(app).post(`/pay/${link.token}/start`).expect(303);
-  const reference = paystackCalls[0].body.reference;
+  const reference = paystackCalls.find((c) => c.url.endsWith('/transaction/initialize')).body.reference;
 
   const event = JSON.stringify({ event: 'charge.success', data: { reference } });
   await request(app).post('/paystack/webhook').set('Content-Type', 'application/json')
@@ -248,7 +253,7 @@ test('a cancelled or expired link cannot be paid', async () => {
   const { body: b } = await agent.post('/api/payment-links').send(linkBody(lodge)).expect(201);
   await pool.query(`UPDATE payment_links SET expires_at = NOW() - INTERVAL '1 minute' WHERE id = $1`, [b.id]);
   await request(app).post(`/pay/${b.token}/start`).expect(303);
-  assert.equal(paystackCalls.length, 0, 'no checkout for either');
+  assert.equal(paystackCalls.filter((c) => c.url.endsWith('/transaction/initialize')).length, 0, 'no checkout for either');
   assert.equal((await agent.get('/api/payment-links')).body.links.find((l) => l.id === b.id).status, 'expired');
 
   await request(app).get('/pay/no-such-token').expect(404);
@@ -265,14 +270,82 @@ test('only managers of the property can quote or make links', async () => {
   await request(app).get('/api/payment-links').expect(401);
 });
 
-test('without a Paystack key the guest is told payments are not set up', async () => {
+test('a property without a Paystack account can make links but not take payments', async () => {
   const admin = await seedUser({ role: 'admin' });
-  const lodge = await lodgeWithRates(admin, [2000, 3000]);
+  const lodge = await lodgeWithRates(admin, [2000, 3000], { key: null });
   const agent = await getAgent();
   await loginAs(agent, admin);
+  const { body: q } = await agent.post('/api/payment-links/quote')
+    .send({ property_id: lodge.id, check_in: inDays(30), check_out: inDays(32) }).expect(200);
+  assert.equal(q.payments_ready, false);
   const { body: link } = await agent.post('/api/payment-links').send(linkBody(lodge)).expect(201);
-  delete process.env.PAYSTACK_SECRET_KEY;
-  assert.equal((await agent.get('/api/payment-links')).body.payments_ready, false);
   const res = await request(app).post(`/pay/${link.token}/start`).expect(303);
   assert.match(decodeURIComponent(res.headers.location), /could not be started/);
+  assert.equal(paystackCalls.filter((c) => c.url.endsWith('/transaction/initialize')).length, 0);
+});
+
+test('each property is paid into its own Paystack account', async () => {
+  const admin = await seedUser({ role: 'admin' });
+  const LOFT_KEY = 'sk_test_francesca';
+  const lodge = await lodgeWithRates(admin, [2000, 3000]);
+  const loft = await lodgeWithRates(admin, [1500, 1500], { name: 'The loft', key: LOFT_KEY });
+  mock.setDailyRates({
+    [lodge.smoobu_id]: { [inDays(30)]: { price: 2000, available: 1 }, [inDays(31)]: { price: 3000, available: 1 } },
+    [loft.smoobu_id]: { [inDays(30)]: { price: 1500, available: 1 }, [inDays(31)]: { price: 1500, available: 1 } },
+  });
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+
+  const { body: a } = await agent.post('/api/payment-links').send(linkBody(lodge)).expect(201);
+  const { body: b } = await agent.post('/api/payment-links').send(linkBody(loft, { amount: 3300 })).expect(201);
+  await request(app).post(`/pay/${a.token}/start`).expect(303);
+  await request(app).post(`/pay/${b.token}/start`).expect(303);
+  const inits = paystackCalls.filter((c) => c.url.endsWith('/transaction/initialize'));
+  assert.equal(inits[0].auth, `Bearer ${SECRET}`, 'the Lodge on its own account');
+  assert.equal(inits[1].auth, `Bearer ${LOFT_KEY}`, 'the Loft on its own account');
+
+  // The Loft's payment checked with the Loft's key, and its webhook signed by it.
+  paystackState.amount = 330000;
+  const event = JSON.stringify({ event: 'charge.success', data: { reference: inits[1].body.reference } });
+  await request(app).post('/paystack/webhook').set('Content-Type', 'application/json')
+    .set('x-paystack-signature', sign(event)).send(event).expect(401); // signed by the other account
+  assert.equal(reservations.length, 0);
+  const loftSig = crypto.createHmac('sha512', LOFT_KEY).update(event).digest('hex');
+  await request(app).post('/paystack/webhook').set('Content-Type', 'application/json')
+    .set('x-paystack-signature', loftSig).send(event).expect(200);
+  assert.equal(reservations.length, 1);
+  assert.equal(reservations[0].apartmentId, loft.smoobu_id);
+  const verifies = paystackCalls.filter((c) => c.url.includes('/transaction/verify/'));
+  assert.ok(verifies.every((c) => c.auth === `Bearer ${LOFT_KEY}`));
+
+  // A webhook for a payment that is not ours is acknowledged and ignored.
+  const stray = JSON.stringify({ event: 'charge.success', data: { reference: 'someone-else' } });
+  await request(app).post('/paystack/webhook').set('Content-Type', 'application/json').set('x-paystack-signature', 'x').send(stray).expect(200);
+});
+
+test('connecting an account: admins only, the key checked with Paystack, never sent back', async () => {
+  const admin = await seedUser({ role: 'admin' });
+  const loft = await lodgeWithRates(admin, [1500, 1500], { name: 'The loft', key: null });
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+
+  await agent.put(`/api/payment-links/accounts/${loft.id}`).send({ secret_key: 'pk_test_public', account_name: 'Francesca' }).expect(400);
+  await agent.put(`/api/payment-links/accounts/${loft.id}`).send({ secret_key: 'sk_test_rejected', account_name: 'Francesca' }).expect(400);
+  await agent.put(`/api/payment-links/accounts/${loft.id}`).send({ secret_key: 'sk_test_ok' }).expect(400); // whose account it is
+  const { body } = await agent.put(`/api/payment-links/accounts/${loft.id}`).send({ secret_key: ' sk_live_francesca ', account_name: 'Francesca' }).expect(200);
+  const row = body.accounts.find((x) => x.property_id === loft.id);
+  assert.deepEqual({ connected: row.connected, mode: row.mode, account_name: row.account_name }, { connected: true, mode: 'live', account_name: 'Francesca' });
+  assert.doesNotMatch(JSON.stringify(body), /sk_live/, 'the key never leaves the server');
+  const stored = (await pool.query('SELECT paystack_key_encrypted FROM properties WHERE id = $1', [loft.id])).rows[0];
+  assert.doesNotMatch(stored.paystack_key_encrypted, /sk_live/, 'stored encrypted');
+  assert.equal(await accounts.keyFor(loft.id), 'sk_live_francesca');
+
+  const manager = await seedUser({ role: 'property_manager' });
+  await pool.query(`INSERT INTO user_properties (user_id, property_id, role) VALUES ($1, $2, 'manager')`, [manager.id, loft.id]);
+  const other = await getAgent();
+  await loginAs(other, manager);
+  await other.put(`/api/payment-links/accounts/${loft.id}`).send({ secret_key: 'sk_test_x', account_name: 'Me' }).expect(403);
+
+  await agent.delete(`/api/payment-links/accounts/${loft.id}`).expect(200);
+  assert.equal(await accounts.keyFor(loft.id), null);
 });

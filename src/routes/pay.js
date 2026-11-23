@@ -9,6 +9,7 @@
 const express = require('express');
 const links = require('../services/payment-links');
 const paystack = require('../services/paystack');
+const { keyFor } = require('../services/payment-accounts');
 
 const pay = express.Router();
 const webhook = express.Router();
@@ -94,11 +95,19 @@ pay.get('/:token/return', async (req, res) => {
   res.redirect(303, `/pay/${encodeURIComponent(req.params.token)}`);
 });
 
+// Each property's account sends its own webhooks; the payment's link says
+// which account, and that account's key must have signed the body.
 webhook.post('/', async (req, res) => {
-  if (!paystack.validSignature(req.rawBody, req.get('x-paystack-signature'))) return res.status(401).end();
   const evt = req.body || {};
-  if (evt.event === 'charge.success' && evt.data && evt.data.reference) {
-    try { await links.settle(evt.data.reference); } catch (err) { console.error('paystack webhook:', err.message); }
+  const reference = evt.data && evt.data.reference;
+  const link = reference ? await links.byReference(String(reference)).catch(() => null) : null;
+  const key = link ? await keyFor(link.property_id) : null;
+  if (!paystack.validSignature(key, req.rawBody, req.get('x-paystack-signature'))) {
+    // Not ours, or not signed by the account it claims: nothing to do either way.
+    return res.status(link ? 401 : 200).end();
+  }
+  if (evt.event === 'charge.success') {
+    try { await links.settle(String(reference)); } catch (err) { console.error('paystack webhook:', err.message); }
   }
   res.status(200).end();
 });

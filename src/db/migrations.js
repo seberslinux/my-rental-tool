@@ -1172,6 +1172,13 @@ async function runMigrations() {
     )
   `);
 
+  // Each property is paid into its own Paystack account (the Loft into
+  // one owner's, the Lodge into the joint one): its secret key, encrypted
+  // like the Smoobu key, and a name for whose account it is.
+  await pool.query(`ALTER TABLE properties ADD COLUMN IF NOT EXISTS paystack_key_encrypted TEXT`);
+  await pool.query(`ALTER TABLE properties ADD COLUMN IF NOT EXISTS paystack_key_iv TEXT`);
+  await pool.query(`ALTER TABLE properties ADD COLUMN IF NOT EXISTS paystack_account_name TEXT`);
+
   console.log('Database migrations complete.');
 }
 
