@@ -8,6 +8,7 @@ const express = require('express');
 const { requireRole, scopeProperties, isPropertyInScope } = require('../middleware/auth');
 const links = require('../services/payment-links');
 const accounts = require('../services/payment-accounts');
+const site = require('../services/website-booking');
 
 const router = express.Router();
 router.use(requireRole('admin', 'property_manager'), scopeProperties);
@@ -23,6 +24,7 @@ router.get('/', async (req, res) => {
     res.json({
       links: await links.listLinks(req.accessiblePropertyIds),
       accounts: await accounts.accounts(req.accessiblePropertyIds),
+      website: await Promise.all((await accounts.accounts(req.accessiblePropertyIds)).map((a) => site.settings(a.property_id))),
       default_discount: links.DEFAULT_DISCOUNT,
     });
   } catch (err) { send(res, err); }
@@ -87,6 +89,17 @@ router.delete('/accounts/:propertyId', requireRole('admin'), async (req, res) =>
   try {
     await accounts.disconnect(id);
     res.json({ accounts: await accounts.accounts(req.accessiblePropertyIds) });
+  } catch (err) { send(res, err); }
+});
+
+// Whether a property takes bookings on the website, at which address, and
+// on which terms. Admins only, like the account it is paid into.
+router.put('/website/:propertyId', requireRole('admin'), async (req, res) => {
+  const id = Number(req.params.propertyId);
+  if (!inScope(req, id)) return res.status(404).json({ error: 'Property not found' });
+  try {
+    const b = req.body || {};
+    res.json(await site.saveSettings(id, { enabled: Boolean(b.enabled), slug: b.slug, terms: b.terms }));
   } catch (err) { send(res, err); }
 });
 

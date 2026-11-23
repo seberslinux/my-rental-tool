@@ -99,6 +99,8 @@ function buildApp({
   const { pay, webhook: paystackWebhook } = require('./routes/pay');
   app.use('/pay', publicLimiter, pay);
   app.use('/paystack/webhook', publicLimiter, paystackWebhook);
+  // The website's booking page, one per property.
+  app.use('/book', publicLimiter, require('./routes/book').bookRouter({ disableRateLimits }));
 
   // Auth wall — everything under /api requires an authenticated session.
   app.use('/api', requireAuth);

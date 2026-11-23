@@ -112,4 +112,4 @@ webhook.post('/', async (req, res) => {
   res.status(200).end();
 });
 
-module.exports = { pay, webhook };
+module.exports = { pay, webhook, page, esc, baseUrl };

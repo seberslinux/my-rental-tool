@@ -21,12 +21,13 @@ interface Quote {
   available: boolean; taken: string[]; unpriced: string[]; min_stay: number | null; below_min_stay: boolean;
 }
 interface Account { property_id: number; name: string; connected: boolean; mode: 'test' | 'live' | null; account_name: string | null; }
+interface Website { property_id: number; enabled: boolean; slug: string; terms: string; paystack: boolean; }
 interface Link {
   id: number; token: string; property_id: number; property_name?: string;
   check_in: string; check_out: string; adults: number; children: number;
   first_name: string; last_name: string; email: string; phone: string | null;
   amount: number; airbnb: number | null; status: string; expires_at: string; error: string | null;
-  smoobu_reservation_id: number | null; created_at: string;
+  smoobu_reservation_id: number | null; created_at: string; source?: string;
 }
 
 const CARD = 'bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)]';
@@ -116,10 +117,73 @@ function AccountRow({ a, onSaved }: { a: Account; onSaved: (list: Account[]) => 
     </div>);
 }
 
+function WebsiteRow({ w, name, onSaved }: { w: Website; name: string; onSaved: (w: Website) => void }) {
+  const [open, setOpen] = useState(false);
+  const [enabled, setEnabled] = useState(w.enabled);
+  const [slug, setSlug] = useState(w.slug);
+  const [terms, setTerms] = useState(w.terms);
+  const [note, setNote] = useState('');
+  const [copied, setCopied] = useState('');
+  const url = `${window.location.origin}/book/${w.slug}`;
+  const button = `<a href="${url}" target="_blank" rel="noopener" style="display:inline-block;padding:14px 28px;background:#222;color:#fff;border-radius:8px;font-weight:600;text-decoration:none">Book direct</a>`;
+  const save = async () => {
+    setNote('');
+    const res = await fetch(`/api/payment-links/website/${w.property_id}`, {
+      method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled, slug, terms }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) { setNote(json.error || 'Could not save.'); return; }
+    onSaved(json); setNote('Saved.');
+  };
+  const copy = async (what: string, text: string) => { try { await navigator.clipboard.writeText(text); setCopied(what); setTimeout(() => setCopied(''), 1500); } catch {} };
+  return (
+    <div className="p-3 px-4 border-t border-[#F0F0F0] first:border-t-0">
+      <div className="flex items-center gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="text-[15px] font-medium">{name}</div>
+          <div className="text-[13px] text-[#717171] truncate">
+            {w.enabled ? <a href={url} target="_blank" rel="noreferrer" className="underline">{url.replace(/^https?:\/\//, '')}</a>
+              : w.paystack ? 'Not on the website' : 'Needs a Paystack account first'}
+          </div>
+        </div>
+        {w.enabled && <span className="text-[12px] font-semibold px-2 py-1 rounded-full bg-[#E8F5E9] text-[#008A05]">On</span>}
+        <button onClick={() => setOpen(!open)} className="text-[13px] underline">{open ? 'Close' : 'Set up'}</button>
+      </div>
+      {open && (
+        <div className="mt-2 grid gap-2">
+          <label className="flex items-center gap-2 text-[14px]">
+            <input type="checkbox" checked={enabled} disabled={!w.paystack} onChange={(e) => setEnabled(e.target.checked)} aria-label={`${name} on the website`} />
+            Guests can book and pay on the website
+          </label>
+          <div>
+            <label className={LABEL}>Address</label>
+            <div className="flex items-center gap-1 text-[14px] text-[#717171]">/book/<input className={INPUT} value={slug} onChange={(e) => setSlug(e.target.value)} aria-label={`${name} address`} /></div>
+          </div>
+          <div>
+            <label className={LABEL}>Booking terms the guest accepts before paying (cancellation, house rules)</label>
+            <textarea className={`${INPUT} h-[120px] py-2`} value={terms} onChange={(e) => setTerms(e.target.value)} aria-label={`${name} booking terms`} />
+          </div>
+          <div className="flex gap-3 items-center">
+            <button onClick={save} className="px-4 h-[36px] rounded-[8px] bg-[#222222] text-white text-[14px] font-semibold">Save</button>
+            <span className="text-[13px] text-[#717171]">{note}</span>
+          </div>
+          {w.enabled && (
+            <div className="text-[12px] text-[#717171]">
+              For the website: a link to the page, or this button (WordPress: add a "Code" or "Custom HTML" block).
+              <div className="flex gap-3 mt-1">
+                <button onClick={() => copy('link', url)} className="underline">{copied === 'link' ? 'Copied' : 'Copy link'}</button>
+                <button onClick={() => copy('button', button)} className="underline">{copied === 'button' ? 'Copied' : 'Copy button code'}</button>
+              </div>
+            </div>)}
+        </div>)}
+    </div>);
+}
+
 export function DirectBookingPage({ initialPropertyId, isAdmin = false }: { initialPropertyId?: number; isAdmin?: boolean }) {
   const [properties, setProperties] = useState<{ id: number; name: string }[]>([]);
   const [links, setLinks] = useState<Link[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [website, setWebsite] = useState<Website[]>([]);
   const [form, setForm] = useState({
     property_id: initialPropertyId || 0, check_in: addDays(todayIso(), 7), check_out: addDays(todayIso(), 9),
     adults: '2', children: '0', first_name: '', last_name: '', email: '', phone: '', note: '', hours: '48',
@@ -133,8 +197,8 @@ export function DirectBookingPage({ initialPropertyId, isAdmin = false }: { init
   const [copied, setCopied] = useState<number | null>(null);
 
   const load = useCallback(() => {
-    apiGet<{ links: Link[]; accounts: Account[] }>('/api/payment-links')
-      .then((d) => { setLinks(d.links); setAccounts(d.accounts); })
+    apiGet<{ links: Link[]; accounts: Account[]; website: Website[] }>('/api/payment-links')
+      .then((d) => { setLinks(d.links); setAccounts(d.accounts); setWebsite(d.website || []); })
       .catch(() => setError('Could not load the links.'));
   }, []);
   useEffect(() => {
@@ -269,7 +333,12 @@ export function DirectBookingPage({ initialPropertyId, isAdmin = false }: { init
       {isAdmin && accounts.length > 0 && <>
         <div className={SECTION}>Paystack accounts</div>
         <div className={`${CARD} overflow-hidden mb-6`}>
-          {accounts.map((a) => <AccountRow key={a.property_id} a={a} onSaved={setAccounts} />)}
+          {accounts.map((a) => <AccountRow key={a.property_id} a={a} onSaved={(list) => { setAccounts(list); load(); }} />)}
+        </div>
+        <div className={SECTION}>Website booking</div>
+        <div className={`${CARD} overflow-hidden mb-6`}>
+          {website.map((w) => <WebsiteRow key={w.property_id} w={w} name={propertyName[w.property_id] || ''}
+            onSaved={(saved) => setWebsite(website.map((x) => (x.property_id === saved.property_id ? saved : x)))} />)}
         </div>
       </>}
 
@@ -282,7 +351,7 @@ export function DirectBookingPage({ initialPropertyId, isAdmin = false }: { init
             <div key={l.id} className={`p-3 px-4 ${i ? 'border-t border-[#F0F0F0]' : ''}`}>
               <div className="flex items-center gap-2">
                 <div className="flex-1 min-w-0">
-                  <div className="text-[15px] font-medium truncate">{l.first_name} {l.last_name} · {rand(l.amount)}</div>
+                  <div className="text-[15px] font-medium truncate">{l.first_name} {l.last_name} · {rand(l.amount)}{l.source === 'website' && <span className="text-[12px] text-[#717171] font-normal"> · website</span>}</div>
                   <div className="text-[13px] text-[#717171]">{l.property_name || propertyName[l.property_id]} · {day(l.check_in)}–{day(l.check_out)} · {l.adults + l.children} guest{l.adults + l.children === 1 ? '' : 's'}</div>
                 </div>
                 <span className={`text-[12px] font-semibold px-2 py-1 rounded-full whitespace-nowrap ${s.cls}`}>{s.label}</span>
