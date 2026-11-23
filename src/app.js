@@ -44,7 +44,8 @@ function buildApp({
   // secure cookies work correctly.
   app.set('trust proxy', 1);
 
-  app.use(express.json({ limit: '10mb' }));
+  // The raw body is kept for webhooks signed over it (Paystack).
+  app.use(express.json({ limit: '10mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
 
   const noopLimiter = (req, res, next) => next();
 
@@ -94,6 +95,10 @@ function buildApp({
   app.use('/api/auth', authLimiter, require('./routes/auth'));
   app.use('/webhook', publicLimiter, require('./routes/webhook'));
   app.use('/ical', publicLimiter, require('./routes/ical'));
+  // Direct bookings: the guest's payment page and Paystack's webhook.
+  const { pay, webhook: paystackWebhook } = require('./routes/pay');
+  app.use('/pay', publicLimiter, pay);
+  app.use('/paystack/webhook', publicLimiter, paystackWebhook);
 
   // Auth wall — everything under /api requires an authenticated session.
   app.use('/api', requireAuth);
@@ -128,6 +133,7 @@ function buildApp({
   app.use('/api/health', require('./routes/health'));
   app.use('/api/messages', require('./routes/messages'));
   app.use('/api/peers', require('./routes/peers'));
+  app.use('/api/payment-links', require('./routes/payment-links'));
   app.use('/api/admin', require('./routes/admin'));
 
   // SPA fallback — non-API GETs return index.html so React Router owns them.
