@@ -1139,6 +1139,39 @@ async function runMigrations() {
     );
   }
 
+  // Direct bookings paid through a link: what was offered, to whom, and
+  // where the payment and the Smoobu booking stand. Amounts in cents, as
+  // the payment provider counts them.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payment_links (
+      id SERIAL PRIMARY KEY,
+      token TEXT NOT NULL UNIQUE,
+      property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+      check_in DATE NOT NULL,
+      check_out DATE NOT NULL,
+      adults INTEGER NOT NULL DEFAULT 2,
+      children INTEGER NOT NULL DEFAULT 0,
+      first_name TEXT NOT NULL,
+      last_name TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL,
+      phone TEXT,
+      amount_cents INTEGER NOT NULL,
+      airbnb_cents INTEGER,
+      currency TEXT NOT NULL DEFAULT 'ZAR',
+      note TEXT,
+      status TEXT NOT NULL DEFAULT 'open',
+      expires_at TIMESTAMPTZ NOT NULL,
+      paystack_reference TEXT UNIQUE,
+      authorization_url TEXT,
+      paid_at TIMESTAMPTZ,
+      smoobu_reservation_id BIGINT,
+      error TEXT,
+      created_by INTEGER,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
   console.log('Database migrations complete.');
 }
 

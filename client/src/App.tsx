@@ -20,6 +20,7 @@ import { PropertiesPage } from './components/PropertiesPage';
 import { UsersPage } from './components/UsersPage';
 import { TodoPage } from './components/TodoPage';
 import { RatesPage } from './components/RatesPage';
+import { DirectBookingPage } from './components/DirectBookingPage';
 import { MessagesPage } from './components/MessagesPage';
 
 /**
@@ -48,6 +49,7 @@ const TAB_PATHS: Record<string, string> = {
   todo: '/todo',
   rates: '/rates',
   peers: '/peers',
+  direct: '/direct',
   more: '/more',
 };
 
@@ -417,6 +419,8 @@ export function App() {
         return 'Rates';
       case 'peers':
         return 'Competitors';
+      case 'direct':
+        return 'Direct bookings';
       case 'messages':
         return 'Messages';
       case 'more':
@@ -679,6 +683,7 @@ export function App() {
         {activeTab === 'users' && <UsersPage />}
         {activeTab === 'todo' && <TodoPage propertyId={globalPropertyFilter} />}
         {activeTab === 'rates' && <RatesPage initialPropertyId={ratesProperty} />}
+        {activeTab === 'direct' && <DirectBookingPage initialPropertyId={globalPropertyFilter || undefined} />}
         {activeTab === 'peers' && <PeersPage propertyId={globalPropertyFilter} isAdmin={userRole === 'admin'} />}
         {activeTab === 'messages' &&
         <MessagesPage

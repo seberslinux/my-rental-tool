@@ -198,6 +198,41 @@ async function blockDates(apartmentId, from, to, note = '', apiKey) {
   return res.data;
 }
 
+/**
+ * A guest's booking, as a direct booking already paid.
+ *
+ * `channelId` is the account's own "Direct booking" channel (see
+ * directChannelId); Smoobu numbers channels per account.
+ */
+async function createReservation({
+  apartmentId, channelId, arrivalDate, departureDate, firstName, lastName = '', email, phone,
+  adults = 2, children = 0, price, notice = '',
+}, apiKey) {
+  const client = getClient(apiKey);
+  const res = await client.post('/reservations', {
+    apartmentId, channelId, arrivalDate, departureDate,
+    firstName, lastName, email, phone, adults, children,
+    price, priceStatus: 1, notice,
+  });
+  return res.data;
+}
+
+/**
+ * The account's "Direct booking" channel: SMOOBU_DIRECT_CHANNEL_ID when
+ * set, else the channel of that name on the account's own bookings.
+ */
+let directChannel = null;
+async function directChannelId(apiKey) {
+  if (process.env.SMOOBU_DIRECT_CHANNEL_ID) return Number(process.env.SMOOBU_DIRECT_CHANNEL_ID);
+  if (directChannel) return directChannel;
+  const year = new Date().getUTCFullYear();
+  const res = await getBookings({ from: `${year - 2}-01-01`, to: `${year + 1}-12-31`, pageSize: 100 }, apiKey);
+  const hit = (res.bookings || []).find((b) => b.channel && /direct/i.test(b.channel.name || ''));
+  if (!hit) throw new Error('No "Direct booking" channel found in Smoobu; set SMOOBU_DIRECT_CHANNEL_ID');
+  directChannel = Number(hit.channel.id);
+  return directChannel;
+}
+
 // Unblock dates (cancel a manual block reservation)
 async function unblockDates(reservationId, apiKey) {
   const client = getClient(apiKey);
@@ -267,6 +302,8 @@ async function sendGuestMessage(reservationId, subject, messageBody, apiKey) {
 }
 
 module.exports = {
+  createReservation,
+  directChannelId,
   setRatesForDates,
   getProperties,
   getPropertyDetails,

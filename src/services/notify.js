@@ -71,6 +71,10 @@ const EVENTS = {
   booking_created: { severity: 'attention' },
   booking_cancelled: { severity: 'attention' },
   booking_changed: { severity: 'info' },
+  // A guest paid a direct booking link; or paid and the booking could not
+  // be made, which needs the owner before the guest notices.
+  direct_booking_paid: { severity: 'attention' },
+  direct_booking_failed: { severity: 'attention' },
 
   cleaning_started: { severity: 'info' },
   cleaning_finished: { severity: 'info' },
