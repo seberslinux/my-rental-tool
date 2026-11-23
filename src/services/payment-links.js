@@ -15,6 +15,9 @@
  * the booking is created. A payment whose dates were taken in between is
  * kept as "paid, not booked" and the owner is told at once.
  *
+ * Each property is paid into its own Paystack account; a property with
+ * none can have links made, but they cannot be paid.
+ *
  * Statuses: open → pending (checkout started) → booking → booked, or
  * paid_unbooked; open/pending → cancelled; past expires_at an open or
  * pending link reads as expired.
@@ -24,6 +27,7 @@ const crypto = require('crypto');
 const { getAll, getOne, run } = require('../db/database');
 const smoobu = require('./smoobu');
 const paystack = require('./paystack');
+const { keyFor } = require('./payment-accounts');
 const { getApiKeyForProperty } = require('./api-key-resolver');
 
 const DEFAULT_DISCOUNT = 10;
@@ -95,6 +99,7 @@ async function quote({ propertyId, checkIn, checkOut, discountPercent = DEFAULT_
   const discount = Number.isFinite(Number(discountPercent)) ? Number(discountPercent) : DEFAULT_DISCOUNT;
   const minStay = days[0] ? days[0].minStay : null;
   return {
+    payments_ready: Boolean(await keyFor(p.id)),
     property: { id: p.id, name: p.name }, currency: p.currency,
     check_in: checkIn, check_out: checkOut, nights,
     rates: Math.round(rates), cleaning, airbnb_markup: Number(p.airbnb_markup),
@@ -187,10 +192,12 @@ async function startPayment(token, baseUrl) {
   }
   if (l.status !== 'open') throw fail('This link can no longer be paid', 409);
   const p = await propertyFor(l.property_id);
+  const key = await keyFor(p.id);
+  if (!key) throw fail('Payments are not set up for this property yet', 503);
   const days = await nightsInSmoobu(p, l.check_in, l.check_out);
   if (days.some((d) => !d.available)) throw fail('These dates have just been booked by someone else', 409);
   const reference = `dl${l.id}-${crypto.randomBytes(6).toString('hex')}`;
-  const checkout = await paystack.initialize({
+  const checkout = await paystack.initialize(key, {
     email: l.email, amountCents: l.amount_cents, currency: l.currency, reference,
     callbackUrl: `${baseUrl}/pay/${encodeURIComponent(token)}/return`,
     metadata: { payment_link: l.id, property: p.name, check_in: l.check_in, check_out: l.check_out },
@@ -214,7 +221,7 @@ async function settle(reference, { notifyImpl } = {}) {
   const l = shape(await getOne(`SELECT ${PUBLIC_FIELDS} FROM payment_links WHERE paystack_reference = $1`, [reference]));
   if (!l) return null;
   if (!['open', 'pending', 'expired'].includes(l.status)) return l;
-  const paid = await paystack.verify(reference);
+  const paid = await paystack.verify(await keyFor(l.property_id), reference);
   if (paid.status !== 'success') return l;
   if (paid.amountCents !== l.amount_cents || paid.currency !== l.currency) {
     await run(`UPDATE payment_links SET status = 'paid_unbooked', paid_at = NOW(), error = $2, updated_at = NOW() WHERE id = $1 AND status IN ('open', 'pending')`,
@@ -274,4 +281,7 @@ async function tell(notify, l, event, title, body) {
   }
 }
 
-module.exports = { quote, createLink, listLinks, byId, cancelLink, publicView, startPayment, settle, retryBooking, DEFAULT_DISCOUNT };
+/** The link a Paystack reference belongs to, for the webhook to find the account. */
+const byReference = async (reference) => getOne('SELECT id, property_id FROM payment_links WHERE paystack_reference = $1', [reference]);
+
+module.exports = { byReference, quote, createLink, listLinks, byId, cancelLink, publicView, startPayment, settle, retryBooking, DEFAULT_DISCOUNT };

@@ -683,7 +683,7 @@ export function App() {
         {activeTab === 'users' && <UsersPage />}
         {activeTab === 'todo' && <TodoPage propertyId={globalPropertyFilter} />}
         {activeTab === 'rates' && <RatesPage initialPropertyId={ratesProperty} />}
-        {activeTab === 'direct' && <DirectBookingPage initialPropertyId={globalPropertyFilter || undefined} />}
+        {activeTab === 'direct' && <DirectBookingPage initialPropertyId={globalPropertyFilter || undefined} isAdmin={userRole === 'admin'} />}
         {activeTab === 'peers' && <PeersPage propertyId={globalPropertyFilter} isAdmin={userRole === 'admin'} />}
         {activeTab === 'messages' &&
         <MessagesPage

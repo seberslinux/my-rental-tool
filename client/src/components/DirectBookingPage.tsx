@@ -9,6 +9,10 @@ import { apiGet } from '../data/session';
  * overwritten. The link goes to the guest by WhatsApp or email; they pay
  * the whole amount on Paystack and the booking is created in Smoobu as a
  * paid direct booking. Below, every link and where it stands.
+ *
+ * Each property is paid into its own Paystack account (the Loft into one
+ * owner's, the Lodge into the joint one); an admin connects each with its
+ * secret key, which is stored encrypted and never shown again.
  */
 
 interface Quote {
@@ -16,6 +20,7 @@ interface Quote {
   airbnb_total: number; direct_total: number; discount_percent: number;
   available: boolean; taken: string[]; unpriced: string[]; min_stay: number | null; below_min_stay: boolean;
 }
+interface Account { property_id: number; name: string; connected: boolean; mode: 'test' | 'live' | null; account_name: string | null; }
 interface Link {
   id: number; token: string; property_id: number; property_name?: string;
   check_in: string; check_out: string; adults: number; children: number;
@@ -63,10 +68,58 @@ async function post<T>(url: string, body?: unknown): Promise<T> {
   return json as T;
 }
 
-export function DirectBookingPage({ initialPropertyId }: { initialPropertyId?: number }) {
+function AccountRow({ a, onSaved }: { a: Account; onSaved: (list: Account[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const [key, setKey] = useState('');
+  const [name, setName] = useState(a.account_name || '');
+  const [note, setNote] = useState('');
+  const save = async () => {
+    setNote('');
+    try {
+      const res = await fetch(`/api/payment-links/accounts/${a.property_id}`, {
+        method: 'PUT', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ secret_key: key, account_name: name }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) { setNote(json.error || 'Could not connect.'); return; }
+      setKey(''); setOpen(false); onSaved(json.accounts);
+    } catch { setNote('Could not connect.'); }
+  };
+  const remove = async () => {
+    const res = await fetch(`/api/payment-links/accounts/${a.property_id}`, { method: 'DELETE', credentials: 'same-origin' });
+    const json = await res.json().catch(() => ({}));
+    if (res.ok) onSaved(json.accounts); else setNote(json.error || 'Could not disconnect.');
+  };
+  return (
+    <div className="p-3 px-4 border-t border-[#F0F0F0] first:border-t-0">
+      <div className="flex items-center gap-2">
+        <div className="flex-1 min-w-0">
+          <div className="text-[15px] font-medium">{a.name}</div>
+          <div className="text-[13px] text-[#717171]">
+            {a.connected ? <>Paid into <b className="text-[#222222]">{a.account_name}</b>'s Paystack</> : 'No Paystack account: links can be made, not paid'}
+          </div>
+        </div>
+        {a.connected && <span className={`text-[12px] font-semibold px-2 py-1 rounded-full ${a.mode === 'live' ? 'bg-[#E8F5E9] text-[#008A05]' : 'bg-[#FFF4E5] text-[#B25E09]'}`}>{a.mode === 'live' ? 'Live' : 'Test'}</span>}
+        <button onClick={() => setOpen(!open)} className="text-[13px] underline">{a.connected ? 'Change' : 'Connect'}</button>
+      </div>
+      {open && (
+        <div className="mt-2 grid gap-2">
+          <input className={INPUT} placeholder="Whose account, e.g. Francesca" value={name} onChange={(e) => setName(e.target.value)} aria-label={`${a.name} account name`} />
+          <input className={INPUT} type="password" autoComplete="off" placeholder="Secret key from Paystack (sk_test_… or sk_live_…)" value={key} onChange={(e) => setKey(e.target.value)} aria-label={`${a.name} Paystack secret key`} />
+          <div className="flex gap-3 items-center">
+            <button onClick={save} disabled={!key || !name} className="px-4 h-[36px] rounded-[8px] bg-[#222222] text-white text-[14px] font-semibold disabled:opacity-40">Save</button>
+            {a.connected && <button onClick={remove} className="text-[13px] text-[#C13515] underline">Disconnect</button>}
+          </div>
+          <p className="text-[12px] text-[#B0B0B0]">Paystack → Settings → API Keys &amp; Webhooks. Stored encrypted; it can't be shown again. Set the webhook URL there to {window.location.origin}/paystack/webhook.</p>
+        </div>)}
+      {note && <p className="text-[13px] text-[#C13515] mt-1">{note}</p>}
+    </div>);
+}
+
+export function DirectBookingPage({ initialPropertyId, isAdmin = false }: { initialPropertyId?: number; isAdmin?: boolean }) {
   const [properties, setProperties] = useState<{ id: number; name: string }[]>([]);
   const [links, setLinks] = useState<Link[]>([]);
-  const [ready, setReady] = useState(true);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [form, setForm] = useState({
     property_id: initialPropertyId || 0, check_in: addDays(todayIso(), 7), check_out: addDays(todayIso(), 9),
     adults: '2', children: '0', first_name: '', last_name: '', email: '', phone: '', note: '', hours: '48',
@@ -80,8 +133,8 @@ export function DirectBookingPage({ initialPropertyId }: { initialPropertyId?: n
   const [copied, setCopied] = useState<number | null>(null);
 
   const load = useCallback(() => {
-    apiGet<{ links: Link[]; payments_ready: boolean }>('/api/payment-links')
-      .then((d) => { setLinks(d.links); setReady(d.payments_ready); })
+    apiGet<{ links: Link[]; accounts: Account[] }>('/api/payment-links')
+      .then((d) => { setLinks(d.links); setAccounts(d.accounts); })
       .catch(() => setError('Could not load the links.'));
   }, []);
   useEffect(() => {
@@ -110,6 +163,7 @@ export function DirectBookingPage({ initialPropertyId }: { initialPropertyId?: n
   // What each way pays out: Airbnb keeps 17.25%; Paystack about 3% + R1, plus VAT on it.
   const airbnbPayout = quote ? quote.airbnb_total * (1 - 0.1725) : 0;
   const directPayout = total ? total - (total * 0.031 + 1) * 1.15 : 0;
+  const account = accounts.find((a) => a.property_id === form.property_id);
   const propertyName = useMemo(() => Object.fromEntries(properties.map((p) => [p.id, p.name])), [properties]);
 
   const create = async () => {
@@ -136,11 +190,6 @@ export function DirectBookingPage({ initialPropertyId }: { initialPropertyId?: n
 
   return (
     <div className="p-4 bg-[#F7F7F7] min-h-full max-w-[720px] mx-auto">
-      {!ready && (
-        <div className="mb-4 p-3 rounded-[10px] bg-[#FFF4E5] text-[13px] text-[#B25E09]">
-          Paystack isn't connected yet. Links can be made, but a guest can't pay until the Paystack key is set on Railway (PAYSTACK_SECRET_KEY).
-        </div>)}
-
       <div className={SECTION}>New payment link</div>
       <div className={`${CARD} p-4 mb-6`}>
         <div className="grid grid-cols-2 gap-3">
@@ -149,6 +198,9 @@ export function DirectBookingPage({ initialPropertyId }: { initialPropertyId?: n
             <select className={INPUT} value={form.property_id} onChange={set('property_id')} aria-label="Property">
               {properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
+            {account && (account.connected
+              ? <p className="text-[12px] text-[#717171] mt-1">Paid into {account.account_name}'s Paystack{account.mode === 'test' ? ' (test mode: no real money)' : ''}.</p>
+              : <p className="text-[12px] text-[#B25E09] mt-1">No Paystack account for {account.name} yet: the guest won't be able to pay this link.</p>)}
           </div>
           <div><label className={LABEL}>Check-in</label><input type="date" className={INPUT} value={form.check_in} min={todayIso()} onChange={set('check_in')} aria-label="Check-in" /></div>
           <div><label className={LABEL}>Check-out</label><input type="date" className={INPUT} value={form.check_out} min={form.check_in} onChange={set('check_out')} aria-label="Check-out" /></div>
@@ -213,6 +265,13 @@ export function DirectBookingPage({ initialPropertyId }: { initialPropertyId?: n
             </div>
           </div>)}
       </div>
+
+      {isAdmin && accounts.length > 0 && <>
+        <div className={SECTION}>Paystack accounts</div>
+        <div className={`${CARD} overflow-hidden mb-6`}>
+          {accounts.map((a) => <AccountRow key={a.property_id} a={a} onSaved={setAccounts} />)}
+        </div>
+      </>}
 
       <div className={SECTION}>Payment links</div>
       <div className={`${CARD} overflow-hidden`}>

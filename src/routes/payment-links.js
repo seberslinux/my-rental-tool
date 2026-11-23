@@ -7,7 +7,7 @@
 const express = require('express');
 const { requireRole, scopeProperties, isPropertyInScope } = require('../middleware/auth');
 const links = require('../services/payment-links');
-const paystack = require('../services/paystack');
+const accounts = require('../services/payment-accounts');
 
 const router = express.Router();
 router.use(requireRole('admin', 'property_manager'), scopeProperties);
@@ -20,7 +20,11 @@ const inScope = (req, propertyId) => isPropertyInScope(req, Number(propertyId));
 
 router.get('/', async (req, res) => {
   try {
-    res.json({ links: await links.listLinks(req.accessiblePropertyIds), payments_ready: paystack.configured(), default_discount: links.DEFAULT_DISCOUNT });
+    res.json({
+      links: await links.listLinks(req.accessiblePropertyIds),
+      accounts: await accounts.accounts(req.accessiblePropertyIds),
+      default_discount: links.DEFAULT_DISCOUNT,
+    });
   } catch (err) { send(res, err); }
 });
 
@@ -63,6 +67,26 @@ router.post('/:id/retry', async (req, res) => {
   try {
     if (!(await owned(req, res))) return;
     res.json(await links.retryBooking(Number(req.params.id)));
+  } catch (err) { send(res, err); }
+});
+
+// Which Paystack account a property is paid into. Admins only: it decides
+// whose bank account the money reaches.
+router.put('/accounts/:propertyId', requireRole('admin'), async (req, res) => {
+  const id = Number(req.params.propertyId);
+  if (!inScope(req, id)) return res.status(404).json({ error: 'Property not found' });
+  try {
+    await accounts.connect(id, { secretKey: (req.body || {}).secret_key, accountName: (req.body || {}).account_name });
+    res.json({ accounts: await accounts.accounts(req.accessiblePropertyIds) });
+  } catch (err) { send(res, err); }
+});
+
+router.delete('/accounts/:propertyId', requireRole('admin'), async (req, res) => {
+  const id = Number(req.params.propertyId);
+  if (!inScope(req, id)) return res.status(404).json({ error: 'Property not found' });
+  try {
+    await accounts.disconnect(id);
+    res.json({ accounts: await accounts.accounts(req.accessiblePropertyIds) });
   } catch (err) { send(res, err); }
 });
 
