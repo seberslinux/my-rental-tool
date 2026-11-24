@@ -1179,6 +1179,15 @@ async function runMigrations() {
   await pool.query(`ALTER TABLE properties ADD COLUMN IF NOT EXISTS paystack_key_iv TEXT`);
   await pool.query(`ALTER TABLE properties ADD COLUMN IF NOT EXISTS paystack_account_name TEXT`);
 
+  // Booking on the website: whether a property takes bookings there, its
+  // address (/book/<slug>) and the terms a guest agrees to before paying.
+  // A link made by the website is marked as such.
+  await pool.query(`ALTER TABLE properties ADD COLUMN IF NOT EXISTS public_booking BOOLEAN NOT NULL DEFAULT FALSE`);
+  await pool.query(`ALTER TABLE properties ADD COLUMN IF NOT EXISTS booking_slug TEXT`);
+  await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS properties_booking_slug ON properties (booking_slug) WHERE booking_slug IS NOT NULL`);
+  await pool.query(`ALTER TABLE properties ADD COLUMN IF NOT EXISTS booking_terms TEXT`);
+  await pool.query(`ALTER TABLE payment_links ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'owner'`);
+
   console.log('Database migrations complete.');
 }
 

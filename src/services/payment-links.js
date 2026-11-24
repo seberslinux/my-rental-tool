@@ -115,7 +115,7 @@ async function quote({ propertyId, checkIn, checkOut, discountPercent = DEFAULT_
 
 const PUBLIC_FIELDS = `id, token, property_id, to_char(check_in, 'YYYY-MM-DD') AS check_in, to_char(check_out, 'YYYY-MM-DD') AS check_out,
   adults, children, first_name, last_name, email, phone, amount_cents, airbnb_cents, currency, note, status,
-  expires_at, paystack_reference, paid_at, smoobu_reservation_id, error, created_at`;
+  expires_at, paystack_reference, paid_at, smoobu_reservation_id, error, created_at, source`;
 
 /** An open or pending link past its expiry reads as expired. */
 function shape(row) {
@@ -124,7 +124,7 @@ function shape(row) {
   return { ...row, status: expired ? 'expired' : row.status, amount: row.amount_cents / 100, airbnb: row.airbnb_cents == null ? null : row.airbnb_cents / 100 };
 }
 
-async function createLink({ propertyId, checkIn, checkOut, adults = 2, children = 0, firstName, lastName = '', email, phone = null, amount, note = null, hours = DEFAULT_HOURS, createdBy = null }) {
+async function createLink({ propertyId, checkIn, checkOut, adults = 2, children = 0, firstName, lastName = '', email, phone = null, amount, note = null, hours = DEFAULT_HOURS, createdBy = null, source = 'owner' }) {
   const q = await quote({ propertyId, checkIn, checkOut });
   if (!q.available) throw fail(q.taken.length ? `Not available: ${q.taken.join(', ')}` : `No price in Smoobu for ${q.unpriced.join(', ')}`, 409);
   if (!firstName || !String(firstName).trim()) throw fail('The guest\'s first name is needed');
@@ -137,12 +137,12 @@ async function createLink({ propertyId, checkIn, checkOut, adults = 2, children 
   const token = crypto.randomBytes(18).toString('base64url');
   const row = await getOne(
     `INSERT INTO payment_links (token, property_id, check_in, check_out, adults, children, first_name, last_name, email, phone,
-                                amount_cents, airbnb_cents, currency, note, expires_at, created_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW() + make_interval(hours => $15), $16)
+                                amount_cents, airbnb_cents, currency, note, expires_at, created_by, source)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW() + make_interval(hours => $15), $16, $17)
      RETURNING ${PUBLIC_FIELDS}`,
     [token, propertyId, checkIn, checkOut, a, c, String(firstName).trim(), String(lastName || '').trim(), String(email).trim(),
       phone ? String(phone).trim() : null, Math.round(total * 100), Math.round(q.airbnb_total * 100), q.currency,
-      note ? String(note).slice(0, 500) : null, h, createdBy]
+      note ? String(note).slice(0, 500) : null, h, createdBy, source === 'website' ? 'website' : 'owner']
   );
   return { ...shape(row), quote: q };
 }
@@ -248,7 +248,7 @@ async function book(l, notify) {
       apartmentId: p.smoobu_id, channelId, arrivalDate: l.check_in, departureDate: l.check_out,
       firstName: l.first_name, lastName: l.last_name, email: l.email, phone: l.phone || undefined,
       adults: l.adults, children: l.children, price: l.amount,
-      notice: `Paid in full via Paystack, reference ${l.paystack_reference}.${l.note ? ` ${l.note}` : ''}`,
+      notice: `${l.source === 'website' ? 'Booked on the website. ' : ''}Paid in full via Paystack, reference ${l.paystack_reference}.${l.note ? ` ${l.note}` : ''}`,
     }, apiKey);
     const id = res && (res.id || (res.reservation && res.reservation.id));
     await run(`UPDATE payment_links SET status = 'booked', smoobu_reservation_id = $2, error = NULL, updated_at = NOW() WHERE id = $1`, [l.id, id || null]);
