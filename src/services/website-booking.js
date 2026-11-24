@@ -10,13 +10,17 @@
  * tomorrow at the earliest, and the link lasts an hour.
  *
  * A property is on the website when an admin has switched it on and it
- * has a Paystack account to be paid into.
+ * has a live Paystack account to be paid into. A test account will not
+ * do: its checkout lets anyone press "Success" without paying, and that
+ * would make a real booking in Smoobu.
  */
 
 const { getOne, run } = require('../db/database');
 const smoobu = require('./smoobu');
 const links = require('./payment-links');
 const { keyFor } = require('./payment-accounts');
+const paystack = require('./paystack');
+const liveKey = async (propertyId) => paystack.modeOf(await keyFor(propertyId)) === 'live';
 const { getApiKeyForProperty } = require('./api-key-resolver');
 
 const DAY = 86400000;
@@ -36,7 +40,7 @@ async function bySlug(slug) {
     `SELECT id, name, smoobu_id, max_guests, check_in_time, check_out_time, booking_slug, booking_terms, public_booking
        FROM properties WHERE booking_slug = $1`, [slug]
   );
-  if (!p || !p.public_booking || !(await keyFor(p.id))) return null;
+  if (!p || !p.public_booking || !(await liveKey(p.id))) return null;
   return p;
 }
 
@@ -109,7 +113,7 @@ async function reserve(p, { checkIn, checkOut, adults = 2, children = 0, firstNa
 async function settings(propertyId) {
   const p = await getOne('SELECT id, name, public_booking, booking_slug, booking_terms FROM properties WHERE id = $1', [propertyId]);
   if (!p) return null;
-  return { property_id: p.id, enabled: p.public_booking, slug: p.booking_slug || slugify(p.name), terms: p.booking_terms || '', paystack: Boolean(await keyFor(p.id)) };
+  return { property_id: p.id, enabled: p.public_booking, slug: p.booking_slug || slugify(p.name), terms: p.booking_terms || '', paystack: await liveKey(p.id) };
 }
 
 async function saveSettings(propertyId, { enabled, slug, terms }) {
@@ -117,7 +121,7 @@ async function saveSettings(propertyId, { enabled, slug, terms }) {
   if (!SLUG.test(s) || s.length > 40) throw fail('The address may use a–z, 0–9 and dashes, e.g. the-loft');
   const taken = await getOne('SELECT id FROM properties WHERE booking_slug = $1 AND id <> $2', [s, propertyId]);
   if (taken) throw fail('Another property already uses that address', 409);
-  if (enabled && !(await keyFor(propertyId))) throw fail('Connect a Paystack account for this property first', 409);
+  if (enabled && !(await liveKey(propertyId))) throw fail('The website needs this property\'s live Paystack key (a test key lets anyone book without paying)', 409);
   await run('UPDATE properties SET public_booking = $2, booking_slug = $3, booking_terms = $4 WHERE id = $1',
     [propertyId, Boolean(enabled), s, terms ? String(terms).slice(0, 4000) : null]);
   cache.delete(propertyId);
