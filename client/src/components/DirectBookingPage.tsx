@@ -143,7 +143,7 @@ function WebsiteRow({ w, name, onSaved }: { w: Website; name: string; onSaved: (
           <div className="text-[15px] font-medium">{name}</div>
           <div className="text-[13px] text-[#717171] truncate">
             {w.enabled ? <a href={url} target="_blank" rel="noreferrer" className="underline">{url.replace(/^https?:\/\//, '')}</a>
-              : w.paystack ? 'Not on the website' : 'Needs a Paystack account first'}
+              : w.paystack ? 'Not on the website' : 'Needs a live Paystack key first (test keys are for your own links)'}
           </div>
         </div>
         {w.enabled && <span className="text-[12px] font-semibold px-2 py-1 rounded-full bg-[#E8F5E9] text-[#008A05]">On</span>}

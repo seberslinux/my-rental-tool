@@ -11,7 +11,7 @@ const notifyModule = require('../../src/services/notify');
 const accounts = require('../../src/services/payment-accounts');
 const { pool } = require('../../src/db/database');
 
-const KEY = 'sk_test_website';
+const KEY = 'sk_live_website';
 let app;
 let paystackCalls;
 let reservations;
@@ -187,4 +187,22 @@ test('website settings: admins only, a clean address, one property per address',
   const m = await getAgent();
   await loginAs(m, manager);
   await m.put(`/api/payment-links/website/${p.id}`).send({ enabled: false, slug: 'the-loft' }).expect(403);
+});
+
+test('a test Paystack key keeps a property off the website: its checkout can be passed without paying', async () => {
+  const admin = await seedUser({ role: 'admin' });
+  const p = await loft(admin, { connect: false });
+  await accounts.connect(p.id, { secretKey: 'sk_test_francesca', accountName: 'Francesca' });
+  const agent = await getAgent();
+  await loginAs(agent, admin);
+  await switchOn(agent, p).expect(409, /live Paystack key/);
+
+  // Switched on while live, then put back on a test key: off the website at once.
+  await accounts.connect(p.id, { secretKey: KEY, accountName: 'Francesca' });
+  await switchOn(agent, p).expect(200);
+  await request(app).get('/book/the-loft').expect(200);
+  await accounts.connect(p.id, { secretKey: 'sk_test_francesca', accountName: 'Francesca' });
+  await request(app).get('/book/the-loft').expect(404);
+  await request(app).post('/book/the-loft/reserve').send({ check_in: inDays(5), check_out: inDays(7), adults: 2, first_name: 'Ana', email: 'ana@example.com' }).expect(404);
+  assert.equal(paystackCalls.filter((c) => c.url.endsWith('/transaction/initialize')).length, 0);
 });
