@@ -9,6 +9,7 @@ const { requireRole, scopeProperties, isPropertyInScope } = require('../middlewa
 const links = require('../services/payment-links');
 const accounts = require('../services/payment-accounts');
 const site = require('../services/website-booking');
+const { bookingBaseUrl } = require('../middleware/booking-host');
 
 const router = express.Router();
 router.use(requireRole('admin', 'property_manager'), scopeProperties);
@@ -26,6 +27,7 @@ router.get('/', async (req, res) => {
       accounts: await accounts.accounts(req.accessiblePropertyIds),
       website: await Promise.all((await accounts.accounts(req.accessiblePropertyIds)).map((a) => site.settings(a.property_id))),
       default_discount: links.DEFAULT_DISCOUNT,
+      booking_base_url: bookingBaseUrl(),
     });
   } catch (err) { send(res, err); }
 });

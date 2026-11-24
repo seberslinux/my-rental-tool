@@ -36,7 +36,9 @@ const INPUT = 'w-full h-[40px] px-2.5 border border-[#DDDDDD] rounded-[8px] text
 const LABEL = 'block text-[12px] text-[#717171] mb-1';
 const rand = (n: number) => `R${Math.round(n).toLocaleString('en-ZA')}`;
 const day = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString('en-ZA', { day: 'numeric', month: 'short' });
-const linkUrl = (token: string) => `${window.location.origin}/pay/${token}`;
+// Guests are sent to the booking address when there is one, kept apart from the app.
+let guestBase = window.location.origin;
+const linkUrl = (token: string) => `${guestBase}/pay/${token}`;
 const todayIso = () => new Date().toISOString().slice(0, 10);
 const addDays = (iso: string, n: number) => new Date(Date.parse(`${iso}T00:00:00Z`) + n * 86400000).toISOString().slice(0, 10);
 
@@ -111,7 +113,7 @@ function AccountRow({ a, onSaved }: { a: Account; onSaved: (list: Account[]) => 
             <button onClick={save} disabled={!key || !name} className="px-4 h-[36px] rounded-[8px] bg-[#222222] text-white text-[14px] font-semibold disabled:opacity-40">Save</button>
             {a.connected && <button onClick={remove} className="text-[13px] text-[#C13515] underline">Disconnect</button>}
           </div>
-          <p className="text-[12px] text-[#B0B0B0]">Paystack → Settings → API Keys &amp; Webhooks. Stored encrypted; it can't be shown again. Set the webhook URL there to {window.location.origin}/paystack/webhook.</p>
+          <p className="text-[12px] text-[#B0B0B0]">Paystack → Settings → API Keys &amp; Webhooks. Stored encrypted; it can't be shown again. Set the webhook URL there to {guestBase}/paystack/webhook.</p>
         </div>)}
       {note && <p className="text-[13px] text-[#C13515] mt-1">{note}</p>}
     </div>);
@@ -124,7 +126,7 @@ function WebsiteRow({ w, name, onSaved }: { w: Website; name: string; onSaved: (
   const [terms, setTerms] = useState(w.terms);
   const [note, setNote] = useState('');
   const [copied, setCopied] = useState('');
-  const url = `${window.location.origin}/book/${w.slug}`;
+  const url = `${guestBase}/book/${w.slug}`;
   const button = `<a href="${url}" target="_blank" rel="noopener" style="display:inline-block;padding:14px 28px;background:#222;color:#fff;border-radius:8px;font-weight:600;text-decoration:none">Book direct</a>`;
   const save = async () => {
     setNote('');
@@ -197,8 +199,8 @@ export function DirectBookingPage({ initialPropertyId, isAdmin = false }: { init
   const [copied, setCopied] = useState<number | null>(null);
 
   const load = useCallback(() => {
-    apiGet<{ links: Link[]; accounts: Account[]; website: Website[] }>('/api/payment-links')
-      .then((d) => { setLinks(d.links); setAccounts(d.accounts); setWebsite(d.website || []); })
+    apiGet<{ links: Link[]; accounts: Account[]; website: Website[]; booking_base_url: string | null }>('/api/payment-links')
+      .then((d) => { guestBase = d.booking_base_url || window.location.origin; setLinks(d.links); setAccounts(d.accounts); setWebsite(d.website || []); })
       .catch(() => setError('Could not load the links.'));
   }, []);
   useEffect(() => {
