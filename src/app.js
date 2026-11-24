@@ -47,6 +47,9 @@ function buildApp({
   // The raw body is kept for webhooks signed over it (Paystack).
   app.use(express.json({ limit: '10mb', verify: (req, res, buf) => { req.rawBody = buf; } }));
 
+  // The booking address serves guests only; the app stays on its own.
+  app.use(require('./middleware/booking-host').bookingHost());
+
   const noopLimiter = (req, res, next) => next();
 
   // Rate limiting: auth endpoints (brute-force protection).
