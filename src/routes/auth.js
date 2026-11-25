@@ -172,12 +172,22 @@ router.post('/cleaner-token', async (req, res) => {
 });
 
 // Google SSO
-router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
+// Signing Claude in (src/mcp/consent.js) comes back to its own page after
+// Google; nothing else may be named as the way back.
+const CONSENT_RETURN = /^\/oauth\/consent\?request=[A-Za-z0-9_-]+$/;
+router.get('/google', (req, res, next) => {
+  if (CONSENT_RETURN.test(String(req.query.next || ''))) req.session.returnTo = req.query.next;
+  else if (req.session) delete req.session.returnTo;
+  next();
+}, passport.authenticate('google', { scope: ['profile', 'email'] }));
 
 router.get('/google/callback',
-  passport.authenticate('google', { failureRedirect: '/login?error=google_failed' }),
+  passport.authenticate('google', { failureRedirect: '/login?error=google_failed', keepSessionInfo: true }),
   (req, res) => {
     clearCleanerSession(req);
+    const back = req.session.returnTo;
+    delete req.session.returnTo;
+    if (back && CONSENT_RETURN.test(back)) return res.redirect(back);
     res.redirect(req.user.role === 'cleaner' ? '/cleaner-portal' : '/');
   }
 );

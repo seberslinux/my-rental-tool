@@ -1188,6 +1188,30 @@ async function runMigrations() {
   await pool.query(`ALTER TABLE properties ADD COLUMN IF NOT EXISTS booking_terms TEXT`);
   await pool.query(`ALTER TABLE payment_links ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'owner'`);
 
+  // Claude (MCP): the apps that registered to sign in, and the tokens
+  // they hold for a person — kept as hashes, never the tokens themselves.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mcp_clients (
+      client_id TEXT PRIMARY KEY,
+      info JSONB NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mcp_tokens (
+      token_hash TEXT PRIMARY KEY,
+      kind TEXT NOT NULL CHECK (kind IN ('access', 'refresh')),
+      client_id TEXT NOT NULL REFERENCES mcp_clients(client_id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      scopes TEXT,
+      resource TEXT,
+      expires_at TIMESTAMPTZ NOT NULL,
+      revoked_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS mcp_tokens_user ON mcp_tokens (user_id)`);
+
   console.log('Database migrations complete.');
 }
 
