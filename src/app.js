@@ -93,6 +93,9 @@ function buildApp({
   }));
   app.use(passport.initialize());
   app.use(passport.session());
+  // Claude's tools run as the person who signed Claude in (src/mcp).
+  app.use(require('./mcp/internal').attachCaller);
+  app.use(require('./mcp').mcpRoutes(app, { disableRateLimits }));
 
   // Public routes (no auth required).
   app.use('/api/auth', authLimiter, require('./routes/auth'));
