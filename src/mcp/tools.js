@@ -37,10 +37,13 @@ function register(server, { app, userOf }) {
 
   tool('list_properties', {
     title: 'Properties',
-    description: 'The properties you manage: id, name, guests, bedrooms, minimum (base) price, currency. Use the id in other tools.',
+    description: 'The properties you manage: id, name, guests, bedrooms, base_price (Smoobu\'s minimum price floor, not a nightly rate — use get_rates for rates), currency. Use the id in other tools.',
     inputSchema: {},
     annotations: read,
-  }, async (_a, extra) => ok((await call(extra, { url: '/api/properties' })).map((p) => pick(p, PROPERTY_FIELDS))));
+  }, async (_a, extra) => ok((await call(extra, { url: '/api/properties' })).map((p) => ({
+    ...pick(p, PROPERTY_FIELDS),
+    base_price_basis: 'Smoobu minimum price (the floor below which rates may not go), not a nightly rate',
+  }))));
 
   tool('get_performance', {
     title: 'Revenue and occupancy',

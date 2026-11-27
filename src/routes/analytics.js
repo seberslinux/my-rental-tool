@@ -392,16 +392,15 @@ router.get('/data', async (req, res) => {
     bookingParams
   );
 
-  // Impute revenue from base_price when total_price is 0 (any platform, not just VRBO)
+  // A booking Smoobu holds no price for (usually Vrbo) is price unknown.
+  // It used to be filled in at properties.base_price — Smoobu's minimum
+  // price floor, R80 on the Loft — which put nights on the books at a rate
+  // nobody paid. Now it counts for nights and occupancy, stays at R0 in
+  // revenue, and is left out of every per-night average.
   for (const b of allBookings) {
-    if ((b.total_price || 0) === 0 && b.property_base_price && b.property_base_price > 0) {
-      const los = b.length_of_stay || 1;
-      b.total_price = b.property_base_price * los;
-      b.price_per_night = b.property_base_price;
-      b.currency = b.property_base_currency || 'ZAR';
-      b._imputed = true;
-    }
+    if ((b.total_price || 0) === 0) b._price_unknown = true;
   }
+  const pricedBookings = allBookings.filter((b) => !b._price_unknown);
 
   // Convert all booking amounts to display currency
   const displayCurrency = await getDisplayCurrency();
@@ -423,12 +422,9 @@ router.get('/data', async (req, res) => {
     futureParams
   ) : [];
 
-  // Impute + convert future bookings
+  // Future bookings with no price stay at R0 (price unknown), as above.
   for (const b of futureConfirmedBookings) {
-    if ((b.total_price || 0) === 0 && b.property_base_price > 0) {
-      b.total_price = b.property_base_price * (b.length_of_stay || 1);
-      b.currency = b.property_base_currency || 'ZAR';
-    }
+    if ((b.total_price || 0) === 0) b._price_unknown = true;
   }
   if (futureConfirmedBookings.length > 0) await bulkConvert(futureConfirmedBookings, displayCurrency);
 
@@ -441,7 +437,12 @@ router.get('/data', async (req, res) => {
 
   // --- Channel performance ---
   const channelStats = {};
-  for (const b of allBookings) {
+  const unknownByChannel = {};
+  for (const b of allBookings.filter((x) => x._price_unknown)) {
+    const ch = normalizePlatform(b.platform);
+    unknownByChannel[ch] = (unknownByChannel[ch] || 0) + 1;
+  }
+  for (const b of pricedBookings) {
     const ch = normalizePlatform(b.platform);
     if (!channelStats[ch]) channelStats[ch] = { channel: ch, revenue: 0, revenue_ex_vat: 0, bank_charges: 0, bookings: 0, nights: 0, avg_ppn: 0, avg_ppn_ex_vat: 0, avg_los: 0, avg_lead_time: 0, total_ppn: 0, total_ppn_ex_vat: 0, total_lead: 0, has_imputed: false };
     const convPrice = b.converted_total_price || 0;
@@ -467,7 +468,12 @@ router.get('/data', async (req, res) => {
     else if (ch === 'VRBO') bankRate = (b.bank_charge_vrbo || 0) / 100;
     channelStats[ch].bank_charges += Math.round(convPrice * bankRate);
   }
+  // A channel whose bookings all lack a price still shows, with its count.
+  for (const name of Object.keys(unknownByChannel)) {
+    if (!channelStats[name]) channelStats[name] = { channel: name, revenue: 0, revenue_ex_vat: 0, bank_charges: 0, bookings: 0, nights: 0, avg_ppn: 0, avg_ppn_ex_vat: 0, avg_los: 0, avg_lead_time: 0, total_ppn: 0, total_ppn_ex_vat: 0, total_lead: 0, has_imputed: false };
+  }
   for (const ch of Object.values(channelStats)) {
+    ch.price_unknown = unknownByChannel[ch.channel] || 0;
     ch.avg_ppn = ch.bookings > 0 ? Math.round(ch.total_ppn / ch.bookings) : 0;
     ch.avg_ppn_ex_vat = ch.bookings > 0 ? Math.round(ch.total_ppn_ex_vat / ch.bookings) : 0;
     ch.avg_los = ch.bookings > 0 ? Math.round((ch.nights / ch.bookings) * 10) / 10 : 0;
@@ -530,7 +536,7 @@ router.get('/data', async (req, res) => {
   }
 
   // --- ADR (Average Daily Rate) by month ---
-  const adrTimeline = aggregateAdrByMonth(allBookings);
+  const adrTimeline = aggregateAdrByMonth(pricedBookings);
 
   // --- Day-of-week analysis ---
   const dowStats = Array.from({ length: 7 }, (_, i) => ({ day: i, bookings_starting: 0, revenue: 0, nights: 0 }));
@@ -680,12 +686,7 @@ router.get('/data', async (req, res) => {
       priorParams
     );
 
-    for (const b of priorBookingsForFc) {
-      if ((b.total_price || 0) === 0 && b.property_base_price > 0) {
-        b.total_price = b.property_base_price * (b.length_of_stay || 1);
-        b.currency = b.property_base_currency || 'ZAR';
-      }
-    }
+    // No price in Smoobu: left at R0 (price unknown), not filled in.
     if (priorBookingsForFc.length > 0) await bulkConvert(priorBookingsForFc, displayCurrency);
 
     const priorByMonth = {};
@@ -777,10 +778,12 @@ router.get('/data', async (req, res) => {
   const netRevenue = revenueInWindow(allBookings, revFrom, revTo, { net: true });
   const totalDeductions = totalRevenue - netRevenue;
   const totalNights = nightsSoldInWindow(allBookings, revFrom, revTo);
-  const avgAdr = totalNights > 0 ? Math.round(totalRevenue / totalNights) : 0;
+  const pricedNights = nightsSoldInWindow(pricedBookings, revFrom, revTo);
+  const avgAdr = pricedNights > 0 ? Math.round(totalRevenue / pricedNights) : 0;
+  const unknown = allBookings.filter((b) => b._price_unknown);
   const avgLos = allBookings.length > 0 ? Math.round((totalNights / allBookings.length) * 10) / 10 : 0;
   const avgLeadTime = allBookings.length > 0 ? Math.round(allBookings.reduce((sum, b) => sum + (b.lead_time_days || 0), 0) / allBookings.length) : 0;
-  const hasImputedRevenue = allBookings.some(b => b._imputed);
+  const hasImputedRevenue = false; // nothing is filled in any more; see price_unknown
   const totalChildren = allBookings.reduce((sum, b) => sum + (b.children || 0), 0);
   const avgGuestsPerBooking = allBookings.length > 0 ? Math.round((allBookings.reduce((sum, b) => sum + (b.num_guests || 1), 0) / allBookings.length) * 10) / 10 : 0;
 
@@ -833,14 +836,9 @@ router.get('/data', async (req, res) => {
       priorParams
     );
 
-    // Impute for prior period too (all platforms with R0)
+    // No price in Smoobu: price unknown, as for the current period.
     for (const b of priorBookings) {
-      if ((b.total_price || 0) === 0 && b.property_base_price && b.property_base_price > 0) {
-        b.total_price = b.property_base_price * (b.length_of_stay || 1);
-        b.price_per_night = b.property_base_price;
-        b.currency = b.property_base_currency || 'ZAR';
-        b._imputed = true;
-      }
+      if ((b.total_price || 0) === 0) b._price_unknown = true;
     }
 
     // Convert prior period bookings
@@ -945,6 +943,8 @@ router.get('/data', async (req, res) => {
       future_nights: futureNights,
       properties_count: properties.length,
       has_imputed_revenue: hasImputedRevenue,
+      price_unknown: { bookings: unknown.length, nights: unknown.reduce((n, b) => n + (Number(b.length_of_stay) || 0), 0), by_channel: unknownByChannel,
+        note: 'bookings Smoobu holds no price for: counted for nights and occupancy, R0 in revenue, left out of ADR' },
       total_children: totalChildren,
       avg_guests: avgGuestsPerBooking,
     },
@@ -1087,17 +1087,8 @@ router.get('/seasonality', async (req, res) => {
       params
     );
 
-    // Impute VRBO revenue from base_price when total_price is 0
-    for (const b of bookings) {
-      if ((b.total_price || 0) === 0 && b.property_base_price && b.property_base_price > 0) {
-        const norm = normalizePlatform(b.platform);
-        if (norm === 'VRBO') {
-          const los = b.length_of_stay || 1;
-          b.total_price = b.property_base_price * los;
-          b.price_per_night = b.property_base_price;
-        }
-      }
-    }
+    // Vrbo bookings with no price in Smoobu stay at R0 (price unknown);
+    // they were filled in at the R80 minimum-price floor.
 
     const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
