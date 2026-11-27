@@ -715,8 +715,15 @@ router.get('/calendar/rates', scopeProperties, async (req, res) => {
   const cleaningOf = new Map(own.map((l) => [l.property_id, fees.byListing.has(l.id) ? fees.byListing.get(l.id).fee : null]));
   const markupOf = new Map(props.map((p) => [p.id, comparable.markupFor(p, 'airbnb')]));
   const asked = Number(req.query.stay_nights);
+  // A stay starting on the last day asked for runs past it: its later
+  // nights are read too, so they are priced at their own rates.
+  const ahead = ids.length ? await getAll(
+    `SELECT property_id, date, price FROM daily_rates
+      WHERE date > $1 AND date <= $2 AND property_id = ANY($3::int[])`,
+    [to, addDays(to, 31), ids]
+  ) : [];
   const byProp = new Map();
-  for (const r of rates) { if (!byProp.has(r.property_id)) byProp.set(r.property_id, new Map()); byProp.get(r.property_id).set(String(r.date).slice(0, 10), r); }
+  for (const r of [...rates, ...ahead]) { if (!byProp.has(r.property_id)) byProp.set(r.property_id, new Map()); byProp.get(r.property_id).set(String(r.date).slice(0, 10), r); }
   const out = rates.map((r) => {
     const stay = Number.isInteger(asked) && asked > 0 ? asked : Math.max(1, Number(r.min_stay) || comparable.DEFAULT_STAY_NIGHTS);
     const nights = [];

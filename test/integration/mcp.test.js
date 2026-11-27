@@ -207,4 +207,7 @@ test('get_rates puts the comparable price beside each base rate, labelled', asyn
   assert.equal(first.basis, 'airbnb, cleaning over 2 nights, excl. guest service fee, from smoobu base rate');
   const three = (await callTool(tokens.access_token, 'get_rates', { property_id: p.id, from: inDays(7), to: inDays(7), stay_nights: 3 })).data[0];
   assert.equal(three.stay_nights, 3);
+  // Asked for one day only, the stay's second night is still priced at its own rate.
+  const one = (await callTool(tokens.access_token, 'get_rates', { property_id: p.id, from: inDays(7), to: inDays(7) })).data[0];
+  assert.equal(one.comparable_gross_nightly, 4161);
 });
