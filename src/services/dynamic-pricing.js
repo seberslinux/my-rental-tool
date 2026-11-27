@@ -233,7 +233,11 @@ async function pricePlan(propertyId, { today = new Date().toISOString().slice(0,
        LEFT JOIN daily_rates d2 ON d2.property_id = $1 AND d2.date = to_char(pr.check_in + 1, 'YYYY-MM-DD')
       WHERE pr.listing_id = $2 AND d1.price > 0 AND pr.quoted_at > NOW() - INTERVAL '3 days'`, [propertyId, own.id]
   ) : [];
-  const fromQuotes = median(ownQuotes.map((q) => (q.nightly - q.rate * markup) * q.nights));
+  const comparable = require('../pricing/comparable');
+  const markupPercent = comparable.markupFor(property, 'airbnb');
+  // Our cleaning as our own quotes imply it: the quoted stay less its nights.
+  const fromQuotes = median(ownQuotes.map((q) => q.nightly * q.nights
+    - comparable.stayTotal(comparable.fromRates({ rates: Number(q.rate), stayNights: q.nights, markupPercent, cleaning: 0 }))));
   const ownCleaning = own && fees.byListing.has(own.id) ? fees.byListing.get(own.id).fee
     : fromQuotes && fromQuotes > 0 ? fromQuotes : 0;
   const peerAverage = fees.average.get(Number(propertyId));
@@ -247,12 +251,11 @@ async function pricePlan(propertyId, { today = new Date().toISOString().slice(0,
     [propertyId, addDays(today, -365)]
   );
   const stay = clamp(Math.round(Number(stayRow && stayRow.n) || STAY_NIGHTS), 2, 7);
-  const theirStay = (q) => {
-    const cleaning = cleaningOf(q.listing_id);
-    return Math.max(0, (q.nightly * q.nights - cleaning) / q.nights) * stay + cleaning;
-  };
-  const ourStay = (rate) => rate * markup * stay + ownCleaning;
-  const rateFor = (total) => Math.max(0, (total - ownCleaning) / (markup * stay));
+  // Both sides on the comparable basis (src/pricing/comparable.js), for
+  // the same stay: the guest's total for `stay` nights, cleaning and all.
+  const theirStay = (q) => comparable.stayTotal(comparable.fromQuote({ nightly: q.nightly, nights: q.nights, cleaning: cleaningOf(q.listing_id), stayNights: stay })) || 0;
+  const ourStay = (rate) => comparable.stayTotal(comparable.fromRates({ rates: rate, stayNights: stay, markupPercent, cleaning: ownCleaning })) || 0;
+  const rateFor = (total) => comparable.baseForComparable({ comparable: total / stay, stayNights: stay, markupPercent, cleaning: ownCleaning });
 
   const rates = await getAll(
     `SELECT date, price, available FROM daily_rates WHERE property_id = $1 AND date BETWEEN $2 AND $3 ORDER BY date`,

@@ -58,6 +58,24 @@ The app runs scheduled tasks in the background:
 | 10:00 | Check-in instructions sent to tomorrow's guests |
 | Every 30 min | Cleaning job reminders (2 hours before start) |
 
+## Comparing prices
+
+Every price the app and its MCP tools compare is `comparable_gross_nightly`:
+what a guest pays on Airbnb per night, cleaning included and spread over the
+stay (2 nights unless stated), excluding Airbnb's guest service fee.
+
+```
+comparable_gross_nightly = base_nightly × (1 + channel_markup) + cleaning_fee / stay_nights
+```
+
+Each night's marked-up rate is rounded up to the rand, as Airbnb does. For our
+own bookings it is Smoobu's gross ÷ nights. Prices come with labelled fields:
+`base_nightly`, `channel_nightly`, `cleaning_per_night`,
+`comparable_gross_nightly`, `stay_nights` and `basis` (what the number is).
+Only compare `comparable_gross_nightly` with `comparable_gross_nightly`.
+The one place this is worked out is `src/pricing/comparable.js`, which also
+records what Airbnb quotes and Smoobu gross actually contain (VAT included).
+
 ## API Endpoints
 
 All endpoints under `/api` require authentication. Public endpoints:

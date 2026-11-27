@@ -187,3 +187,24 @@ test('every read tool answers', async () => {
   assert.ok(perf.summary && 'net_revenue' in perf.summary);
   assert.equal(perf.recent_reviews, undefined);
 });
+
+test('get_rates puts the comparable price beside each base rate, labelled', async () => {
+  const admin = await seedUser({ role: 'admin' });
+  const p = await seedProperty({ owner: admin, name: 'Hill Top Lodge' });
+  await pool.query('UPDATE properties SET guest_markup_airbnb = 20.5 WHERE id = $1', [p.id]);
+  const l = (await pool.query(`INSERT INTO peer_listings (airbnb_id, name, property_id, is_own) VALUES ('lodge-own', 'Hill Top Lodge', $1, TRUE) RETURNING id`, [p.id])).rows[0];
+  await pool.query(`INSERT INTO peer_cleaning_fees (listing_id, check_in, nights, fee) VALUES ($1, $2, 2, 500)`, [l.id, inDays(10)]);
+  for (const [d, price] of [[inDays(7), 3280], [inDays(8), 3210]]) {
+    await pool.query(`INSERT INTO daily_rates (property_id, date, price, min_stay, available) VALUES ($1, $2, $3, 2, 1)`, [p.id, d, price]);
+  }
+  const { tokens } = await connect(admin);
+  const { data, error } = await callTool(tokens.access_token, 'get_rates', { property_id: p.id, from: inDays(7), to: inDays(8) });
+  assert.equal(error, null);
+  const first = data[0];
+  assert.equal(first.price, 3280);
+  assert.match(first.price_basis, /base rate/);
+  assert.equal(first.comparable_gross_nightly, 4161, '⌈3,280 × 1.205⌉ + ⌈3,210 × 1.205⌉ + 500, over 2 nights');
+  assert.equal(first.basis, 'airbnb, cleaning over 2 nights, excl. guest service fee, from smoobu base rate');
+  const three = (await callTool(tokens.access_token, 'get_rates', { property_id: p.id, from: inDays(7), to: inDays(7), stay_nights: 3 })).data[0];
+  assert.equal(three.stay_nights, 3);
+});

@@ -26,7 +26,7 @@ export interface PeerWindow { days: number; own: number | null; benchmark: numbe
 export interface PeerPoint { name: string; occupancy: number; price: number; is_own: boolean; is_benchmark: boolean; revenue?: number; }
 export interface PeerSummaryRow {
   id: number; name: string; currency?: string; benchmark_name: string | null; windows: PeerWindow[];
-  points?: PeerPoint[]; median_price?: number | null; revenue_days?: number;
+  points?: PeerPoint[]; median_price?: number | null; revenue_days?: number; price_basis?: string;
 }
 
 const card = 'bg-white rounded-[12px] shadow-[0_1px_2px_rgba(0,0,0,0.04),0_0_0_1px_rgba(0,0,0,0.03)]';
@@ -140,6 +140,9 @@ function PositionChart({ row, height }: { row: PeerSummaryRow; height: number })
       </div>
       <p className="text-[12px] text-[#B0B0B0] mt-1">
         Bubble size: money booked for the next {days} nights — competitors' taken nights at their nearest quoted price, yours from Smoobu.
+      </p>
+      <p className="text-[12px] text-[#B0B0B0]">
+        Price per night: what an Airbnb guest pays a night, cleaning over 2 nights, excl. guest service fee.
       </p>
       {leaders.length > 0 &&
       <button

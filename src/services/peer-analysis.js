@@ -15,6 +15,7 @@
  */
 
 const { getAll } = require('../db/database');
+const comparable = require('../pricing/comparable');
 
 const DAY = 86400000;
 const toDay = (d) => (typeof d === 'string' ? d.slice(0, 10) : new Date(d).toISOString().slice(0, 10));
@@ -101,7 +102,12 @@ function suggestions({ sales, leaders = [], ownPrices = [], ownOpen = new Set(),
   const out = [];
 
   // 0. The price leader: the ceiling, and how far below it we sit.
-  const ourAsk = median(ownPrices.filter((p) => p.open).map((p) => p.nightly));
+  // Every price here is comparable_gross_nightly, cleaning over 2 nights
+  // (src/pricing/comparable.js): ours and theirs on the same basis.
+  // A price handed in without the labelled fields is taken as comparable already.
+  const askOf = (p) => p.comparable_gross_nightly ?? p.nightly ?? null;
+  const soldOf = (s) => s.sold_comparable ?? s.nightly_sold ?? null;
+  const ourAsk = median(ownPrices.filter((p) => p.open).map(askOf));
   for (const l of leaders.filter((x) => x.bookings > 0 && x.avg_nightly)) {
     const times = ourAsk ? Math.round((l.avg_nightly / ourAsk) * 10) / 10 : null;
     out.push({
@@ -141,21 +147,23 @@ function suggestions({ sales, leaders = [], ownPrices = [], ownOpen = new Set(),
   }
 
   // 3. Price: what peers sold at against what we ask for the same week.
-  const sold = sales.filter((s) => s.nightly_sold != null && s.check_in >= today);
+  const sold = sales.filter((s) => soldOf(s) != null && s.check_in >= today);
   const soldByWeek = groupBy(sold, (s) => mondayOf(s.check_in));
+  const basis = 'guest price per night on Airbnb, cleaning over 2 nights';
   for (const [week, ss] of soldByWeek) {
-    const ours = ownPrices.find((p) => p.open && mondayOf(p.check_in) === week);
+    const ours = ownPrices.find((p) => p.open && askOf(p) && mondayOf(p.check_in) === week);
     if (!ours) continue;
-    const theirs = median(ss.map((s) => s.nightly_sold));
-    if (theirs >= ours.nightly * 1.1) {
+    const mine = askOf(ours);
+    const theirs = median(ss.map(soldOf));
+    if (theirs >= mine * 1.1) {
       out.push({
-        kind: 'price_up',
-        text: `Competitors sold the week of ${fmt(week)} at about ${money(theirs)} a night; you ask ${money(ours.nightly)}. There is room to raise it.`,
+        kind: 'price_up', basis, theirs, yours: mine,
+        text: `Competitors sold the week of ${fmt(week)} at about ${money(theirs)} a night; you ask ${money(mine)} (${basis}). There is room to raise it.`,
       });
-    } else if (ours.nightly >= theirs * 1.25) {
+    } else if (mine >= theirs * 1.25) {
       out.push({
-        kind: 'price_down',
-        text: `You ask ${money(ours.nightly)} for the week of ${fmt(week)}; competitors sold it at about ${money(theirs)}. If your nights there do not move, come down.`,
+        kind: 'price_down', basis, theirs, yours: mine,
+        text: `You ask ${money(mine)} for the week of ${fmt(week)}; competitors sold it at about ${money(theirs)} (${basis}). If your nights there do not move, come down.`,
       });
     }
   }
@@ -199,12 +207,19 @@ async function bookingAnalysis({ scope = null, today = new Date().toISOString().
     `SELECT s.id, s.listing_id, l.name, l.property_id, l.is_own, l.is_benchmark,
             to_char(s.check_in, 'YYYY-MM-DD') AS check_in, to_char(s.check_out, 'YYYY-MM-DD') AS check_out,
             s.nights, s.lead_days, s.nightly, to_char(s.detected_at, 'YYYY-MM-DD') AS found,
-            est.nightly AS est_nightly
+            est.nightly AS est_nightly, est.nights AS est_nights, qn.nights AS quote_nights
        FROM peer_stays s JOIN peer_listings l ON l.id = s.listing_id
+       -- How many nights the quote behind the sale's own price covered.
+       LEFT JOIN LATERAL (
+         SELECT h.nights FROM peer_price_history h
+          WHERE h.listing_id = s.listing_id AND h.nightly = s.nightly
+            AND h.check_in < s.check_out AND h.check_in + h.nights > s.check_in
+          ORDER BY h.quoted_at DESC LIMIT 1
+       ) qn ON TRUE
        -- The listing's quote nearest in date to the stay, before the sale
        -- where there is one: the estimate for a sale nobody priced.
        LEFT JOIN LATERAL (
-         SELECT h.nightly FROM peer_price_history h WHERE h.listing_id = s.listing_id
+         SELECT h.nightly, h.nights FROM peer_price_history h WHERE h.listing_id = s.listing_id
           ORDER BY (h.quoted_at > s.detected_at), abs(h.check_in - s.check_in), h.quoted_at DESC LIMIT 1
        ) est ON TRUE
       WHERE s.kind = 'booking' AND s.reversed_at IS NULL AND l.property_id = ANY($1::int[])
@@ -214,17 +229,17 @@ async function bookingAnalysis({ scope = null, today = new Date().toISOString().
   // Each listing's latest asking price, to stand in where a sale's own
   // nights were never quoted.
   const latest = new Map((await getAll(
-    `SELECT DISTINCT ON (listing_id) listing_id, nightly FROM peer_prices ORDER BY listing_id, quoted_at DESC, check_in`
-  )).map((r) => [r.listing_id, r.nightly]));
+    `SELECT DISTINCT ON (listing_id) listing_id, nightly, nights FROM peer_prices ORDER BY listing_id, quoted_at DESC, check_in`
+  )).map((r) => [r.listing_id, r]));
   // Every listing's latest asking price with its property, to tell which
   // competitors are in a different price class altogether.
   const peerListingAsks = await getAll(
-    `SELECT DISTINCT ON (p.listing_id) p.listing_id, l.property_id, l.is_own, p.nightly
+    `SELECT DISTINCT ON (p.listing_id) p.listing_id, l.property_id, l.is_own, p.nightly, p.nights
        FROM peer_prices p JOIN peer_listings l ON l.id = p.listing_id
       ORDER BY p.listing_id, p.quoted_at DESC, p.check_in`
   );
   const ownPrices = await getAll(
-    `SELECT l.property_id, to_char(p.check_in, 'YYYY-MM-DD') AS check_in, p.nightly,
+    `SELECT l.property_id, l.id AS listing_id, to_char(p.check_in, 'YYYY-MM-DD') AS check_in, p.nightly, p.nights,
             COALESCE(c.available, FALSE) AS open
        FROM peer_prices p JOIN peer_listings l ON l.id = p.listing_id AND l.is_own
        LEFT JOIN peer_calendar c ON c.listing_id = p.listing_id AND c.date = p.check_in
@@ -266,41 +281,65 @@ async function bookingAnalysis({ scope = null, today = new Date().toISOString().
     // market: its sales would swamp every average and every price
     // suggestion. It is named on its own and left out of the figures,
     // as the position chart does.
-    const peerAsks = peerListingAsks.filter((r) => r.property_id === p.id && !r.is_own);
-    const askMedian = median(peerAsks.map((r) => r.nightly));
-    const outlierIds = new Set(askMedian ? peerAsks.filter((r) => r.nightly > askMedian * 2).map((r) => r.listing_id) : []);
+    // Asking prices on the comparable basis (cleaning over 2 nights), so a
+    // listing quoted over a long minimum stay is not mistaken for a cheap one.
+    const ask = (r) => comparable.fromQuote({ nightly: r.nightly, nights: r.nights, cleaning: cleaningFor(r.listing_id) });
+    const askOf = (r) => (r ? (ask(r) || {}).comparable_gross_nightly ?? null : null);
+    const peerAsks = peerListingAsks.filter((r) => r.property_id === p.id && !r.is_own).map((r) => ({ ...r, comparable: askOf(r) }));
+    const askMedian = median(peerAsks.map((r) => r.comparable));
+    const outlierIds = new Set(askMedian ? peerAsks.filter((r) => r.comparable > askMedian * 2).map((r) => r.listing_id) : []);
     const all = rows.filter((r) => r.property_id === p.id && !r.is_own);
     // Kept out of the medians, but not out of sight: a listing selling at
     // several times the market rate is the ceiling to aim at. Its sales are
     // in every list and count, marked; only the per-night averages and
     // the price suggestions leave it out.
-    const sales = all.map((r) => {
-      const nightly = r.nightly != null ? r.nightly : r.est_nightly ?? latest.get(r.listing_id) ?? null;
-      // A quote is a two-night stay all-in, so its nightly carries half a
-      // cleaning fee. A sale is its nights without that, and the fee once.
+    const salesAll = all.map((r) => {
+      // The quote behind the price: the sale's own, else the nearest in
+      // date, else the listing's latest. Taken apart with the listing's
+      // cleaning fee and put back together over the nights actually sold.
+      const latestAsk = latest.get(r.listing_id);
+      const q = r.nightly != null ? { nightly: r.nightly, nights: r.quote_nights }
+        : r.est_nightly != null ? { nightly: r.est_nightly, nights: r.est_nights }
+        : latestAsk ? { nightly: latestAsk.nightly, nights: latestAsk.nights } : null;
       const cleaning = cleaningFor(r.listing_id);
-      const revenue = nightly != null ? Math.max(0, nightly - cleaning / 2) * r.nights + cleaning : null;
+      const stay = q ? comparable.fromQuote({ ...q, nights: q.nights || comparable.DEFAULT_STAY_NIGHTS, cleaning, stayNights: r.nights }) : null;
+      const two = r.nightly != null ? comparable.fromQuote({ nightly: r.nightly, nights: r.quote_nights || comparable.DEFAULT_STAY_NIGHTS, cleaning }) : null;
       return {
         ...r,
         leader: outlierIds.has(r.listing_id),
-        nightly_sold: r.nightly,
-        nightly_used: revenue != null ? Math.round(revenue / r.nights) : null,
+        sold_comparable: two ? two.comparable_gross_nightly : null,
+        price: stay,
+        nightly_used: stay ? stay.comparable_gross_nightly : null,
         estimated: r.nightly == null,
-        revenue,
+        revenue: stay ? comparable.stayTotal(stay) : null,
       };
     });
+    const ownListing = ownPrices.find((r) => r.property_id === p.id);
+    const ownCleaning = ownListing && fees.byListing.has(ownListing.listing_id) ? fees.byListing.get(ownListing.listing_id).fee : null;
+    const ownAll = ownRows.filter((r) => r.property_id === p.id).map((r) => {
+      const price = comparable.fromBooking({ gross: r.total_price, nights: r.nights, cleaning: ownCleaning, platform: r.platform });
+      return {
+        name: 'You', own: true, check_in: r.check_in, check_out: r.check_out, nights: Number(r.nights),
+        lead_days: r.lead_time_days, found: r.found, channel: r.platform, price,
+        nightly_used: price.comparable_gross_nightly, estimated: false,
+        revenue: price.price_unknown ? null : Math.round(Number(r.total_price)),
+      };
+    });
+    // Only short Airbnb and Booking.com stays are compared with the
+    // competitors: a direct booking carries no channel markup, and a stay
+    // of 28 nights or more is priced as a month. Both are listed apart.
+    const LONG_STAY = 28;
+    const whyApart = (x) => (x.nights >= LONG_STAY ? `${LONG_STAY}+ nights`
+      : x.own && !['airbnb', 'booking'].includes(comparable.channelOf(x.channel)) ? 'direct or other channel, no markup' : null);
+    const sales = salesAll.filter((x) => !whyApart(x));
+    const own = ownAll.filter((x) => !whyApart(x));
     const market = sales.filter((s) => !s.leader);
     const leaders = [...groupBy(sales.filter((s) => s.leader), (r) => r.name).entries()]
-      .map(([name, ss]) => ({ name, asking: latest.get(ss[0].listing_id) ?? null, ...summarise(ss.map((x) => ({ ...x, leader: false }))) }));
-    const own = ownRows.filter((r) => r.property_id === p.id).map((r) => ({
-      name: 'You', own: true, check_in: r.check_in, check_out: r.check_out, nights: Number(r.nights),
-      lead_days: r.lead_time_days, found: r.found, channel: r.platform,
-      nightly_used: r.price_per_night ? Math.round(r.price_per_night) : null, estimated: false,
-      revenue: r.total_price ? Math.round(r.total_price) : null,
-    }));
+      .map(([name, ss]) => ({ name, asking: askOf(latest.get(ss[0].listing_id)), asking_basis: 'comparable_gross_nightly, cleaning over 2 nights', ...summarise(ss.map((x) => ({ ...x, leader: false }))) }));
     const line = (x) => ({
       name: x.name, own: Boolean(x.own), leader: Boolean(x.leader), channel: x.channel || null,
       check_in: x.check_in, check_out: x.check_out, nights: x.nights, lead_days: x.lead_days,
+      ...(x.price || { comparable_gross_nightly: null, basis: 'no price' }),
       nightly: x.nightly_used, estimated: x.estimated, revenue: x.revenue,
     });
     const period = (comp, mine) => ({ ...summarise(comp), you: summarise(mine) });
@@ -333,6 +372,10 @@ async function bookingAnalysis({ scope = null, today = new Date().toISOString().
       since: rows.length ? rows.at(0).found : null,
       total: summarise(sales),
       you: summarise(own),
+      you_by_channel: [...groupBy(ownAll, (x) => comparable.channelOf(x.channel)).entries()]
+        .map(([channel, xs]) => ({ channel, ...summarise(xs.filter((x) => !whyApart(x))), long_stays: xs.filter((x) => x.nights >= LONG_STAY).length })),
+      compared: 'Airbnb and Booking.com stays under 28 nights; prices are comparable_gross_nightly (guest price per night, cleaning over the stay)',
+      not_compared: [...salesAll, ...ownAll].filter((x) => whyApart(x)).map((x) => ({ reason: whyApart(x), ...line(x) })),
       weeks,
       months,
       seasons,
@@ -341,7 +384,7 @@ async function bookingAnalysis({ scope = null, today = new Date().toISOString().
       suggestions: suggestions({
         leaders,
         sales: market,
-        ownPrices: ownPrices.filter((r) => r.property_id === p.id),
+        ownPrices: ownPrices.filter((r) => r.property_id === p.id).map((r) => ({ ...r, ...ask(r) })),
         ownOpen: new Set(ownOpenRows.filter((r) => r.property_id === p.id).map((r) => r.date)),
         today,
         money,

@@ -282,7 +282,7 @@ export function DirectBookingPage({ initialPropertyId, isAdmin = false }: { init
                 {quote.taken.length ? `Not available: ${quote.taken.map(day).join(', ')}` : `No price in Smoobu for ${quote.unpriced.map(day).join(', ')}`}
               </p>)}
             {quote.below_min_stay && <p className="text-[#B25E09] mb-2">Shorter than the minimum stay in Smoobu ({quote.min_stay} nights). A direct booking may still allow it.</p>}
-            <div className="flex justify-between"><span className="text-[#717171]">On Airbnb ({quote.nights} night{quote.nights === 1 ? '' : 's'})</span><span className="tabular-nums">{rand(quote.airbnb_total)}</span></div>
+            <div className="flex justify-between"><span className="text-[#717171]">On Airbnb ({quote.nights} night{quote.nights === 1 ? "" : "s"}, cleaning incl.)</span><span className="tabular-nums">{rand(quote.airbnb_total)}</span></div>
             <div className="text-[12px] text-[#B0B0B0] mb-2">Smoobu rates {rand(quote.rates)} + {quote.airbnb_markup}% Airbnb markup + cleaning {rand(quote.cleaning)}</div>
             <label className={LABEL}>Direct price (suggested: {quote.discount_percent}% below Airbnb)</label>
             <div className="flex items-center gap-2">

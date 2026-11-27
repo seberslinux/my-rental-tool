@@ -30,6 +30,8 @@ const paystack = require('./paystack');
 const { keyFor } = require('./payment-accounts');
 const { getApiKeyForProperty } = require('./api-key-resolver');
 
+const comparable = require('../pricing/comparable');
+
 const DEFAULT_DISCOUNT = 10;
 const DEFAULT_HOURS = 48;
 const DAY = 86400000;
@@ -94,15 +96,22 @@ async function quote({ propertyId, checkIn, checkOut, discountPercent = DEFAULT_
   const unpriced = days.filter((d) => d.available && !d.price).map((d) => d.date);
   const rates = days.reduce((a, d) => a + d.price, 0);
   const cleaning = await ownCleaning(p.id);
-  const markup = Number(p.airbnb_markup) / 100;
-  const airbnb = roundTo10(rates * (1 + markup) + cleaning);
+  // What the stay costs an Airbnb guest, from the one comparable-price
+  // module: each night's rate with the markup (rounded up, as Airbnb
+  // does), plus our cleaning fee.
+  // Nights Smoobu has no price for are left out (the quote is then not
+  // available anyway).
+  const priced = days.filter((d) => d.price > 0).map((d) => d.price);
+  const price = priced.length ? comparable.fromRates({ rates: priced, markupPercent: Number(p.airbnb_markup), cleaning }) : null;
+  const airbnb = price ? roundTo10(comparable.stayTotal(price)) : 0;
   const discount = Number.isFinite(Number(discountPercent)) ? Number(discountPercent) : DEFAULT_DISCOUNT;
   const minStay = days[0] ? days[0].minStay : null;
   return {
     payments_ready: Boolean(await keyFor(p.id)),
     property: { id: p.id, name: p.name }, currency: p.currency,
     check_in: checkIn, check_out: checkOut, nights,
-    rates: Math.round(rates), cleaning, airbnb_markup: Number(p.airbnb_markup),
+    rates: Math.round(rates), rates_basis: comparable.BASE_RATE_BASIS, cleaning, airbnb_markup: Number(p.airbnb_markup),
+    airbnb_price: price,
     airbnb_total: airbnb,
     discount_percent: discount,
     direct_total: roundTo10(airbnb * (1 - discount / 100)),
