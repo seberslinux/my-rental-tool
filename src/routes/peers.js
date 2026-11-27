@@ -11,6 +11,10 @@ const express = require('express');
 const router = express.Router();
 const { getAll, getOne } = require('../db/database');
 const { scopeProperties, requireRole } = require('../middleware/auth');
+const comparable = require('../pricing/comparable');
+
+// Every price below is on one basis (src/pricing/comparable.js).
+const PRICE_BASIS = 'comparable_gross_nightly: airbnb guest price per night, cleaning over 2 nights, excl. guest service fee';
 
 const MONTHS_AHEAD = 6;
 
@@ -80,11 +84,63 @@ async function occupancySummary(scope, today) {
       GROUP BY b.property_id`,
     [today, days]
   )).map((r) => [r.property_id, r.revenue]));
-  const asking = new Map((await getAll(
-    `SELECT listing_id, ROUND(AVG(nightly))::int AS price FROM peer_prices
-      WHERE check_in > $1::date AND check_in <= $1::date + 35 GROUP BY listing_id`,
+  // Each quote on the comparable basis first, then averaged: a listing
+  // quoted over its 30-night minimum is not compared at cleaning ÷ 30.
+  const { cleaningFees } = require('../services/peer-cleaning');
+  const fees = await cleaningFees(scope);
+  const quotes = await getAll(
+    `SELECT listing_id, nightly, nights FROM peer_prices
+      WHERE check_in > $1::date AND check_in <= $1::date + 35`,
     [today]
-  )).map((r) => [r.listing_id, r.price]));
+  );
+  const askingSums = new Map();
+  for (const q of quotes) {
+    const fee = fees.byListing.has(q.listing_id) ? fees.byListing.get(q.listing_id).fee : null;
+    const c = comparable.fromQuote({ nightly: q.nightly, nights: q.nights, cleaning: fee });
+    if (!c) continue;
+    const a = askingSums.get(q.listing_id) || { sum: 0, n: 0 };
+    a.sum += c.comparable_gross_nightly; a.n += 1;
+    askingSums.set(q.listing_id, a);
+  }
+  const asking = new Map([...askingSums.entries()].map(([id, a]) => [id, Math.round(a.sum / a.n)]));
+
+  // A listing with nothing left to ask for (fully booked) still belongs on
+  // the chart: priced from the last quotes seen for its coming nights
+  // before they closed, else from its recent detected sales. Estimated,
+  // and said so; with neither it stays in with its occupancy alone.
+  const lastSeen = await getAll(
+    `SELECT h.listing_id, h.nightly, h.nights FROM peer_price_history h
+      WHERE h.check_in >= $1::date - 7 AND h.check_in < $1::date + $2::int`,
+    [today, WINDOWS[0]]
+  );
+  const soldAt = await getAll(
+    `SELECT s.listing_id, s.nightly, COALESCE(qn.nights, 2) AS nights FROM peer_stays s
+       LEFT JOIN LATERAL (
+         SELECT h.nights FROM peer_price_history h
+          WHERE h.listing_id = s.listing_id AND h.nightly = s.nightly
+            AND h.check_in < s.check_out AND h.check_in + h.nights > s.check_in
+          ORDER BY h.quoted_at DESC LIMIT 1
+       ) qn ON TRUE
+      WHERE s.kind = 'booking' AND s.reversed_at IS NULL AND s.nightly IS NOT NULL AND s.detected_at > NOW() - INTERVAL '60 days'`
+  );
+  const averageOf = (rows) => {
+    const m = new Map();
+    for (const q of rows) {
+      const fee = fees.byListing.has(q.listing_id) ? fees.byListing.get(q.listing_id).fee : null;
+      const c = comparable.fromQuote({ nightly: q.nightly, nights: q.nights, cleaning: fee });
+      if (!c) continue;
+      const a = m.get(q.listing_id) || { sum: 0, n: 0 };
+      a.sum += c.comparable_gross_nightly; a.n += 1;
+      m.set(q.listing_id, a);
+    }
+    return new Map([...m.entries()].map(([id, a]) => [id, Math.round(a.sum / a.n)]));
+  };
+  const seenBefore = averageOf(lastSeen);
+  const fromSales = averageOf(soldAt);
+  const priceFor = (listingId) => (asking.has(listingId) ? { price: asking.get(listingId), estimated: false, price_source: 'asking price, next 5 weeks' }
+    : seenBefore.has(listingId) ? { price: seenBefore.get(listingId), estimated: true, price_source: 'last price seen before the nights closed' }
+    : fromSales.has(listingId) ? { price: fromSales.get(listingId), estimated: true, price_source: 'recent detected sales' }
+    : { price: null, estimated: true, price_source: 'no price seen' });
 
   return props.map((p) => {
     const mine = rows.filter((r) => r.property_id === p.id);
@@ -99,6 +155,15 @@ async function occupancySummary(scope, today) {
         name: r.name, occupancy: r.taken, price: asking.get(r.id), is_own: r.is_own, is_benchmark: r.is_benchmark,
         revenue: r.is_own ? ownBooked.get(p.id) || 0 : booked.get(r.id) || 0,
       }));
+    // Every tracked listing, fully booked ones included (see priceFor):
+    // what `points` leaves out because it has nothing left to ask for.
+    const allPoints = near.map((r) => {
+      const priced = priceFor(r.id);
+      return {
+        name: r.name, occupancy: r.taken, ...priced, is_own: r.is_own, is_benchmark: r.is_benchmark,
+        revenue: r.is_own ? ownBooked.get(p.id) || 0 : booked.has(r.id) ? booked.get(r.id) : priced.price == null ? null : 0,
+      };
+    });
     const competitors = points.filter((x) => !x.is_own);
     return {
       id: p.id,
@@ -107,7 +172,11 @@ async function occupancySummary(scope, today) {
       benchmark_name: benchmark ? benchmark.name : null,
       revenue_days: days,
       points,
+      all_points: allPoints,
       median_price: median(competitors.map((x) => x.price)),
+      median_price_note: 'over listings with an asking price in the next 5 weeks; estimated prices are left out',
+      price_basis: `price: ${PRICE_BASIS}, averaged over the stays quoted in the next 5 weeks`,
+      revenue_basis: 'revenue: ours = smoobu gross for the nights; competitors = each closed night at its nearest airbnb quote (blocked nights count as closed)',
       windows: WINDOWS.map((days) => {
         const at = mine.filter((r) => r.days === days);
         const own = at.find((r) => r.is_own);
@@ -172,8 +241,16 @@ router.get('/', scopeProperties, async (req, res) => {
     );
     const recent = await getAll(
       `SELECT s.id, s.listing_id, to_char(s.check_in, 'YYYY-MM-DD') AS check_in,
-              to_char(s.check_out, 'YYYY-MM-DD') AS check_out, s.nights, s.kind, s.nightly, s.detected_at
+              to_char(s.check_out, 'YYYY-MM-DD') AS check_out, s.nights, s.kind, s.nightly, s.detected_at,
+              qn.nights AS quote_nights
          FROM peer_stays s
+         -- The quote the sale's price came from, for how many nights it covered.
+         LEFT JOIN LATERAL (
+           SELECT h.nights FROM peer_price_history h
+            WHERE h.listing_id = s.listing_id AND h.nightly = s.nightly
+              AND h.check_in < s.check_out AND h.check_in + h.nights > s.check_in
+            ORDER BY h.quoted_at DESC LIMIT 1
+         ) qn ON TRUE
         WHERE s.reversed_at IS NULL AND s.kind = 'booking' AND s.detected_at > NOW() - INTERVAL '14 days'
         ORDER BY s.detected_at DESC, s.check_in`
     );
@@ -186,7 +263,7 @@ router.get('/', scopeProperties, async (req, res) => {
     // is still for sale — a price for a night already gone is what it
     // sold at, not what it costs.
     const prices = await getAll(
-      `SELECT p.listing_id, to_char(p.check_in, 'YYYY-MM-DD') AS check_in, p.kind, p.nightly,
+      `SELECT p.listing_id, to_char(p.check_in, 'YYYY-MM-DD') AS check_in, p.kind, p.nightly, p.nights,
               COALESCE(c.available, FALSE) AS open
          FROM peer_prices p
          LEFT JOIN peer_calendar c ON c.listing_id = p.listing_id AND c.date = p.check_in
@@ -204,14 +281,20 @@ router.get('/', scopeProperties, async (req, res) => {
         WHERE NOT available AND date = ANY($1::date[])`,
       [[...weekends, ...weekdays]]
     )).map((r) => `${r.listing_id}:${r.date}`));
-    const priceOf = (listingId, kind, date) => {
-      const r = prices.find((x) => x.listing_id === listingId && x.kind === kind && x.check_in === date);
-      if (r) return { nightly: r.nightly, open: r.open };
-      return taken.has(`${listingId}:${date}`) ? { nightly: null, open: false } : null;
-    };
-
     const { cleaningFees } = require('../services/peer-cleaning');
     const cleaningOf = await cleaningFees();
+    const feeOf = (listingId) => (cleaningOf.byListing.has(listingId) ? cleaningOf.byListing.get(listingId).fee : null);
+    // `{ nightly, open }` as before, `nightly` now the comparable price;
+    // the labelled fields beside it in `*_detail` (src/pricing/comparable.js).
+    const detailOf = (listingId, kind, date) => {
+      const r = prices.find((x) => x.listing_id === listingId && x.kind === kind && x.check_in === date);
+      return r ? comparable.fromQuote({ nightly: r.nightly, nights: r.nights, cleaning: feeOf(listingId) }) : null;
+    };
+    const priceOf = (listingId, kind, date) => {
+      const r = prices.find((x) => x.listing_id === listingId && x.kind === kind && x.check_in === date);
+      if (r) return { nightly: (detailOf(listingId, kind, date) || {}).comparable_gross_nightly ?? null, open: r.open };
+      return taken.has(`${listingId}:${date}`) ? { nightly: null, open: false } : null;
+    };
     const byListing = new Map();
     for (const s of shares) {
       if (!byListing.has(s.listing_id)) byListing.set(s.listing_id, {});
@@ -235,6 +318,8 @@ router.get('/', scopeProperties, async (req, res) => {
           months: months.map((mo) => (m[mo] ? m[mo].sold : null)),
           weekend: weekends.map((d) => priceOf(l.id, 'weekend', d)),
           weekday: weekdays.map((d) => priceOf(l.id, 'weekday', d)),
+          weekend_detail: weekends.map((d) => detailOf(l.id, 'weekend', d)),
+          weekday_detail: weekdays.map((d) => detailOf(l.id, 'weekday', d)),
           // Nights still for sale in the next 30 days.
           open_30: byListing.has(l.id)
             ? Object.values(m).reduce((n, row) => n + row.open_30, 0)
@@ -257,6 +342,7 @@ router.get('/', scopeProperties, async (req, res) => {
         prices: {
           weekends,
           weekdays,
+          basis: PRICE_BASIS,
           weekend_median: weekends.map((_, i) => median(peers.map((l) => (l.weekend[i] && l.weekend[i].open ? l.weekend[i].nightly : null)))),
           weekday_median: weekdays.map((_, i) => median(peers.map((l) => (l.weekday[i] && l.weekday[i].open ? l.weekday[i].nightly : null)))),
         },
@@ -265,8 +351,10 @@ router.get('/', scopeProperties, async (req, res) => {
         // is the nightly a guest sees, and ÷ (1 + markup) takes it back to the base.
         airbnb_markup: Number(p.airbnb_markup) || 0,
         listings: mine,
-        recent: recent.filter((r) => ids.has(r.listing_id)).map((r) => ({
+        recent: recent.filter((r) => ids.has(r.listing_id)).map(({ quote_nights: quoteNights, ...r }) => ({
           ...r,
+          ...(comparable.quoteFields({ nightly: r.nightly, nights: quoteNights || comparable.DEFAULT_STAY_NIGHTS, cleaning: feeOf(r.listing_id) })
+            || { comparable_gross_nightly: null, basis: 'not quoted before it sold' }),
           name: (mine.find((l) => l.id === r.listing_id) || {}).name,
         })),
       };

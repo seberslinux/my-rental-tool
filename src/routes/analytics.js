@@ -407,6 +407,49 @@ router.get('/data', async (req, res) => {
   const displayCurrency = await getDisplayCurrency();
   await bulkConvert(allBookings, displayCurrency);
 
+  // ADR on the comparable basis (src/pricing/comparable.js): Smoobu gross
+  // per night, cleaning included, by channel and by check-in month, and
+  // the same without our cleaning fee. A booking Smoobu holds no price for
+  // is counted as price unknown, not at the base price. Direct bookings
+  // (no markup) and stays of 28 nights or more are kept apart: they are
+  // not comparable with what a competitor asks for a short stay.
+  const adrComparable = await (async () => {
+    const comparable = require('../pricing/comparable');
+    const { cleaningFees } = require('../services/peer-cleaning');
+    const ids = [...new Set(allBookings.map((b) => b.property_id))];
+    const own = ids.length ? await getAll('SELECT id, property_id FROM peer_listings WHERE is_own AND active AND property_id = ANY($1::int[])', [ids]) : [];
+    const fees = ids.length ? await cleaningFees(ids) : { byListing: new Map() };
+    const cleaningOf = new Map(own.map((l) => [l.property_id, fees.byListing.has(l.id) ? fees.byListing.get(l.id).fee : null]));
+    const groups = { by_channel: new Map(), by_month: new Map() };
+    const add = (map, key, b, c) => {
+      const g = map.get(key) || { key, bookings: 0, nights: 0, gross: 0, ex_cleaning: 0, ex_known: 0, price_unknown: 0 };
+      if (c.price_unknown) { g.price_unknown += 1; map.set(key, g); return; }
+      g.bookings += 1; g.nights += c.stay_nights; g.gross += c.comparable_gross_nightly * c.stay_nights;
+      if (c.gross_ex_cleaning_nightly != null) { g.ex_cleaning += c.gross_ex_cleaning_nightly * c.stay_nights; g.ex_known += c.stay_nights; }
+      map.set(key, g);
+    };
+    for (const b of allBookings) {
+      const gross = b._imputed ? 0 : (b.converted_total_price ?? b.total_price);
+      const c = comparable.fromBooking({ gross, nights: b.length_of_stay, cleaning: cleaningOf.get(b.property_id) ?? null, platform: b.platform });
+      const channel = comparable.channelOf(b.platform);
+      const group = channel === 'direct' ? 'direct (not comparable)' : c.stay_nights >= 28 ? `${channel}, 28+ nights (not comparable)` : channel;
+      add(groups.by_channel, group, b, c);
+      if (group === channel) add(groups.by_month, String(b.check_in).slice(0, 7), b, c);
+    }
+    const shape = (g) => ({
+      [g.key.length === 7 && /^\d{4}-\d{2}$/.test(g.key) ? 'month' : 'channel']: g.key,
+      bookings: g.bookings, nights: g.nights, price_unknown: g.price_unknown,
+      comparable_gross_nightly: g.nights ? Math.round(g.gross / g.nights) : null,
+      gross_ex_cleaning_nightly: g.ex_known ? Math.round(g.ex_cleaning / g.ex_known) : null,
+    });
+    return {
+      basis: 'smoobu gross per night, cleaning included, excl. guest service fee; ex-cleaning takes our measured cleaning fee off each booking',
+      by_channel: [...groups.by_channel.values()].map(shape),
+      by_month: [...groups.by_month.values()].sort((a, b) => a.key.localeCompare(b.key)).map(shape),
+      by_month_note: 'Airbnb and Booking.com stays under 28 nights only',
+    };
+  })();
+
   // --- Fetch future confirmed bookings (beyond the date range) ---
   let futureFilters = '';
   const futureParams = [];
@@ -954,6 +997,7 @@ router.get('/data', async (req, res) => {
     channel_stats: Object.values(channelStats),
     occupancy_timeline: occupancyTimeline,
     adr_timeline: adrTimeline,
+    adr_comparable: adrComparable,
     revpar_timeline: Object.values(revparByMonth),
     dow_stats: dowStats,
     checkout_dow_stats: checkoutDowStats,

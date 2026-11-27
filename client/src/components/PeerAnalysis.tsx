@@ -151,4 +151,4 @@ export function Suggestions({ a }: { a: Analysis }) {
 }
 
 export const ESTIMATE_NOTE =
-  "* Estimated from the competitor's quote nearest in date where the sold nights were not quoted. Competitor figures are Airbnb asking prices before fees; yours are what guests paid, from Smoobu. A price leader asks more than twice the competitors' median: it counts in every list but not in the per-night averages or the suggestions.";
+  "Prices a night are what the guest pays, cleaning spread over the stay, excl. Airbnb's guest service fee: competitors' from their last Airbnb quote, yours from Smoobu. Only Airbnb and Booking.com stays under 28 nights are compared; direct bookings and month-long stays are left out. * Estimated from the competitor's quote nearest in date where the sold nights were not quoted. A price leader asks more than twice the competitors' median: it counts in every list but not in the per-night averages or the suggestions.";

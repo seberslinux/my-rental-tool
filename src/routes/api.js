@@ -701,7 +701,33 @@ router.get('/calendar/rates', scopeProperties, async (req, res) => {
       ORDER BY property_id, date`,
     params
   );
-  res.json({ rates });
+
+  // Beside each base rate, what an Airbnb guest pays per night for a stay
+  // starting that day (src/pricing/comparable.js): the stay is the date's
+  // minimum stay unless ?stay_nights= says otherwise, priced at the rates
+  // of its own nights, with our measured cleaning fee spread over it.
+  const comparable = require('../pricing/comparable');
+  const { cleaningFees } = require('../services/peer-cleaning');
+  const ids = [...new Set(rates.map((r) => r.property_id))];
+  const props = ids.length ? await getAll('SELECT id, guest_markup_airbnb FROM properties WHERE id = ANY($1::int[])', [ids]) : [];
+  const own = ids.length ? await getAll('SELECT id, property_id FROM peer_listings WHERE is_own AND active AND property_id = ANY($1::int[])', [ids]) : [];
+  const fees = ids.length ? await cleaningFees(ids) : { byListing: new Map() };
+  const cleaningOf = new Map(own.map((l) => [l.property_id, fees.byListing.has(l.id) ? fees.byListing.get(l.id).fee : null]));
+  const markupOf = new Map(props.map((p) => [p.id, comparable.markupFor(p, 'airbnb')]));
+  const asked = Number(req.query.stay_nights);
+  const byProp = new Map();
+  for (const r of rates) { if (!byProp.has(r.property_id)) byProp.set(r.property_id, new Map()); byProp.get(r.property_id).set(String(r.date).slice(0, 10), r); }
+  const out = rates.map((r) => {
+    const stay = Number.isInteger(asked) && asked > 0 ? asked : Math.max(1, Number(r.min_stay) || comparable.DEFAULT_STAY_NIGHTS);
+    const nights = [];
+    for (let i = 0; i < stay; i++) {
+      const n = byProp.get(r.property_id).get(addDays(String(r.date).slice(0, 10), i));
+      nights.push(n && Number(n.price) > 0 ? Number(n.price) : Number(r.price));
+    }
+    const c = comparable.fromRates({ rates: nights, markupPercent: markupOf.get(r.property_id) || 0, cleaning: cleaningOf.has(r.property_id) ? cleaningOf.get(r.property_id) : null });
+    return { ...r, price_basis: comparable.BASE_RATE_BASIS, ...(c || {}) };
+  });
+  res.json({ rates: out });
 });
 
 // Get dashboard stats
